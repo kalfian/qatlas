@@ -6,7 +6,8 @@
 //	qatlas migrate up|down|status       database migrations (goose, then River)
 //	qatlas user create-admin --email … --name … [--password …]
 //	qatlas mcp-stdio --url U --token T  MCP stdio proxy to a server's /mcp
-//	qatlas seed demo                    (not implemented yet)
+//	qatlas seed demo [flags]            load the demo data set (internal/seed)
+//	qatlas version                      print the build version
 package main
 
 import (
@@ -30,6 +31,7 @@ import (
 	"github.com/kalfian/qatlas/backend/internal/config"
 	"github.com/kalfian/qatlas/backend/internal/db"
 	"github.com/kalfian/qatlas/backend/internal/mcp"
+	"github.com/kalfian/qatlas/backend/internal/seed"
 	"github.com/kalfian/qatlas/backend/internal/server"
 	"github.com/kalfian/qatlas/backend/internal/worker"
 )
@@ -47,12 +49,19 @@ Commands:
   user create-admin --email E --name N [--password P]
                                           create (or reset) an admin; password from --password,
                                           QATLAS_ADMIN_PASSWORD or an interactive prompt
-  seed demo                               load demo data (not implemented yet)
+  seed demo [--password P] [--target-url URL] [--qa-password P] [--admin-token T] [--reset] [--runs]
+                                          load the demo users, projects SHOP/PAY, environments,
+                                          folders, test cases and flows (skips existing projects);
+                                          see "qatlas seed demo --help"
   mcp-stdio --url URL --token TOKEN       MCP stdio proxy to URL/mcp for stdio-only MCP clients
                                           (or QATLAS_URL / QATLAS_TOKEN)
+  version                                 print the version (also --version)
 
 Configuration is read from environment variables; see backend/.env.example.
 `
+
+// version is set at build time: go build -ldflags "-X main.version=…".
+var version = "dev"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -64,6 +73,10 @@ func main() {
 func run(args []string) error {
 	if len(args) == 0 || args[0] == "-h" || args[0] == "--help" || args[0] == "help" {
 		fmt.Print(usage)
+		return nil
+	}
+	if args[0] == "version" || args[0] == "--version" || args[0] == "-v" {
+		fmt.Println("qatlas", version)
 		return nil
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -90,8 +103,8 @@ func run(args []string) error {
 		return runWorker(ctx, cfg, logger)
 	case "all":
 		return runAll(ctx, cfg, logger)
-	case "seed", "mcp-stdio":
-		return fmt.Errorf("%s: not implemented yet", args[0])
+	case "seed":
+		return runSeed(ctx, cfg, logger, args[1:])
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		return fmt.Errorf("unknown command %q", args[0])
@@ -120,7 +133,7 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	if err != nil {
 		return err
 	}
-	srv, err := server.New(server.Deps{Config: cfg, Pool: pool, Logger: logger, Enqueuer: worker.NewEnqueuer(client)})
+	srv, err := server.New(server.Deps{Config: cfg, Pool: pool, Logger: logger, Enqueuer: worker.NewEnqueuer(client), Version: version})
 	if err != nil {
 		return err
 	}
@@ -248,4 +261,57 @@ func promptPassword() (string, error) {
 		return "", errors.New("passwords do not match")
 	}
 	return string(p1), nil
+}
+
+const seedUsage = `Usage: qatlas seed demo [flags]
+
+Loads the demo data set (users rina/dimas/sari active, budi invited; projects SHOP and PAY
+with members, environments, folders, test cases and flows) through the real services.
+Projects that already exist are skipped; existing users are left unchanged.
+Needs QATLAS_DATABASE_URL and QATLAS_MASTER_KEY (secrets are encrypted).
+
+SHOP "staging" points at the demo target (demo-target/, node demo-target/server.mjs):
+BASE_URL=<target-url>, API_URL=<target-url>/api. Secrets: QA_PASSWORD=--qa-password,
+ADMIN_TOKEN=--admin-token (random when empty; demo-target accepts DEMO_ADMIN_TOKEN),
+PAY API_KEY random.
+
+Flags:
+`
+
+func runSeed(ctx context.Context, cfg *config.Config, logger *slog.Logger, args []string) error {
+	if len(args) == 0 || args[0] != "demo" {
+		return errors.New("usage: qatlas seed demo [flags] (see qatlas seed demo --help)")
+	}
+	fs := flag.NewFlagSet("seed demo", flag.ContinueOnError)
+	fs.Usage = func() {
+		fmt.Fprint(fs.Output(), seedUsage)
+		fs.PrintDefaults()
+	}
+	opts := seed.Options{Out: os.Stdout}
+	fs.StringVar(&opts.Password, "password", seed.DefaultPassword, "password of the active demo users")
+	fs.StringVar(&opts.TargetURL, "target-url", seed.DefaultTargetURL, "demo target base URL for SHOP staging")
+	fs.StringVar(&opts.QAPassword, "qa-password", seed.DefaultQAPassword, "value of the QA_PASSWORD secrets (demo-target DEMO_QA_PASSWORD)")
+	fs.StringVar(&opts.AdminToken, "admin-token", "", "value of the ADMIN_TOKEN secret (default: random; demo-target DEMO_ADMIN_TOKEN)")
+	fs.BoolVar(&opts.Reset, "reset", false, "delete the demo projects (with all their runs) first")
+	fs.BoolVar(&opts.Runs, "runs", false, "enqueue a few demo runs (SHOP-F2, SHOP-T12, SHOP-F3) for a running worker; returns immediately")
+	if err := fs.Parse(args[1:]); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	pool, err := connect(ctx, cfg)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	if opts.Runs {
+		// Insert-only River client: the runs are executed by `qatlas worker` / `qatlas all`.
+		client, err := worker.NewInsertOnlyClient(pool, logger)
+		if err != nil {
+			return err
+		}
+		opts.Enqueuer = worker.NewEnqueuer(client)
+	}
+	return seed.Demo(ctx, pool, cfg, logger, opts)
 }

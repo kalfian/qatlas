@@ -1,5 +1,6 @@
-// SHOP test cases from web/src/mocks/seed.ts in runner wire format (run.start `cases[]`).
-// Used by scripts/smoke.mjs and the integration tests; they run against demo-target.
+// SHOP test cases from web/src/mocks/seed.ts in runner wire format (run.start `cases[]`), in their
+// original Indonesian wording. Used by scripts/smoke.mjs and the integration tests; they run
+// against demo-target started with DEMO_LANG=id.
 
 let seq = 0
 const S = (action, params = {}) => ({ step_id: `st_${++seq}`, action, timeout_ms: null, continue_on_failure: false, enabled: true, screenshot: false, ...params })

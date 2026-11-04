@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { login, logout, USERS } from './helpers'
+import { isReal, login, logout, USERS } from './helpers'
 
 test('J1: admin membuat user, menyalin link undangan, user set password lalu login', async ({ page }) => {
   await login(page)
@@ -28,6 +28,7 @@ test('J1: admin membuat user, menyalin link undangan, user set password lalu log
 })
 
 test('J2: login Google dengan email yang tidak terdaftar ditolak', async ({ page }) => {
+  test.skip(isReal, 'Google sign-in is simulated by the mock only')
   await page.goto('/login')
   await page.getByRole('button', { name: 'Continue with Google' }).click()
   await page.getByRole('dialog').getByText('tamu.luar@gmail.com').click()

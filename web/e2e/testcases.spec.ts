@@ -1,5 +1,5 @@
 import { expect, type Page, test } from '@playwright/test'
-import { fastSimulation, login } from './helpers'
+import { fastSimulation, isReal, login, RUN_TIMEOUT } from './helpers'
 
 async function addStep(page: Page, query: string) {
   await page.getByRole('button', { name: 'Add step' }).click()
@@ -52,7 +52,7 @@ test('J5 + J6: run gagal menampilkan expected vs actual, diperbaiki, re-run lolo
   await dialog.locator('[aria-label="Video"]').getByText('Always').click()
   await dialog.getByRole('button', { name: 'Run', exact: true }).click()
   await expect(page).toHaveURL(/\/runs\/SHOP-R\d+/)
-  await expect(page.getByText('Rp 81.000').first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByText('Rp 81.000').first()).toBeVisible({ timeout: RUN_TIMEOUT })
   await expect(page.getByText('Rp 90.000').first()).toBeVisible()
 
   // perbaiki expected di editor
@@ -65,10 +65,12 @@ test('J5 + J6: run gagal menampilkan expected vs actual, diperbaiki, re-run lolo
   dialog = page.getByRole('dialog')
   await dialog.getByRole('button', { name: 'Run', exact: true }).click()
   await expect(page).toHaveURL(/\/runs\/SHOP-R\d+/)
-  await expect(page.getByRole('tab', { name: /Video/ })).toContainText('1', { timeout: 30_000 })
-  await expect(page.locator('[role="status"], [aria-live]').filter({ hasText: /Passed/ }).first()).toBeVisible({ timeout: 30_000 })
+  await expect(page.getByRole('tab', { name: /Video/ })).toContainText('1', { timeout: RUN_TIMEOUT })
+  await expect(page.locator('[role="status"], [aria-live]').filter({ hasText: /Passed/ }).first()).toBeVisible({ timeout: RUN_TIMEOUT })
   await page.getByRole('tab', { name: /Screenshots/ }).click()
-  await expect(page.locator('img[src*="mock-artifacts"]').first()).toBeVisible()
+  const screenshot = page.locator(isReal ? 'img[src*="/api/v1/artifacts/"]' : 'img[src*="mock-artifacts"]').first()
+  await expect(screenshot).toBeVisible()
+  if (isReal) expect(await screenshot.evaluate((img) => (img as unknown as { naturalWidth: number }).naturalWidth)).toBeGreaterThan(0)
 })
 
 test('J11: test case manual dibuat, dijalankan, satu step gagal dengan catatan', async ({ page }) => {

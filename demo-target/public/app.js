@@ -1,7 +1,7 @@
 // Tokoku demo — progressive enhancement only; every page works server-side too.
 'use strict'
 
-// "Akun saya" menu button (WAI-ARIA menu button pattern, simplified).
+// "My account" / "Akun saya" menu button (WAI-ARIA menu button pattern, simplified).
 document.addEventListener('click', (event) => {
   const toggle = event.target.closest('.account-toggle')
   const menu = document.getElementById('account-menu')
@@ -28,19 +28,22 @@ document.addEventListener('keydown', (event) => {
   }
 })
 
-// Category filter: navigate as soon as a checkbox changes (?kategori=a,b).
+// Category filter: navigate as soon as a checkbox changes (?category=a,b / ?kategori=a,b — the
+// path and parameter name come from the form, they depend on DEMO_LANG).
 const filter = document.querySelector('[data-category-filter]')
 if (filter) {
   filter.addEventListener('change', () => {
-    const chosen = [...filter.querySelectorAll('input[name="kategori"]:checked')].map((i) => i.value)
-    location.href = chosen.length ? `/kategori?kategori=${chosen.join(',')}` : '/kategori'
+    const boxes = [...filter.querySelectorAll('input[type="checkbox"]')]
+    const chosen = boxes.filter((i) => i.checked).map((i) => i.value)
+    const path = filter.getAttribute('action')
+    location.href = chosen.length ? `${path}?${boxes[0].name}=${chosen.join(',')}` : path
   })
 }
 
 // Cart quantity: save on change (blur / Enter) without reloading the page.
 for (const input of document.querySelectorAll('[data-qty-line]')) {
   input.addEventListener('change', async () => {
-    const res = await fetch('/keranjang/ubah', {
+    const res = await fetch(input.dataset.qtyUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ line: Number(input.dataset.qtyLine), qty: Number(input.value) }),

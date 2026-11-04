@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -21,8 +22,10 @@ var BulkActions = []string{"move", "set_status", "add_tags", "remove_tags", "del
 
 // Bulk applies one action to the project's non-deleted test cases among
 // in.IDs (unknown ids are ignored, like the mock) and returns how many rows
-// changed. As in the mock, bulk changes do not bump revisions and bulk delete
-// does not check flow usage.
+// changed. As in the mock, bulk changes do not bump revisions. Bulk delete is
+// refused (409 in_use, one detail per test case listing its flows) when any
+// selected test case is still used by a non-deleted flow — the same rule as
+// the single delete; nothing is deleted then.
 func (s *Service) Bulk(ctx context.Context, actor *auth.Actor, projectKey string, in BulkInput) (BulkResult, error) {
 	var out BulkResult
 	err := db.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
@@ -83,6 +86,9 @@ func (s *Service) Bulk(ctx context.Context, actor *auth.Actor, projectKey string
 			args = append(args, tags)
 			meta["tags"] = tags
 		case "delete":
+			if err := checkNotInFlows(ctx, tx, p, ids); err != nil {
+				return err
+			}
 			set = "deleted_at = now()"
 		}
 		rows, err := tx.Query(ctx, `
@@ -106,6 +112,52 @@ func (s *Service) Bulk(ctx context.Context, actor *auth.Actor, projectKey string
 		return audit.Record(ctx, tx, actor, ActionBulk, "test_case", "", &p.ID, meta)
 	})
 	return out, err
+}
+
+// checkNotInFlows returns 409 in_use when a non-deleted flow uses one of the
+// project's non-deleted test cases ids. Details: path = test case key,
+// message = the flow keys. The test cases are locked first so a concurrent
+// flow save (which locks its items FOR SHARE) cannot slip in between.
+func checkNotInFlows(ctx context.Context, tx pgx.Tx, p authz.Project, ids []uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `
+		SELECT 1 FROM test_cases WHERE project_id = $1 AND id = ANY($2) AND deleted_at IS NULL
+		ORDER BY id FOR UPDATE`, p.ID, ids); err != nil {
+		return err
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT t.seq, array_agg(f.seq ORDER BY f.seq)
+		FROM test_cases t
+		JOIN flow_items fi ON fi.test_case_id = t.id
+		JOIN flows f ON f.id = fi.flow_id AND f.deleted_at IS NULL
+		WHERE t.project_id = $1 AND t.id = ANY($2) AND t.deleted_at IS NULL
+		GROUP BY t.seq
+		ORDER BY t.seq`, p.ID, ids)
+	if err != nil {
+		return err
+	}
+	type usage struct {
+		Case  int
+		Flows []int
+	}
+	used, err := pgx.CollectRows(rows, pgx.RowToStructByPos[usage])
+	if err != nil {
+		return err
+	}
+	if len(used) == 0 {
+		return nil
+	}
+	details := make([]httpx.FieldError, len(used))
+	summary := make([]string, len(used))
+	for i, u := range used {
+		flowKeys := make([]string, 0, len(u.Flows))
+		for _, n := range slices.Compact(u.Flows) {
+			flowKeys = append(flowKeys, p.Key+"-F"+strconv.Itoa(n))
+		}
+		caseKey := Key(p.Key, u.Case)
+		details[i] = httpx.Field(caseKey, "Still used in flows: "+strings.Join(flowKeys, ", "))
+		summary[i] = caseKey + " (" + strings.Join(flowKeys, ", ") + ")"
+	}
+	return httpx.NewError(409, httpx.CodeInUse, "Still used in flows: "+strings.Join(summary, "; "), details...)
 }
 
 // sortTags orders tags case-insensitively (approximating the mock's

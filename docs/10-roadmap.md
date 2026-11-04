@@ -18,7 +18,7 @@ Urutan sengaja **frontend dulu**: Phase 1 membangun seluruh user journey di FE d
 - [x] User & admin (`/me`, `/admin/users`, token)
 - [x] Project, member, stats, environment + secret terenkripsi (AES-256-GCM)
 - [x] Folder, test case (validasi DSL, revisi, bulk), flow
-- [~] FE mode `real` (proxy `/api`, CSRF header, `/auth/config`, SSE) — kode siap, menunggu e2e terhadap backend
+- [x] FE mode `real` (proxy `/api`, CSRF header, `/auth/config`, SSE) — e2e real 9 lolos + 1 skip (Google mock-only), 426 respons cocok dengan OpenAPI
 - [x] Run manual end-to-end di backend (hasil per step, lampiran, complete, flow campuran lanjut)
 
 **Phase 3 — Runner & reporting**
@@ -32,7 +32,7 @@ Urutan sengaja **frontend dulu**: Phase 1 membangun seluruh user journey di FE d
 
 **Phase 5 — Hardening & extras**
 - [x] Deployment: Dockerfile server/worker, docker-compose, systemd + install/rollback script, Makefile & release tarball (belum diuji di LXC Proxmox asli)
-- [ ] Demo seed backend (`qatlas seed demo`) terhadap demo target
+- [x] Demo seed backend (`qatlas seed demo`) terhadap demo target + `scripts/e2e-real.sh`
 - [ ] JUnit export & contoh CI trigger
 - [ ] README + manual pengguna dengan screenshot & video
 

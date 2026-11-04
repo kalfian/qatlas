@@ -73,8 +73,16 @@ Demo target app ("Tokoku", port 8099, published on 127.0.0.1 only):
 
 ```sh
 docker compose -f deploy/docker-compose.yml --profile demo up -d --build
-docker compose -f deploy/docker-compose.yml exec server qatlas seed demo   # SHOP environment → http://demo-target:8099
+docker compose -f deploy/docker-compose.yml exec server \
+  qatlas seed demo --target-url http://demo-target:8099 --admin-token adm_stg_8f3a
 ```
+
+`qatlas seed demo` creates the demo users (`rina@tokoku.id` admin, `dimas@`/`sari@` with
+`--password`, default `password123`; `budi@` stays invited and gets a printed invite link) and the
+projects SHOP/PAY with environments, folders, test cases and flows. Existing projects are skipped
+(`--reset` recreates them, deleting their runs); `--runs` enqueues a few demo runs for the worker.
+`--admin-token` must match the demo target's `DEMO_ADMIN_TOKEN` (default `adm_stg_8f3a`) for
+SHOP-T17; without it the secret is random. `qatlas seed demo --help` lists every flag.
 
 ### Upgrade / rollback
 

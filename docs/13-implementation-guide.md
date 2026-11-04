@@ -21,7 +21,7 @@ Binding conventions for everyone implementing the backend, runner, MCP and deplo
 ## Repository layout
 ```
 backend/                       Go module `github.com/kalfian/qatlas/backend` (go 1.27)
-  cmd/qatlas/main.go           subcommands: server | worker | all | migrate up|down|status | user create-admin | seed demo | mcp-stdio
+  cmd/qatlas/main.go           subcommands: server | worker | all | migrate up|down|status | user create-admin | seed demo | mcp-stdio | version
   internal/config              env config (QATLAS_*), validated at start
   internal/db                  pgx pool, goose migrations (embedded), tx helper, testutil (truncate)
   internal/httpx               JSON helpers, APIError, middleware (request id, slog, recover, auth, csrf), pagination

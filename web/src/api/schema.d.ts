@@ -2451,6 +2451,15 @@ export interface operations {
                     };
                 };
             };
+            /** @description `in_use` — action `delete` with test cases still used by non-deleted flows; nothing is deleted. `details[]` has one entry per test case: `path` = test case key, `message` lists the flow keys. */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Error"];
+                };
+            };
         };
     };
     listTags: {

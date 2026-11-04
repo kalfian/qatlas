@@ -6,6 +6,7 @@
 //   node runner/scripts/smoke.mjs [case] [--video] [--every-step] [--headed] [--list]
 //     case: one of the keys of SHOP_CASES (default: login); --list prints them.
 //   BASE_URL=http://localhost:8099 node runner/scripts/smoke.mjs voucher   # use a running demo-target
+//     (the cases use the Indonesian pages: start it with DEMO_LANG=id)
 //
 // Exit code: 0 when run.finished arrived (whatever its status), 1 otherwise.
 
@@ -33,7 +34,7 @@ if (!SHOP_CASES[caseName]) {
 }
 
 async function startDemo() {
-  const child = spawn(process.execPath, [demoServer], { env: { ...process.env, PORT: '0' }, stdio: ['ignore', 'pipe', 'inherit'] })
+  const child = spawn(process.execPath, [demoServer], { env: { ...process.env, PORT: '0', DEMO_LANG: 'id' }, stdio: ['ignore', 'pipe', 'inherit'] })
   const rl = createInterface({ input: child.stdout })
   const url = await new Promise((resolve, reject) => {
     rl.once('line', (line) => {

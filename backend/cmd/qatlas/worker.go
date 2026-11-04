@@ -109,6 +109,7 @@ func runAll(ctx context.Context, cfg *config.Config, logger *slog.Logger) error 
 		Config: cfg, Pool: pool, Logger: logger,
 		Enqueuer:      worker.NewEnqueuer(w.Client()),
 		ArtifactStore: store,
+		Version:       version,
 	})
 	if err != nil {
 		return err

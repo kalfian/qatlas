@@ -68,11 +68,11 @@ func requireRunner(t *testing.T) (nodeBin, runnerMain, demoServer string) {
 	return nodeBin, runnerMain, demoServer
 }
 
-// startDemo runs demo-target on a random port and returns its base URL.
+// startDemo runs demo-target (Indonesian pages, DEMO_LANG=id: the steps below use them) on a random port and returns its base URL.
 func startDemo(t *testing.T, nodeBin, server string) string {
 	t.Helper()
 	cmd := exec.Command(nodeBin, server)
-	cmd.Env = append(os.Environ(), "PORT=0")
+	cmd.Env = append(os.Environ(), "PORT=0", "DEMO_LANG=id")
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatal(err)

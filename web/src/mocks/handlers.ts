@@ -613,6 +613,23 @@ export const handlers = [
     const { project, user } = requireProject(params.key as string, 'edit_tests')
     const b = await body<BulkTestCaseAction>(request)
     const targets = db().testCases.filter((t) => t.project_id === project.id && b.ids.includes(t.id) && !t.deleted_at)
+    if (b.action === 'delete') {
+      // Same rule as the single delete: refuse (nothing deleted) while a live flow uses a case.
+      const used = targets
+        .map((t) => ({ t, flows: db().flows.filter((f) => !f.deleted_at && f.items.some((i) => i.test_case_id === t.id)) }))
+        .filter((u) => u.flows.length > 0)
+        .sort((a, b) => Number(a.t.key.split('-T')[1]) - Number(b.t.key.split('-T')[1]))
+      if (used.length) {
+        const flowKeys = (u: (typeof used)[number]) =>
+          u.flows.map((f) => f.key).sort((a, b) => Number(a.split('-F')[1]) - Number(b.split('-F')[1]))
+        fail(
+          409,
+          'in_use',
+          `Still used in flows: ${used.map((u) => `${u.t.key} (${flowKeys(u).join(', ')})`).join('; ')}`,
+          used.map((u) => ({ path: u.t.key, message: `Still used in flows: ${flowKeys(u).join(', ')}` })),
+        )
+      }
+    }
     for (const t of targets) {
       if (b.action === 'move') t.folder_id = b.folder_id ?? null
       if (b.action === 'set_status' && b.status) t.status = b.status

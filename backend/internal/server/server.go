@@ -44,6 +44,8 @@ type Deps struct {
 	Enqueuer jobs.Enqueuer
 	// ArtifactStore keeps run files. nil → LocalStore under DataDir/artifacts.
 	ArtifactStore artifacts.Store
+	// Version is the build version reported by /healthz ("" → "dev").
+	Version string
 }
 
 // Server is the configured HTTP server.
@@ -88,8 +90,12 @@ func New(deps Deps) (*Server, error) {
 	r := chi.NewRouter()
 	r.Use(httpx.RequestID, httpx.ClientIP(deps.Config.TrustProxy), httpx.AccessLog(deps.Logger), httpx.Recover, securityHeaders)
 
+	version := deps.Version
+	if version == "" {
+		version = "dev"
+	}
 	r.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
-		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok", "version": version})
 	})
 	r.Get("/readyz", s.readyz)
 

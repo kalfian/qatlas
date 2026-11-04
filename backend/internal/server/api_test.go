@@ -16,7 +16,11 @@ import (
 func TestHealthAndRouting(t *testing.T) {
 	e := newEnv(t)
 	c := e.browser()
-	c.expect("GET", "/healthz", nil, 200, nil)
+	var health map[string]string
+	c.expect("GET", "/healthz", nil, 200, &health)
+	if health["status"] != "ok" || health["version"] != "dev" { // Deps.Version unset → "dev"
+		t.Fatalf("healthz: %v", health)
+	}
 	c.expect("GET", "/readyz", nil, 200, nil)
 	if r := c.expect("GET", "/api/v1/nope", nil, 404, nil); r.errCode(t) != "not_found" {
 		t.Fatal("unknown API route must be JSON not_found")

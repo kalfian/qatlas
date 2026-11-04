@@ -556,6 +556,56 @@ func TestTestCaseDeleteInUse(t *testing.T) {
 	}
 }
 
+func TestTestCaseBulkDeleteInUse(t *testing.T) {
+	f := tcSetup(t)
+	c := f.editor
+	t1 := f.createSimple("Used twice")
+	t2 := f.createSimple("Used once")
+	t3 := f.createSimple("Free")
+	flow := func(name string, tcs ...testcases.TestCase) string {
+		items := []any{}
+		for _, tc := range tcs {
+			items = append(items, map[string]any{"test_case_id": tc.ID.String()})
+		}
+		var fl struct{ Key string }
+		c.expect("POST", "/api/v1/projects/SHOP/flows", map[string]any{"name": name, "items": items}, 201, &fl)
+		return fl.Key
+	}
+	f1 := flow("One", t1, t2)
+	f2 := flow("Two", t1)
+	f3 := flow("Deleted later", t3)
+	c.expect("DELETE", "/api/v1/flows/"+f3, nil, 204, nil) // deleted flows do not count
+
+	body := map[string]any{"action": "delete", "ids": []string{t3.ID.String(), t2.ID.String(), t1.ID.String()}}
+	r := c.expect("POST", "/api/v1/projects/SHOP/test-cases/bulk", body, 409, nil)
+	eb := tcErr(t, r)
+	if eb.Error.Code != "in_use" || eb.Error.Message != "Still used in flows: SHOP-T1 (SHOP-F1, SHOP-F2); SHOP-T2 (SHOP-F1)" {
+		t.Fatalf("in_use: %s", r.body)
+	}
+	if got := fmt.Sprint(eb.Error.Details); got != "[{SHOP-T1 Still used in flows: SHOP-F1, SHOP-F2} {SHOP-T2 Still used in flows: SHOP-F1}]" {
+		t.Fatalf("details: %s", got)
+	}
+	// All or nothing: the free test case was not deleted either.
+	if k := strings.Join(f.listKeys(""), ","); k != "SHOP-T1,SHOP-T2,SHOP-T3" {
+		t.Fatalf("after refused delete: %s", k)
+	}
+	if n := f.e.count(`SELECT count(*) FROM audit_logs WHERE action = 'test_case.bulk'`); n != 0 {
+		t.Fatalf("refused bulk delete audited: %d", n)
+	}
+
+	// Other bulk actions on used test cases are fine.
+	c.expect("POST", "/api/v1/projects/SHOP/test-cases/bulk", map[string]any{"action": "set_status", "ids": []string{t1.ID.String()}, "status": "ready"}, 200, nil)
+
+	// Once no live flow uses them, the delete goes through.
+	c.expect("DELETE", "/api/v1/flows/"+f1, nil, 204, nil)
+	c.expect("DELETE", "/api/v1/flows/"+f2, nil, 204, nil)
+	var res testcases.BulkResult
+	c.expect("POST", "/api/v1/projects/SHOP/test-cases/bulk", body, 200, &res)
+	if res.Updated != 3 {
+		t.Fatalf("bulk delete: updated %d", res.Updated)
+	}
+}
+
 func TestTestCasePermissions(t *testing.T) {
 	f := tcSetup(t)
 	tc := f.createSimple("Case")

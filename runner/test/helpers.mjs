@@ -9,9 +9,9 @@ const here = dirname(fileURLToPath(import.meta.url))
 export const RUNNER_MAIN = join(here, '..', 'dist', 'main.js')
 export const DEMO_SERVER = join(here, '..', '..', 'demo-target', 'server.mjs')
 
-/** Start demo-target on a random free port. */
+/** Start demo-target on a random free port (Indonesian pages: the SHOP cases in scripts/shop-cases.mjs). */
 export async function startDemo(env = {}) {
-  const child = spawn(process.execPath, [DEMO_SERVER], { env: { ...process.env, PORT: '0', ...env }, stdio: ['ignore', 'pipe', 'pipe'] })
+  const child = spawn(process.execPath, [DEMO_SERVER], { env: { ...process.env, PORT: '0', DEMO_LANG: 'id', ...env }, stdio: ['ignore', 'pipe', 'pipe'] })
   const rl = createInterface({ input: child.stdout })
   const url = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('demo-target did not start')), 10_000)

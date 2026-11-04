@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test'
-import { fastSimulation, login, USERS } from './helpers'
+import { fastSimulation, isReal, login, RUN_TIMEOUT, startRunViaApi, USERS } from './helpers'
 
 test('J7: flow shared session dijalankan → report per case dengan satu video', async ({ page }) => {
   await login(page)
@@ -11,8 +11,8 @@ test('J7: flow shared session dijalankan → report per case dengan satu video',
   await dialog.getByRole('button', { name: 'Run', exact: true }).click()
   await expect(page).toHaveURL(/\/p\/SHOP\/runs\/SHOP-R\d+/)
 
-  await expect(page.locator('[data-status="passed"]').first()).toBeVisible()
-  await expect(page.getByRole('tab', { name: /Video/ })).toContainText('1', { timeout: 45_000 })
+  await expect(page.locator('[data-status="passed"]').first()).toBeVisible({ timeout: RUN_TIMEOUT })
+  await expect(page.getByRole('tab', { name: /Video/ })).toContainText('1', { timeout: isReal ? RUN_TIMEOUT : 45_000 })
   await expect(page.getByText('SHOP-T11').first()).toBeVisible()
   await page.getByRole('tab', { name: /Video/ }).click()
   await expect(page.locator('video')).toHaveCount(1)
@@ -21,6 +21,8 @@ test('J7: flow shared session dijalankan → report per case dengan satu video',
 
 test('J10: riwayat run bisa difilter dan dashboard menampilkan pass rate', async ({ page }) => {
   await login(page)
+  // Real mode has no seeded history: the voucher case fails on demo-target's intentional bug.
+  if (isReal) await startRunViaApi(page, 'SHOP', { test_case: 'SHOP-T12' }, ['failed'])
   await page.goto('/p/SHOP/runs?status=failed')
   await expect(page.getByRole('list', { name: 'Active filters' })).toContainText('Failed')
   const rows = page.locator('table tbody tr')

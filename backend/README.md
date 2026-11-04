@@ -19,6 +19,13 @@ go run ./cmd/qatlas worker        # executes runs (needs the built runner, see b
 # or both in one process:  go run ./cmd/qatlas all
 ```
 
+Demo data instead of an empty instance (needs the demo target for runs: `node demo-target/server.mjs`):
+
+```sh
+go run ./cmd/qatlas seed demo --admin-token adm_stg_8f3a   # rina@tokoku.id / password123 (admin), dimas@, sari@
+go run ./cmd/qatlas seed demo --help                        # --password --target-url --qa-password --reset --runs
+```
+
 Talking to the API with curl: every non-GET request authenticated by cookie (and
 login / invite accept) needs `X-QAtlas-CSRF: 1`; Bearer-token requests are exempt.
 
@@ -46,7 +53,8 @@ fixtures — extend it rather than writing a second harness).
 
 | Package | Role |
 |---|---|
-| `cmd/qatlas` | subcommands `server`, `worker`, `all`, `migrate up\|down\|status`, `user create-admin`, `mcp-stdio --url --token` (stdio→HTTP MCP proxy); `seed` is a stub |
+| `cmd/qatlas` | subcommands `server`, `worker`, `all`, `migrate up\|down\|status`, `user create-admin`, `seed demo`, `mcp-stdio --url --token` (stdio→HTTP MCP proxy), `version` (`-X main.version=…`, also in `/healthz`) |
+| `internal/seed` | `qatlas seed demo`: loads `demo.json` (exported from `web/src/mocks/seed.ts`) through the real services (keys, revisions, validation, audit, encrypted secrets); idempotent per project key, `--reset`, async `--runs` |
 | `migrations` | embedded goose SQL. `0001_init.sql` = full schema (all docs/03 entities). Add `0002_….sql`; never edit a shipped file. River's tables are **not** goose files (see "Worker") |
 | `internal/config` | env config + validation (`Load`, `RequireDatabase`, `RequireMasterKey`) |
 | `internal/db` | `Connect`, `Querier` (pool or tx), `WithTx`, `NewID` (uuid v7 — tables have no id default), `IsUniqueViolation`, migrations; `db/testutil` |

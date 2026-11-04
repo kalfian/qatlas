@@ -612,6 +612,14 @@ paths:
                 required: [updated]
                 properties:
                   updated: { type: integer }
+        '409':
+          description: >-
+            `in_use` — action `delete` with test cases still used by non-deleted flows; nothing is
+            deleted. `details[]` has one entry per test case: `path` = test case key, `message`
+            lists the flow keys.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /projects/{key}/tags:
     parameters:
       - { $ref: '#/components/parameters/ProjectKey' }
