@@ -1,0 +1,1201 @@
+{
+  "users": [
+    {
+      "email": "rina@tokoku.id",
+      "name": "Rina Kusuma",
+      "system_role": "admin",
+      "status": "active"
+    },
+    {
+      "email": "dimas@tokoku.id",
+      "name": "Dimas Pratama",
+      "system_role": "member",
+      "status": "active"
+    },
+    {
+      "email": "sari@tokoku.id",
+      "name": "Sari Wulandari",
+      "system_role": "member",
+      "status": "active"
+    },
+    {
+      "email": "budi@tokoku.id",
+      "name": "Budi Santoso",
+      "system_role": "member",
+      "status": "invited"
+    }
+  ],
+  "projects": [
+    {
+      "key": "SHOP",
+      "name": "Tokoku Web Store",
+      "description": "Storefront smoke & regression for tokoku.id",
+      "members": [
+        {
+          "email": "rina@tokoku.id",
+          "role": "maintainer"
+        },
+        {
+          "email": "dimas@tokoku.id",
+          "role": "editor"
+        },
+        {
+          "email": "sari@tokoku.id",
+          "role": "viewer"
+        }
+      ],
+      "environments": [
+        {
+          "name": "staging",
+          "is_default": true,
+          "variables": {
+            "BASE_URL": "https://staging.tokoku.id",
+            "API_URL": "https://api.staging.tokoku.id"
+          },
+          "secrets": [
+            "QA_PASSWORD",
+            "ADMIN_TOKEN"
+          ]
+        },
+        {
+          "name": "production",
+          "is_default": false,
+          "variables": {
+            "BASE_URL": "https://tokoku.id",
+            "API_URL": "https://api.tokoku.id"
+          },
+          "secrets": [
+            "QA_PASSWORD"
+          ]
+        }
+      ],
+      "folders": [
+        "Auth",
+        "Catalog",
+        "Cart",
+        "Checkout",
+        "API",
+        "Checkout/Payment"
+      ],
+      "test_cases": [
+        {
+          "key": "SHOP-T1",
+          "folder": "Auth",
+          "title": "User can log in with email & password",
+          "description": "Customer login with valid credentials from the environment.",
+          "preconditions": "The QA Bot account is registered and active.",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "smoke",
+            "auth"
+          ],
+          "variables": {
+            "email": "qa.bot@tokoku.id"
+          },
+          "steps": [
+            {
+              "id": "s1",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/login",
+              "description": "Open the login page"
+            },
+            {
+              "id": "s2",
+              "action": "fill",
+              "selector": "label=Email",
+              "value": "{{vars.email}}"
+            },
+            {
+              "id": "s3",
+              "action": "fill",
+              "selector": "label=Password",
+              "value": "{{secret.QA_PASSWORD}}"
+            },
+            {
+              "id": "s4",
+              "action": "click",
+              "selector": "role=button[name='Log in']"
+            },
+            {
+              "id": "s5",
+              "action": "expect_url",
+              "value": "/account",
+              "match": "contains",
+              "description": "Redirected to the account page",
+              "expected": "URL contains /account"
+            },
+            {
+              "id": "s6",
+              "action": "expect_visible",
+              "selector": "text=Hi, QA Bot"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T2",
+          "folder": "Auth",
+          "title": "Login fails with a wrong password",
+          "description": "",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "auth",
+            "negative"
+          ],
+          "variables": {
+            "email": "qa.bot@tokoku.id"
+          },
+          "steps": [
+            {
+              "id": "s7",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/login"
+            },
+            {
+              "id": "s8",
+              "action": "fill",
+              "selector": "label=Email",
+              "value": "{{vars.email}}"
+            },
+            {
+              "id": "s9",
+              "action": "fill",
+              "selector": "label=Password",
+              "value": "totally-wrong-123"
+            },
+            {
+              "id": "sa",
+              "action": "click",
+              "selector": "role=button[name='Log in']"
+            },
+            {
+              "id": "sb",
+              "action": "expect_visible",
+              "selector": "text=Incorrect email or password",
+              "expected": "An error message is shown"
+            },
+            {
+              "id": "sc",
+              "action": "expect_url",
+              "value": "/login",
+              "match": "contains"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T3",
+          "folder": "Auth",
+          "title": "Logout clears the session",
+          "description": "",
+          "preconditions": "",
+          "priority": "low",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "auth"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "sd",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/account"
+            },
+            {
+              "id": "se",
+              "action": "click",
+              "selector": "role=button[name='My account']"
+            },
+            {
+              "id": "sf",
+              "action": "click",
+              "selector": "role=menuitem[name='Log out']"
+            },
+            {
+              "id": "sg",
+              "action": "expect_url",
+              "value": "/login",
+              "match": "contains"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T4",
+          "folder": "Auth",
+          "title": "Log in with SMS OTP",
+          "description": "The OTP is sent to a physical phone, so this can't be automated.",
+          "preconditions": "The tester's phone is registered with number 0812-0000-1234.",
+          "priority": "high",
+          "status": "ready",
+          "execution": "manual",
+          "tags": [
+            "auth",
+            "otp"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "sh",
+              "action": "manual",
+              "description": "Open {{env.BASE_URL}}/login and choose \"Log in with phone number\"",
+              "expected": "The phone number form is shown"
+            },
+            {
+              "id": "si",
+              "action": "manual",
+              "description": "Enter 0812-0000-1234 and click \"Send OTP\"",
+              "expected": "The OTP SMS arrives in under 30 seconds"
+            },
+            {
+              "id": "sj",
+              "action": "manual",
+              "description": "Enter the 6-digit OTP code from the SMS",
+              "expected": "The account page opens and shows the name QA Bot"
+            },
+            {
+              "id": "sk",
+              "action": "manual",
+              "description": "Wait 5 minutes, then try to log in again with the same OTP",
+              "expected": "The message \"OTP code expired\" is shown"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T5",
+          "folder": "Catalog",
+          "title": "Search products by keyword",
+          "description": "",
+          "preconditions": "",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "smoke",
+            "catalog"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "sl",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}"
+            },
+            {
+              "id": "sm",
+              "action": "fill",
+              "selector": "placeholder=Search products",
+              "value": "plain tee"
+            },
+            {
+              "id": "sn",
+              "action": "press",
+              "key": "Enter",
+              "selector": "placeholder=Search products"
+            },
+            {
+              "id": "so",
+              "action": "wait_for",
+              "selector": "testid=product-card",
+              "state": "visible"
+            },
+            {
+              "id": "sp",
+              "action": "expect_count",
+              "selector": "testid=product-card",
+              "op": "gte",
+              "value": 1
+            },
+            {
+              "id": "sq",
+              "action": "expect_url",
+              "value": "q=plain",
+              "match": "contains"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T6",
+          "folder": "Catalog",
+          "title": "Filter products by category",
+          "description": "",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "catalog"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "sr",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/categories"
+            },
+            {
+              "id": "ss",
+              "action": "click",
+              "selector": "role=checkbox[name='Menswear']"
+            },
+            {
+              "id": "st",
+              "action": "expect_url",
+              "value": "category=menswear",
+              "match": "contains"
+            },
+            {
+              "id": "su",
+              "action": "expect_visible",
+              "selector": "role=heading[name='Menswear']"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T7",
+          "folder": "Catalog",
+          "title": "Product page shows price & stock",
+          "description": "Sometimes fails because the staging CDN cache hasn't been invalidated yet.",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "catalog",
+            "flaky"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "sv",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/products/plain-black-tee"
+            },
+            {
+              "id": "sw",
+              "action": "expect_visible",
+              "selector": "testid=product-price"
+            },
+            {
+              "id": "sx",
+              "action": "expect_text",
+              "selector": "testid=product-price",
+              "value": "Rp 90.000",
+              "match": "contains"
+            },
+            {
+              "id": "sy",
+              "action": "expect_text",
+              "selector": "testid=stock-label",
+              "value": "Stock",
+              "match": "contains"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T8",
+          "folder": "Cart",
+          "title": "Add a product to the cart",
+          "description": "",
+          "preconditions": "",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "smoke",
+            "cart"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "sz",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/products/plain-black-tee"
+            },
+            {
+              "id": "s10",
+              "action": "select_option",
+              "selector": "label=Size",
+              "label": "L"
+            },
+            {
+              "id": "s11",
+              "action": "click",
+              "selector": "role=button[name='Add to cart']"
+            },
+            {
+              "id": "s12",
+              "action": "expect_visible",
+              "selector": "text=Added to cart"
+            },
+            {
+              "id": "s13",
+              "action": "expect_text",
+              "selector": "testid=cart-count",
+              "value": "1",
+              "match": "equals"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T9",
+          "folder": "Cart",
+          "title": "Change item quantity in the cart",
+          "description": "",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "cart"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s14",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/cart"
+            },
+            {
+              "id": "s15",
+              "action": "fill",
+              "selector": "label=Quantity",
+              "value": "3"
+            },
+            {
+              "id": "s16",
+              "action": "press",
+              "key": "Tab"
+            },
+            {
+              "id": "s17",
+              "action": "expect_value",
+              "selector": "label=Quantity",
+              "value": "3",
+              "match": "equals"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T10",
+          "folder": "Cart",
+          "title": "Remove an item from the cart",
+          "description": "",
+          "preconditions": "",
+          "priority": "low",
+          "status": "draft",
+          "execution": "automated",
+          "tags": [
+            "cart"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s18",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/cart"
+            },
+            {
+              "id": "s19",
+              "action": "click",
+              "selector": "role=button[name='Remove item']"
+            },
+            {
+              "id": "s1a",
+              "action": "expect_visible",
+              "selector": "text=Your cart is empty"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T11",
+          "folder": "Checkout",
+          "title": "Checkout with bank transfer",
+          "description": "",
+          "preconditions": "The cart has at least 1 item.",
+          "priority": "critical",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "checkout",
+            "smoke"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s1b",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/checkout"
+            },
+            {
+              "id": "s1c",
+              "action": "fill",
+              "selector": "label=Address",
+              "value": "Jl. Merdeka No. 10, Bandung"
+            },
+            {
+              "id": "s1d",
+              "action": "click",
+              "selector": "role=radio[name='Bank transfer']"
+            },
+            {
+              "id": "s1e",
+              "action": "click",
+              "selector": "role=button[name='Pay now']"
+            },
+            {
+              "id": "s1f",
+              "action": "expect_visible",
+              "selector": "role=heading[name='Order placed']"
+            },
+            {
+              "id": "s1g",
+              "action": "extract_text",
+              "selector": "testid=order-id",
+              "save_as": "order_id"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T12",
+          "folder": "Checkout",
+          "title": "Checkout with 10% voucher",
+          "description": "Voucher HEMAT10 should take 10% off the Rp 90.000 subtotal.",
+          "preconditions": "",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "checkout",
+            "voucher"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s1h",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/checkout"
+            },
+            {
+              "id": "s1i",
+              "action": "fill",
+              "selector": "label=Voucher code",
+              "value": "HEMAT10"
+            },
+            {
+              "id": "s1j",
+              "action": "click",
+              "selector": "role=button[name='Apply']"
+            },
+            {
+              "id": "s1k",
+              "action": "expect_visible",
+              "selector": "text=Voucher HEMAT10 applied"
+            },
+            {
+              "id": "s1l",
+              "action": "expect_text",
+              "selector": "testid=grand-total",
+              "value": "Rp 81.000",
+              "match": "equals",
+              "description": "Total after discount",
+              "expected": "Rp 81.000"
+            },
+            {
+              "id": "s1m",
+              "action": "click",
+              "selector": "role=button[name='Pay now']"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T13",
+          "folder": "Checkout/Payment",
+          "title": "E-wallet payment (redirect)",
+          "description": "",
+          "preconditions": "",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "checkout",
+            "payment"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s1n",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/checkout"
+            },
+            {
+              "id": "s1o",
+              "action": "click",
+              "selector": "role=radio[name='E-wallet']"
+            },
+            {
+              "id": "s1p",
+              "action": "click",
+              "selector": "role=button[name='Pay now']"
+            },
+            {
+              "id": "s1q",
+              "action": "expect_url",
+              "value": "sandbox.pay.tokoku.id",
+              "match": "contains"
+            },
+            {
+              "id": "s1r",
+              "action": "click",
+              "selector": "role=button[name='Simulate success']"
+            },
+            {
+              "id": "s1s",
+              "action": "expect_visible",
+              "selector": "role=heading[name='Order placed']"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T14",
+          "folder": "Checkout",
+          "title": "Check the invoice PDF",
+          "description": "",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "manual",
+          "tags": [
+            "checkout",
+            "visual"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s1t",
+              "action": "manual",
+              "description": "Open the latest order and click \"Download invoice\"",
+              "expected": "A PDF downloads and its file name contains the order number"
+            },
+            {
+              "id": "s1u",
+              "action": "manual",
+              "description": "Check the logo, store address, and tax ID (NPWP) in the invoice header",
+              "expected": "Everything is sharp and matches the brand guideline"
+            },
+            {
+              "id": "s1v",
+              "action": "manual",
+              "description": "Compare subtotal, discount, shipping, and total with the order page",
+              "expected": "All amounts match exactly"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T15",
+          "folder": "API",
+          "title": "GET /products returns a product list",
+          "description": "",
+          "preconditions": "",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "smoke"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s1w",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.API_URL}}/v1/products",
+              "query": {
+                "limit": "10"
+              }
+            },
+            {
+              "id": "s1x",
+              "action": "expect_status",
+              "value": 200
+            },
+            {
+              "id": "s1y",
+              "action": "expect_json",
+              "path": "$.data[0].id",
+              "op": "exists"
+            },
+            {
+              "id": "s1z",
+              "action": "expect_response_time",
+              "max_ms": 800
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T16",
+          "folder": "API",
+          "title": "Login API returns a token",
+          "description": "",
+          "preconditions": "",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "auth"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s20",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v1/auth/login",
+              "body_type": "json",
+              "body": "{\"email\":\"qa.bot@tokoku.id\",\"password\":\"{{secret.QA_PASSWORD}}\"}",
+              "save": {
+                "token": "$.data.token"
+              }
+            },
+            {
+              "id": "s21",
+              "action": "expect_status",
+              "value": 201
+            },
+            {
+              "id": "s22",
+              "action": "expect_json",
+              "path": "$.data.token",
+              "op": "exists"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T17",
+          "folder": "API",
+          "title": "Create an order via API, then verify it in the UI",
+          "description": "Mixed test example: data is created through the API and verified in the browser.",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "checkout"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s23",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v1/orders",
+              "body_type": "json",
+              "headers": {
+                "Authorization": "Bearer {{secret.ADMIN_TOKEN}}"
+              },
+              "body": "{\"sku\":\"PBT-L\",\"qty\":1}",
+              "save": {
+                "order_id": "$.data.id"
+              }
+            },
+            {
+              "id": "s24",
+              "action": "expect_status",
+              "value": 201
+            },
+            {
+              "id": "s25",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/account/orders/{{vars.order_id}}"
+            },
+            {
+              "id": "s26",
+              "action": "expect_visible",
+              "selector": "text=Awaiting payment"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T18",
+          "folder": null,
+          "title": "Home page loads without errors",
+          "description": "",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "smoke"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s27",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}"
+            },
+            {
+              "id": "s28",
+              "action": "expect_title",
+              "value": "Tokoku",
+              "match": "contains"
+            },
+            {
+              "id": "s29",
+              "action": "expect_visible",
+              "selector": "role=navigation[name='Main']"
+            },
+            {
+              "id": "s2a",
+              "action": "screenshot",
+              "name": "home",
+              "full_page": true
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T19",
+          "folder": "Auth",
+          "title": "Reset password via email",
+          "description": "",
+          "preconditions": "",
+          "priority": "low",
+          "status": "draft",
+          "execution": "manual",
+          "tags": [
+            "auth"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s2b",
+              "action": "manual",
+              "description": "On the login page click \"Forgot password\" and enter qa.bot@tokoku.id",
+              "expected": "The message \"Check your email\" is shown"
+            },
+            {
+              "id": "s2c",
+              "action": "manual",
+              "description": "Open the reset email in the QA inbox and click the link",
+              "expected": "The set-new-password page opens"
+            }
+          ]
+        }
+      ],
+      "flows": [
+        {
+          "key": "SHOP-F1",
+          "name": "Checkout happy path",
+          "description": "Login → cart → bank transfer checkout in one browser session.",
+          "tags": [
+            "checkout",
+            "smoke"
+          ],
+          "shared_session": true,
+          "stop_on_failure": true,
+          "variables": {
+            "email": "qa.bot@tokoku.id"
+          },
+          "items": [
+            {
+              "test_case": "SHOP-T1",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T8",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T11",
+              "continue_on_failure": false
+            }
+          ]
+        },
+        {
+          "key": "SHOP-F2",
+          "name": "Daily smoke test",
+          "description": "A quick check of the main features every morning.",
+          "tags": [
+            "smoke"
+          ],
+          "shared_session": false,
+          "stop_on_failure": false,
+          "variables": {
+            "email": "qa.bot@tokoku.id"
+          },
+          "items": [
+            {
+              "test_case": "SHOP-T18",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T1",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T5",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T8",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T15",
+              "continue_on_failure": false
+            }
+          ]
+        },
+        {
+          "key": "SHOP-F3",
+          "name": "Checkout regression + manual invoice check",
+          "description": "Automated checkout steps plus a manual invoice check.",
+          "tags": [
+            "checkout",
+            "regression"
+          ],
+          "shared_session": false,
+          "stop_on_failure": true,
+          "variables": {
+            "email": "qa.bot@tokoku.id"
+          },
+          "items": [
+            {
+              "test_case": "SHOP-T1",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T8",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T11",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T14",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T3",
+              "continue_on_failure": false
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "key": "PAY",
+      "name": "Payment API",
+      "description": "Payment API contracts & integrations",
+      "members": [
+        {
+          "email": "dimas@tokoku.id",
+          "role": "maintainer"
+        },
+        {
+          "email": "sari@tokoku.id",
+          "role": "editor"
+        }
+      ],
+      "environments": [
+        {
+          "name": "sandbox",
+          "is_default": true,
+          "variables": {
+            "API_URL": "https://sandbox.pay.tokoku.id"
+          },
+          "secrets": [
+            "API_KEY"
+          ]
+        }
+      ],
+      "folders": [
+        "Payment intent",
+        "Webhook",
+        "Refund"
+      ],
+      "test_cases": [
+        {
+          "key": "PAY-T1",
+          "folder": "Payment intent",
+          "title": "Create a payment intent",
+          "description": "",
+          "preconditions": "",
+          "priority": "critical",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "smoke"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s2d",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v2/payment-intents",
+              "body_type": "json",
+              "headers": {
+                "X-Api-Key": "{{secret.API_KEY}}"
+              },
+              "body": "{\"amount\":90000,\"currency\":\"IDR\"}",
+              "save": {
+                "intent_id": "$.data.id"
+              }
+            },
+            {
+              "id": "s2e",
+              "action": "expect_status",
+              "value": 201
+            },
+            {
+              "id": "s2f",
+              "action": "expect_json",
+              "path": "$.data.status",
+              "op": "eq",
+              "value": "requires_payment"
+            }
+          ]
+        },
+        {
+          "key": "PAY-T2",
+          "folder": "Webhook",
+          "title": "Payment succeeded webhook",
+          "description": "",
+          "preconditions": "",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "webhook"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s2g",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v2/test/webhooks",
+              "body_type": "json",
+              "body": "{\"event\":\"payment.succeeded\"}"
+            },
+            {
+              "id": "s2h",
+              "action": "expect_status",
+              "value": 200
+            },
+            {
+              "id": "s2i",
+              "action": "expect_json",
+              "path": "$.delivered",
+              "op": "eq",
+              "value": "true"
+            }
+          ]
+        },
+        {
+          "key": "PAY-T3",
+          "folder": "Refund",
+          "title": "Partial refund",
+          "description": "",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "refund",
+            "flaky"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s2j",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v2/refunds",
+              "body_type": "json",
+              "body": "{\"payment_id\":\"pay_123\",\"amount\":10000}"
+            },
+            {
+              "id": "s2k",
+              "action": "expect_status",
+              "value": 201
+            },
+            {
+              "id": "s2l",
+              "action": "expect_json",
+              "path": "$.data.amount",
+              "op": "eq",
+              "value": "10000"
+            }
+          ]
+        },
+        {
+          "key": "PAY-T4",
+          "folder": "Webhook",
+          "title": "Validate the bank callback signature",
+          "description": "",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "manual",
+          "tags": [
+            "security"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s2m",
+              "action": "manual",
+              "description": "Send a callback with a valid signature from the bank sandbox dashboard",
+              "expected": "The callback is accepted with status 200 in the logs"
+            },
+            {
+              "id": "s2n",
+              "action": "manual",
+              "description": "Change 1 character of the signature and send it again",
+              "expected": "The callback is rejected with status 401"
+            }
+          ]
+        }
+      ],
+      "flows": [
+        {
+          "key": "PAY-F1",
+          "name": "Full payment flow",
+          "description": "Intent → webhook → refund.",
+          "tags": [
+            "api"
+          ],
+          "shared_session": false,
+          "stop_on_failure": true,
+          "variables": {},
+          "items": [
+            {
+              "test_case": "PAY-T1",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "PAY-T2",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "PAY-T3",
+              "continue_on_failure": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

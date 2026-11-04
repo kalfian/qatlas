@@ -11,7 +11,32 @@ Tujuan: AI (Claude Code, Claude Desktop, IDE agent, dll.) bisa menjalankan siklu
   claude mcp add --transport http qatlas https://qatlas.example.com/mcp \
     --header "Authorization: Bearer qat_xxx"
   ```
-- Opsional (phase 5): `qatlas mcp-stdio --url ... --token ...` sebagai proxy untuk client yang hanya mendukung stdio.
+- `qatlas mcp-stdio --url ... --token ...` sebagai proxy untuk client yang hanya mendukung stdio (lihat [Connecting Claude Code](#connecting-claude-code)).
+- Mode **stateless** (tanpa `Mcp-Session-Id`): setiap POST berdiri sendiri, jadi restart server / beberapa instance tidak memutus client. GET `/mcp` → 405 (server tidak pernah mengirim pesan duluan).
+- Token tanpa header / tidak valid / dicabut → `401` (`WWW-Authenticate: Bearer`). Cookie sesi browser **tidak** diterima di `/mcp` (karena itu tidak perlu CSRF).
+- Scope token: `read` untuk list/get/validate/wait/report, `write` untuk create/update, `run` untuk `run_*`/`cancel_run`; batas project pada token dan role user tetap berlaku (via `authz.ProjectAccess`).
+
+## Connecting Claude Code
+
+Buat API token di `/settings/tokens` (scope `read` + `write` + `run` untuk siklus penuh; `read` saja untuk analisis), lalu:
+
+```bash
+# Streamable HTTP (disarankan)
+claude mcp add --transport http qatlas https://qatlas.example.com/mcp \
+  --header "Authorization: Bearer qat_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+
+# Bagikan ke seluruh tim lewat .mcp.json repo (token dari env masing-masing developer):
+claude mcp add --scope project --transport http qatlas https://qatlas.example.com/mcp \
+  --header 'Authorization: Bearer ${QATLAS_TOKEN}'
+```
+
+Alternatif stdio (client yang hanya mendukung stdio, atau jaringan yang memblok long-poll HTTP). Binary `qatlas` harus ada di `PATH` mesin client; token lewat env agar tidak terlihat di daftar proses:
+
+```bash
+claude mcp add qatlas -e QATLAS_TOKEN=qat_xxx -- qatlas mcp-stdio --url https://qatlas.example.com
+```
+
+`mcp-stdio` menerima `--url` (atau `QATLAS_URL`; `/mcp` ditambahkan otomatis) dan `--token` (atau `QATLAS_TOKEN`), menyambung ke `/mcp` server, lalu meneruskan semua tool, resource dan prompt apa adanya — otorisasi tetap di server. Cek dengan `claude mcp list` / `/mcp` di Claude Code; coba "list QAtlas projects".
 
 ## Tools
 
@@ -82,7 +107,8 @@ Ini dijalankan sebagai job worker singkat lewat runner Playwright (kandidat: `lo
 
 - Tidak ada tool delete di v1 (hapus hanya via UI) — mengurangi risiko AI merusak data.
 - AI boleh **membuat** test case manual dan memicu run-nya, tapi **tidak bisa mengisi hasil manual** (itu tugas manusia). `wait_for_run` mengembalikan `awaiting_manual` + assignee agar AI berhenti menunggu dan memberi tahu user.
-- Semua aksi tercatat di audit log dengan `actor_token_id` dan trigger `mcp`; run dari MCP diberi label "via MCP" di UI.
+- Semua aksi tercatat di audit log dengan `actor_token_id` dan trigger `mcp`; run dari MCP diberi label "via MCP" di UI. Implementasi: entry service biasa (mis. `test_case.create`, `run.create` dengan `meta.trigger=mcp`) + satu entry `mcp.tool_call` (`meta.tool`, `meta.trigger=mcp`) per tool yang mengubah data.
 - Secret tidak pernah dikembalikan; hanya nama.
-- Rate limit per token (mis. maks run paralel per token).
-- Output dibatasi ukurannya (pagination, potong log panjang) agar hemat context AI.
+- Rate limit per token: maks **3** run yang dibuat via MCP berstatus `queued`/`running` sekaligus per token (`awaiting_manual` dan run selesai tidak dihitung) → tool error `rate_limited` berisi daftar run aktif.
+- Output dibatasi ukurannya (pagination, potong log panjang) agar hemat context AI: list default 25 / maks 100 dengan `next_cursor`; `wait_for_run` `timeout_s` maks 120; `get_run_report` menampilkan step gagal lengkap (error ≤ 1500 karakter, details ≤ 2000) dan step lulus ringkas (maks 80 per case), screenshot maks 5 gambar ≤ 1 MB (sisanya berupa link).
+- Error tool berbentuk `{"error":{"code","message","details":[{path,message}]},"hint"}` dengan `isError: true` — sama dengan envelope REST plus saran langkah berikutnya untuk AI.

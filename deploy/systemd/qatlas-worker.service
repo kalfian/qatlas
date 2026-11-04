@@ -1,0 +1,61 @@
+# QAtlas job worker: runs test runs through the Node/Playwright runner
+# (docs/12-deployment.md, option B). Installed by deploy/install.sh. May run on
+# another LXC than the server as long as it reaches the same Postgres.
+# Local overrides: `systemctl edit qatlas-worker` (drop-in), never edit this file in place.
+[Unit]
+Description=QAtlas worker (Playwright runner)
+Documentation=https://github.com/kalfian/qatlas/blob/main/deploy/README.md
+Wants=network-online.target
+After=network-online.target postgresql.service
+Conflicts=qatlas.service
+
+[Service]
+Type=simple
+User=qatlas
+Group=qatlas
+WorkingDirectory=/var/lib/qatlas
+# Chromium writes its profile/crashpad data under $HOME.
+Environment=HOME=/var/lib/qatlas
+Environment=QATLAS_DATA_DIR=/var/lib/qatlas
+Environment="QATLAS_RUNNER_CMD=node /opt/qatlas/current/runner/dist/main.js"
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/qatlas/ms-playwright
+# Values in the file override the defaults above.
+EnvironmentFile=/etc/qatlas/qatlas.env
+ExecStart=/opt/qatlas/current/bin/qatlas worker
+Restart=on-failure
+RestartSec=5s
+# SIGTERM goes to the worker only; it cancels in-flight runs and stops the runner
+# (which closes the browsers). Whatever is left is SIGKILLed after the timeout.
+KillMode=mixed
+TimeoutStopSec=60s
+LimitNOFILE=65536
+UMask=0027
+
+# Hardening, kept compatible with Chromium (Playwright launches it with
+# --no-sandbox, so no user namespaces / setuid sandbox are needed):
+#  - no MemoryDenyWriteExecute (V8/Node JIT needs W+X pages),
+#  - no SystemCallFilter / RestrictNamespaces / PrivateDevices (Chromium uses a
+#    wide syscall set, /dev/shm and namespaces when its sandbox is enabled),
+#  - AF_NETLINK for Chromium's network-change monitor.
+# In an unprivileged Proxmox LXC these need `features: nesting=1`.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/qatlas
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target

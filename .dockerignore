@@ -1,0 +1,32 @@
+# Build context for deploy/Dockerfile.server and deploy/Dockerfile.worker (context = repo root).
+# Dependencies and build outputs are recreated inside the images.
+.git
+.github
+**/node_modules
+**/dist
+dist
+coverage
+**/coverage
+
+# Test and report output
+**/test-results
+**/playwright-report
+**/blob-report
+**/*.log
+
+# Local config and data — never bake secrets or local artifacts into an image
+**/.env
+**/.env.*
+!**/.env.example
+backend/data
+data
+
+# Editor / OS noise
+.DS_Store
+**/.DS_Store
+.idea
+.vscode
+
+# Not needed by any image build
+docs
+deploy/dev

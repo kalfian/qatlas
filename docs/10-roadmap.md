@@ -10,28 +10,28 @@ Urutan sengaja **frontend dulu**: Phase 1 membangun seluruh user journey di FE d
 - [x] Kontrak API v0 (`api/openapi.yaml`) + types FE
 - [x] Mock API (MSW) + seed + simulator run, jalan juga via `http://<ip>`
 - [x] Semua halaman & journey J1–J12 (e2e 10 tes lolos)
-- [~] i18n: default English, bisa ganti Bahasa Indonesia di pengaturan akun
+- [x] i18n: default English, bisa ganti Bahasa Indonesia di pengaturan akun (tersimpan di profil)
 
 **Phase 2 — Backend core**
-- [~] Fondasi Go: config, DB + migrasi skema lengkap, httpx, authz, audit
-- [~] Auth: email/password, session + CSRF, rate limit, invite, Google OIDC, API token
-- [~] User & admin (`/me`, `/admin/users`, token)
-- [ ] Project, member, stats, environment + secret terenkripsi
-- [ ] Folder, test case (validasi DSL, revisi, bulk), flow
-- [ ] FE mode `real` (proxy `/api`, CSRF header, `/auth/config`)
-- [ ] Run manual end-to-end di backend
+- [x] Fondasi Go: config, DB + migrasi skema lengkap, httpx, authz, audit
+- [x] Auth: email/password, session + CSRF, rate limit, invite, Google OIDC, API token (Google round-trip asli belum bisa diuji tanpa client ID)
+- [x] User & admin (`/me`, `/admin/users`, token)
+- [x] Project, member, stats, environment + secret terenkripsi (AES-256-GCM)
+- [x] Folder, test case (validasi DSL, revisi, bulk), flow
+- [~] FE mode `real` (proxy `/api`, CSRF header, `/auth/config`, SSE) — kode siap, menunggu e2e terhadap backend
+- [x] Run manual end-to-end di backend (hasil per step, lampiran, complete, flow campuran lanjut)
 
 **Phase 3 — Runner & reporting**
 - [x] Runner Node + Playwright resmi (protokol NDJSON) + demo target app (19 tes integrasi)
-- [ ] Worker Go (River), supervisor runner, enqueue transaksional, cancel, crash recovery
-- [ ] Artifact store (local/S3) + retention, SSE live progress
-- [ ] Flow run (shared/isolated, stop on failure, campuran manual), retries, re-run failed
+- [x] Worker Go (River), supervisor runner, enqueue transaksional, cancel, timeout, crash recovery
+- [x] Artifact store lokal + retention, SSE live progress (S3 belum)
+- [x] Flow run (shared/isolated, stop on failure, campuran manual), retries, re-run failed
 
 **Phase 4 — MCP & API token**
-- [ ] MCP server (tools konteks, test case, flow, run, report + screenshot), rate limit per token
+- [x] MCP server (19 tools, report + screenshot sebagai gambar), rate limit per token, proxy `mcp-stdio` (`inspect_page` belum)
 
 **Phase 5 — Hardening & extras**
-- [ ] Deployment: Dockerfile server/worker, docker-compose, systemd + install script (Proxmox LXC)
+- [x] Deployment: Dockerfile server/worker, docker-compose, systemd + install/rollback script, Makefile & release tarball (belum diuji di LXC Proxmox asli)
 - [ ] Demo seed backend (`qatlas seed demo`) terhadap demo target
 - [ ] JUnit export & contoh CI trigger
 - [ ] README + manual pengguna dengan screenshot & video

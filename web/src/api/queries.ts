@@ -1,4 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
+import * as React from 'react'
+import { IS_MOCK } from '@/app/config'
 import { api, API_BASE, ApiError, CSRF_HEADERS, unwrap } from './client'
 import type {
   ApiTokenCreate,
@@ -508,14 +510,31 @@ const ACTIVE: RunStatus[] = ['queued', 'running']
  * Progres run. Phase 1: polling saat run aktif (MSW mensimulasikan progres).
  * Phase 3: diganti SSE /runs/{key}/events tanpa mengubah komponen pemakai.
  */
+/**
+ * Progres run. Mode mock: polling. Mode real: SSE `/runs/{key}/events` meng-invalidate query
+ * (polling tetap aktif sebagai fallback yang lebih jarang).
+ */
 export function useRunProgress(runKey: string) {
+  const qc = useQueryClient()
+  React.useEffect(() => {
+    if (IS_MOCK || !runKey || typeof EventSource === 'undefined') return
+    const es = new EventSource(`${API_BASE}/runs/${encodeURIComponent(runKey)}/events`, { withCredentials: true })
+    const refresh = () => {
+      void qc.invalidateQueries({ queryKey: qk.run(runKey) })
+    }
+    es.onmessage = refresh
+    for (const type of ['run_started', 'case_started', 'step_started', 'step_finished', 'case_finished', 'awaiting_manual', 'run_finished', 'run_updated']) {
+      es.addEventListener(type, refresh)
+    }
+    return () => es.close()
+  }, [qc, runKey])
   return useQuery({
     queryKey: qk.run(runKey),
     queryFn: () => unwrap(api.GET('/runs/{runKey}', { params: { path: { runKey } } })),
     refetchInterval: (q) => {
       const s = q.state.data?.status
       if (!s) return false
-      if (ACTIVE.includes(s)) return 700
+      if (ACTIVE.includes(s)) return IS_MOCK ? 700 : 3000
       if (s === 'awaiting_manual') return 4000
       return false
     },

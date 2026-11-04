@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1
+#
+# QAtlas worker image: `qatlas worker` + the Node runner, on the official
+# Playwright image (browser builds + OS deps for the exact npm version 1.64.1).
+#
+#   docker build -f deploy/Dockerfile.worker -t qatlas-worker:<version> --build-arg VERSION=<version> .
+#
+# Build context is the repository root (see /.dockerignore). Keep PLAYWRIGHT_TAG
+# in lock-step with "playwright" in runner/package.json.
+
+ARG NODE_VERSION=22.23.3
+ARG GO_VERSION=1.27.1
+ARG PLAYWRIGHT_TAG=v1.64.1-noble
+
+# ------------------------------------------------------------------ runner --
+FROM node:${NODE_VERSION}-alpine AS runner
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+    CI=true
+WORKDIR /src
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY web/package.json web/
+COPY runner/package.json runner/
+COPY demo-target/package.json demo-target/
+RUN --mount=type=cache,id=qatlas-pnpm-store,target=/pnpm-store \
+    corepack pnpm config set store-dir /pnpm-store && \
+    corepack pnpm install --frozen-lockfile --filter @qatlas/runner
+COPY runner/ runner/
+RUN corepack pnpm --filter @qatlas/runner build
+# Self-contained production copy (dist + package.json + node_modules with only
+# `playwright`), resolved from the workspace lockfile.
+RUN --mount=type=cache,id=qatlas-pnpm-store,target=/pnpm-store \
+    corepack pnpm --filter @qatlas/runner deploy --prod --legacy /out/runner
+
+# ------------------------------------------------------------ backend (Go) --
+FROM golang:${GO_VERSION}-alpine AS go
+WORKDIR /src/backend
+COPY backend/go.mod backend/go.sum ./
+RUN --mount=type=cache,id=qatlas-gomod,target=/go/pkg/mod \
+    go mod download
+COPY backend/ ./
+ARG VERSION=dev
+RUN --mount=type=cache,id=qatlas-gomod,target=/go/pkg/mod \
+    --mount=type=cache,id=qatlas-gobuild,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION}" \
+      -o /out/qatlas ./cmd/qatlas
+
+# ------------------------------------------------------------------ runtime --
+FROM mcr.microsoft.com/playwright:${PLAYWRIGHT_TAG}
+ARG VERSION=dev
+LABEL org.opencontainers.image.title="qatlas-worker" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.source="https://github.com/kalfian/qatlas"
+# The base image ships browsers in /ms-playwright (PLAYWRIGHT_BROWSERS_PATH) and
+# the non-root user `pwuser` (uid 1001) — the server image uses the same uid.
+RUN mkdir -p /var/lib/qatlas && chown pwuser:pwuser /var/lib/qatlas
+COPY --from=go /out/qatlas /usr/local/bin/qatlas
+COPY --from=runner /out/runner/package.json /opt/qatlas/runner/package.json
+COPY --from=runner /out/runner/node_modules /opt/qatlas/runner/node_modules
+COPY --from=runner /out/runner/dist /opt/qatlas/runner/dist
+ENV QATLAS_DATA_DIR=/var/lib/qatlas \
+    QATLAS_RUNNER_CMD="node /opt/qatlas/runner/dist/main.js" \
+    HOME=/home/pwuser
+WORKDIR /var/lib/qatlas
+USER pwuser:pwuser
+VOLUME ["/var/lib/qatlas"]
+ENTRYPOINT ["/usr/local/bin/qatlas"]
+CMD ["worker"]

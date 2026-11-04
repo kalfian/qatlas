@@ -4,7 +4,7 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 import { ApiError } from '@/api/client'
-import { useLogin, useMe, useMockGoogleLogin } from '@/api/queries'
+import { useAuthConfig, useLogin, useMe, useMockGoogleLogin } from '@/api/queries'
 import { IS_MOCK } from '@/app/config'
 import { Avatar } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -95,6 +95,8 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
     )
   }
 
+  const authConfig = useAuthConfig()
+  const googleEnabled = IS_MOCK || authConfig.data?.google_enabled === true
   const google = () => {
     setBanner(null)
     if (IS_MOCK) setGoogleOpen(true)
@@ -164,12 +166,16 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
         </Button>
       </form>
 
-      <OrDivider />
+      {googleEnabled && (
+        <>
+          <OrDivider />
 
-      <Button type="button" variant="outline" size="lg" className="w-full" onClick={google} disabled={login.isPending}>
-        <GoogleIcon className="size-4" />
-        {t('login.google')}
-      </Button>
+          <Button type="button" variant="outline" size="lg" className="w-full" onClick={google} disabled={login.isPending}>
+            <GoogleIcon className="size-4" />
+            {t('login.google')}
+          </Button>
+        </>
+      )}
 
       {IS_MOCK && (
         <MockGoogleDialog

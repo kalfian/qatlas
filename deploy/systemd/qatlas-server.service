@@ -1,0 +1,57 @@
+# QAtlas API + web (docs/12-deployment.md, option B). Installed by deploy/install.sh.
+# Local overrides: `systemctl edit qatlas-server` (drop-in), never edit this file in place.
+[Unit]
+Description=QAtlas server (API + web)
+Documentation=https://github.com/kalfian/qatlas/blob/main/deploy/README.md
+Wants=network-online.target
+After=network-online.target postgresql.service
+Conflicts=qatlas.service
+
+[Service]
+Type=simple
+User=qatlas
+Group=qatlas
+WorkingDirectory=/var/lib/qatlas
+Environment=HOME=/var/lib/qatlas
+Environment=QATLAS_HTTP_ADDR=:8090
+Environment=QATLAS_DATA_DIR=/var/lib/qatlas
+Environment=QATLAS_WEB_DIR=/opt/qatlas/current/web
+# Values in the file override the defaults above.
+EnvironmentFile=/etc/qatlas/qatlas.env
+ExecStart=/opt/qatlas/current/bin/qatlas server
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+LimitNOFILE=65536
+UMask=0027
+
+# Hardening. In an unprivileged Proxmox LXC these need `features: nesting=1`
+# (default for new CTs); a 226/NAMESPACE exit status means it is missing.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/qatlas
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,55 @@
+# QAtlas all-in-one: API + web + worker in one process (`qatlas all`) for small
+# installations (docs/12-deployment.md, option B). Installed by deploy/install.sh
+# with --mode all. Mutually exclusive with qatlas-server/qatlas-worker.
+# Local overrides: `systemctl edit qatlas` (drop-in), never edit this file in place.
+[Unit]
+Description=QAtlas (server + worker)
+Documentation=https://github.com/kalfian/qatlas/blob/main/deploy/README.md
+Wants=network-online.target
+After=network-online.target postgresql.service
+Conflicts=qatlas-server.service qatlas-worker.service
+
+[Service]
+Type=simple
+User=qatlas
+Group=qatlas
+WorkingDirectory=/var/lib/qatlas
+Environment=HOME=/var/lib/qatlas
+Environment=QATLAS_HTTP_ADDR=:8090
+Environment=QATLAS_DATA_DIR=/var/lib/qatlas
+Environment=QATLAS_WEB_DIR=/opt/qatlas/current/web
+Environment="QATLAS_RUNNER_CMD=node /opt/qatlas/current/runner/dist/main.js"
+Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/qatlas/ms-playwright
+# Values in the file override the defaults above.
+EnvironmentFile=/etc/qatlas/qatlas.env
+ExecStart=/opt/qatlas/current/bin/qatlas all
+Restart=on-failure
+RestartSec=5s
+KillMode=mixed
+TimeoutStopSec=60s
+LimitNOFILE=65536
+UMask=0027
+
+# Same Chromium-compatible hardening as qatlas-worker.service (see there).
+# In an unprivileged Proxmox LXC these need `features: nesting=1`.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/var/lib/qatlas
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallArchitectures=native
+
+[Install]
+WantedBy=multi-user.target
