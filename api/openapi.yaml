@@ -1,0 +1,1576 @@
+openapi: 3.1.0
+info:
+  title: QAtlas API
+  version: 0.1.0
+  description: |
+    Kontrak API QAtlas v0 (Phase 1). Dipakai oleh mock MSW di frontend dan menjadi
+    baseline implementasi backend Go (Phase 2+). Lihat docs/08-api.md.
+
+    Konvensi: JSON, waktu ISO-8601 UTC, error `{ "error": { code, message, details } }`.
+    Auth: cookie session (web) atau `Authorization: Bearer qat_...` (API token).
+servers:
+  - url: /api/v1
+security:
+  - session: []
+  - bearer: []
+
+tags:
+  - name: auth
+  - name: me
+  - name: admin
+  - name: projects
+  - name: environments
+  - name: test-cases
+  - name: flows
+  - name: runs
+
+paths:
+  # ---------------------------------------------------------------- auth
+  /auth/login:
+    post:
+      tags: [auth]
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LoginRequest' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+        '429': { $ref: '#/components/responses/Error' }
+  /auth/logout:
+    post:
+      tags: [auth]
+      operationId: logout
+      responses:
+        '204': { description: Logged out }
+  /auth/google/start:
+    get:
+      tags: [auth]
+      operationId: googleStart
+      security: []
+      description: Redirect browser ke Google (OAuth2 + PKCE). Callback menolak email yang tidak terdaftar dengan redirect ke `/login?error=not_registered`.
+      parameters:
+        - { name: invite, in: query, required: false, schema: { type: string } }
+      responses:
+        '302': { description: Redirect ke Google }
+  /auth/google/callback:
+    get:
+      tags: [auth]
+      operationId: googleCallback
+      security: []
+      parameters:
+        - { name: code, in: query, required: true, schema: { type: string } }
+        - { name: state, in: query, required: true, schema: { type: string } }
+      responses:
+        '302': { description: Redirect ke app (sukses) atau /login?error=... }
+  /auth/invites/{token}:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string } }
+    get:
+      tags: [auth]
+      operationId: getInvite
+      security: []
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/InviteInfo' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+  /auth/invites/{token}/accept:
+    parameters:
+      - { name: token, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [auth]
+      operationId: acceptInvite
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password: { type: string, minLength: 10 }
+      responses:
+        '200': { description: OK (sudah login), content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+        '410': { $ref: '#/components/responses/Error' }
+
+  # ---------------------------------------------------------------- me
+  /me:
+    get:
+      tags: [me]
+      operationId: getMe
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
+        '401': { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [me]
+      operationId: updateMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1 }
+                current_password: { type: string }
+                new_password: { type: string, minLength: 10 }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /me/tokens:
+    get:
+      tags: [me]
+      operationId: listTokens
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/ApiToken' } }
+    post:
+      tags: [me]
+      operationId: createToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ApiTokenCreate' }
+      responses:
+        '201':
+          description: Token dibuat. `secret` hanya dikembalikan sekali.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [token, secret]
+                properties:
+                  token: { $ref: '#/components/schemas/ApiToken' }
+                  secret: { type: string, example: qat_ab12cd34_xxxxxxxxxxxxxxxxxxxxxxxx }
+        '400': { $ref: '#/components/responses/Error' }
+  /me/tokens/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    delete:
+      tags: [me]
+      operationId: revokeToken
+      responses:
+        '204': { description: Revoked }
+        '404': { $ref: '#/components/responses/Error' }
+  /me/manual-runs:
+    get:
+      tags: [me]
+      operationId: listMyManualRuns
+      description: Run yang menunggu eksekusi manual dan ditugaskan ke user ini (lintas project).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RunSummary' } }
+
+  # ---------------------------------------------------------------- admin
+  /admin/users:
+    get:
+      tags: [admin]
+      operationId: adminListUsers
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/User' } }
+        '403': { $ref: '#/components/responses/Error' }
+    post:
+      tags: [admin]
+      operationId: adminCreateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, name, system_role]
+              properties:
+                email: { type: string, format: email }
+                name: { type: string, minLength: 1 }
+                system_role: { $ref: '#/components/schemas/SystemRole' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/UserInvite' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+  /admin/users/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    patch:
+      tags: [admin]
+      operationId: adminUpdateUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                system_role: { $ref: '#/components/schemas/SystemRole' }
+                status: { type: string, enum: [active, disabled] }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
+        '400': { $ref: '#/components/responses/Error' }
+  /admin/users/{id}/invite-link:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    post:
+      tags: [admin]
+      operationId: adminRegenerateInvite
+      description: Buat ulang link invite (user `invited`) atau link reset password (user `active`).
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/UserInvite' } } } }
+
+  # ---------------------------------------------------------------- projects
+  /projects:
+    get:
+      tags: [projects]
+      operationId: listProjects
+      parameters:
+        - { name: include_archived, in: query, schema: { type: boolean } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/ProjectSummary' } }
+    post:
+      tags: [projects]
+      operationId: createProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [key, name]
+              properties:
+                key: { type: string, pattern: '^[A-Z][A-Z0-9]{1,9}$' }
+                name: { type: string, minLength: 1 }
+                description: { type: string }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+  /projects/{key}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [projects]
+      operationId: getProject
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [projects]
+      operationId: updateProject
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                description: { type: string }
+                default_run_options: { $ref: '#/components/schemas/RunOptions' }
+                artifact_retention_days: { type: integer, minimum: 1, maximum: 365 }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
+  /projects/{key}/archive:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    post:
+      tags: [projects]
+      operationId: archiveProject
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
+  /projects/{key}/stats:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [projects]
+      operationId: getProjectStats
+      parameters:
+        - { name: range, in: query, schema: { type: string, enum: [7d, 30d], default: 7d } }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ProjectStats' } } } }
+  /projects/{key}/members:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [projects]
+      operationId: listMembers
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Member' } }
+    post:
+      tags: [projects]
+      operationId: addMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id, role]
+              properties:
+                user_id: { type: string }
+                role: { $ref: '#/components/schemas/ProjectRole' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Member' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+  /projects/{key}/members/{userId}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+      - { name: userId, in: path, required: true, schema: { type: string } }
+    patch:
+      tags: [projects]
+      operationId: updateMember
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [role]
+              properties:
+                role: { $ref: '#/components/schemas/ProjectRole' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Member' } } } }
+    delete:
+      tags: [projects]
+      operationId: removeMember
+      responses:
+        '204': { description: Removed }
+  /projects/{key}/assignable-users:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [projects]
+      operationId: listAssignableUsers
+      description: User aktif yang bisa ditambahkan sebagai member (untuk maintainer).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/UserRef' } }
+
+  # ---------------------------------------------------------------- environments
+  /projects/{key}/environments:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [environments]
+      operationId: listEnvironments
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Environment' } }
+    post:
+      tags: [environments]
+      operationId: createEnvironment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnvironmentInput' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Environment' } } } }
+  /projects/{key}/environments/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+      - { $ref: '#/components/parameters/Id' }
+    patch:
+      tags: [environments]
+      operationId: updateEnvironment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnvironmentInput' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Environment' } } } }
+    delete:
+      tags: [environments]
+      operationId: deleteEnvironment
+      responses:
+        '204': { description: Deleted }
+  /projects/{key}/environments/{id}/secrets/{name}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+      - { $ref: '#/components/parameters/Id' }
+      - { name: name, in: path, required: true, schema: { type: string, pattern: '^[A-Z][A-Z0-9_]*$' } }
+    put:
+      tags: [environments]
+      operationId: setSecret
+      description: Write-only. Nilai secret tidak pernah dikembalikan.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [value]
+              properties:
+                value: { type: string, minLength: 1 }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Environment' } } } }
+    delete:
+      tags: [environments]
+      operationId: deleteSecret
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Environment' } } } }
+
+  # ---------------------------------------------------------------- folders & test cases
+  /projects/{key}/folders:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [test-cases]
+      operationId: listFolders
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/Folder' } }
+    post:
+      tags: [test-cases]
+      operationId: createFolder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, minLength: 1 }
+                parent_id: { type: [string, 'null'] }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Folder' } } } }
+  /projects/{key}/folders/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+      - { $ref: '#/components/parameters/Id' }
+    patch:
+      tags: [test-cases]
+      operationId: updateFolder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string, minLength: 1 }
+                parent_id: { type: [string, 'null'] }
+                position: { type: integer }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Folder' } } } }
+    delete:
+      tags: [test-cases]
+      operationId: deleteFolder
+      description: Sub-folder dan test case di dalamnya dipindah ke parent folder.
+      responses:
+        '204': { description: Deleted }
+  /projects/{key}/test-cases:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [test-cases]
+      operationId: listTestCases
+      parameters:
+        - { name: folder, in: query, description: 'ID folder, atau `root`', schema: { type: string } }
+        - { name: q, in: query, schema: { type: string } }
+        - { name: tags, in: query, description: Dipisah koma, schema: { type: string } }
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/TestCaseStatus' } }
+        - { name: priority, in: query, schema: { $ref: '#/components/schemas/Priority' } }
+        - { name: execution, in: query, schema: { $ref: '#/components/schemas/Execution' } }
+        - { name: last_run_status, in: query, schema: { $ref: '#/components/schemas/RunStatus' } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, next_cursor]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/TestCaseSummary' } }
+                  next_cursor: { type: [string, 'null'] }
+    post:
+      tags: [test-cases]
+      operationId: createTestCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TestCaseInput' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/TestCase' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+  /projects/{key}/test-cases/validate:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    post:
+      tags: [test-cases]
+      operationId: validateTestCase
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/TestCaseInput' }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/ValidationResult' } } } }
+  /projects/{key}/test-cases/bulk:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    post:
+      tags: [test-cases]
+      operationId: bulkTestCases
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BulkTestCaseAction' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [updated]
+                properties:
+                  updated: { type: integer }
+  /projects/{key}/tags:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [test-cases]
+      operationId: listTags
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      required: [tag, count]
+                      properties:
+                        tag: { type: string }
+                        count: { type: integer }
+  /test-cases/{caseKey}:
+    parameters:
+      - { $ref: '#/components/parameters/CaseKey' }
+    get:
+      tags: [test-cases]
+      operationId: getTestCase
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/TestCase' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [test-cases]
+      operationId: updateTestCase
+      description: '`revision` wajib dan harus sama dengan revision terkini; jika tidak → 409.'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/TestCaseInput' }
+                - type: object
+                  required: [revision]
+                  properties:
+                    revision: { type: integer }
+                    change_note: { type: string }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/TestCase' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [test-cases]
+      operationId: deleteTestCase
+      responses:
+        '204': { description: Deleted (soft) }
+        '409': { description: Masih dipakai di flow, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /test-cases/{caseKey}/duplicate:
+    parameters:
+      - { $ref: '#/components/parameters/CaseKey' }
+    post:
+      tags: [test-cases]
+      operationId: duplicateTestCase
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/TestCase' } } } }
+  /test-cases/{caseKey}/revisions:
+    parameters:
+      - { $ref: '#/components/parameters/CaseKey' }
+    get:
+      tags: [test-cases]
+      operationId: listRevisions
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RevisionSummary' } }
+  /test-cases/{caseKey}/revisions/{rev}:
+    parameters:
+      - { $ref: '#/components/parameters/CaseKey' }
+      - { name: rev, in: path, required: true, schema: { type: integer } }
+    get:
+      tags: [test-cases]
+      operationId: getRevision
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Revision' } } } }
+
+  # ---------------------------------------------------------------- flows
+  /projects/{key}/flows:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [flows]
+      operationId: listFlows
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/FlowSummary' } }
+    post:
+      tags: [flows]
+      operationId: createFlow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FlowInput' }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Flow' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+  /flows/{flowKey}:
+    parameters:
+      - { name: flowKey, in: path, required: true, schema: { type: string, example: SHOP-F3 } }
+    get:
+      tags: [flows]
+      operationId: getFlow
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Flow' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+    patch:
+      tags: [flows]
+      operationId: updateFlow
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - { $ref: '#/components/schemas/FlowInput' }
+                - type: object
+                  required: [revision]
+                  properties:
+                    revision: { type: integer }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Flow' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [flows]
+      operationId: deleteFlow
+      responses:
+        '204': { description: Deleted }
+
+  # ---------------------------------------------------------------- runs
+  /projects/{key}/runs:
+    parameters:
+      - { $ref: '#/components/parameters/ProjectKey' }
+    get:
+      tags: [runs]
+      operationId: listRuns
+      parameters:
+        - { name: status, in: query, schema: { $ref: '#/components/schemas/RunStatus' } }
+        - { name: target, in: query, description: Key test case atau flow, schema: { type: string } }
+        - { name: kind, in: query, schema: { $ref: '#/components/schemas/RunKind' } }
+        - { name: trigger, in: query, schema: { $ref: '#/components/schemas/RunTrigger' } }
+        - { name: from, in: query, schema: { type: string, format: date } }
+        - { name: to, in: query, schema: { type: string, format: date } }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Cursor' }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [data, next_cursor]
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/RunSummary' } }
+                  next_cursor: { type: [string, 'null'] }
+    post:
+      tags: [runs]
+      operationId: createRun
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RunCreate' }
+      responses:
+        '202': { description: Run dibuat (queued / awaiting_manual), content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } } }
+        '422': { $ref: '#/components/responses/Error' }
+  /runs/{runKey}:
+    parameters:
+      - { $ref: '#/components/parameters/RunKey' }
+    get:
+      tags: [runs]
+      operationId: getRun
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } } }
+        '404': { $ref: '#/components/responses/Error' }
+  /runs/{runKey}/events:
+    parameters:
+      - { $ref: '#/components/parameters/RunKey' }
+    get:
+      tags: [runs]
+      operationId: streamRunEvents
+      description: |
+        Server-Sent Events (Phase 3). Event: run_started, case_started, step_started,
+        step_finished, case_finished, awaiting_manual, run_finished. Payload: `RunEvent`.
+      responses:
+        '200':
+          description: SSE stream
+          content:
+            text/event-stream:
+              schema: { $ref: '#/components/schemas/RunEvent' }
+  /runs/{runKey}/cancel:
+    parameters:
+      - { $ref: '#/components/parameters/RunKey' }
+    post:
+      tags: [runs]
+      operationId: cancelRun
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+  /runs/{runKey}/rerun:
+    parameters:
+      - { $ref: '#/components/parameters/RunKey' }
+    post:
+      tags: [runs]
+      operationId: rerun
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                only_failed: { type: boolean, default: false }
+      responses:
+        '202': { description: Run baru, content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } } }
+  /runs/{runKey}/assignee:
+    parameters:
+      - { $ref: '#/components/parameters/RunKey' }
+    patch:
+      tags: [runs]
+      operationId: setRunAssignee
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [user_id]
+              properties:
+                user_id: { type: string }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } } }
+  /runs/{runKey}/cases/{caseId}/steps/{stepId}/manual-result:
+    parameters:
+      - { $ref: '#/components/parameters/RunKey' }
+      - { name: caseId, in: path, required: true, schema: { type: string } }
+      - { name: stepId, in: path, required: true, schema: { type: string }, description: ID run_step }
+    put:
+      tags: [runs]
+      operationId: setManualStepResult
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [pending, passed, failed, blocked, skipped] }
+                actual_result: { type: string }
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+  /runs/{runKey}/cases/{caseId}/attachments:
+    parameters:
+      - { $ref: '#/components/parameters/RunKey' }
+      - { name: caseId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [runs]
+      operationId: uploadAttachment
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+                run_step_id: { type: string }
+      responses:
+        '201': { description: Created, content: { application/json: { schema: { $ref: '#/components/schemas/Artifact' } } } }
+        '413': { $ref: '#/components/responses/Error' }
+  /runs/{runKey}/cases/{caseId}/complete-manual:
+    parameters:
+      - { $ref: '#/components/parameters/RunKey' }
+      - { name: caseId, in: path, required: true, schema: { type: string } }
+    post:
+      tags: [runs]
+      operationId: completeManualCase
+      description: Hitung status case manual; jika run adalah flow, lanjutkan item berikutnya.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Run' } } } }
+        '409': { description: Masih ada step pending, content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } } }
+  /artifacts/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/Id' }
+    get:
+      tags: [runs]
+      operationId: getArtifact
+      description: File artifact (mendukung HTTP Range) atau redirect ke presigned URL.
+      responses:
+        '200': { description: File }
+        '302': { description: Redirect ke presigned URL }
+        '410': { $ref: '#/components/responses/Error' }
+
+components:
+  securitySchemes:
+    session:
+      type: apiKey
+      in: cookie
+      name: qatlas_session
+    bearer:
+      type: http
+      scheme: bearer
+      description: API token `qat_...`
+
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    ProjectKey:
+      name: key
+      in: path
+      required: true
+      schema: { type: string, example: SHOP }
+    CaseKey:
+      name: caseKey
+      in: path
+      required: true
+      schema: { type: string, example: SHOP-T12 }
+    RunKey:
+      name: runKey
+      in: path
+      required: true
+      schema: { type: string, example: SHOP-R105 }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 200, default: 50 }
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+
+  responses:
+    Error:
+      description: Error
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: validation_failed }
+            message: { type: string }
+            details:
+              type: array
+              items: { $ref: '#/components/schemas/FieldError' }
+    FieldError:
+      type: object
+      required: [path, message]
+      properties:
+        path: { type: string, example: 'steps[3].selector' }
+        message: { type: string }
+
+    # ---- identity
+    SystemRole: { type: string, enum: [admin, member] }
+    ProjectRole: { type: string, enum: [maintainer, editor, viewer] }
+    UserStatus: { type: string, enum: [invited, active, disabled] }
+    UserRef:
+      type: object
+      required: [id, name, email]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        email: { type: string }
+    User:
+      type: object
+      required: [id, email, name, system_role, status, has_password, google_linked, last_login_at, created_at]
+      properties:
+        id: { type: string }
+        email: { type: string, format: email }
+        name: { type: string }
+        system_role: { $ref: '#/components/schemas/SystemRole' }
+        status: { $ref: '#/components/schemas/UserStatus' }
+        has_password: { type: boolean }
+        google_linked: { type: boolean }
+        last_login_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+    UserInvite:
+      type: object
+      required: [user, invite_url, expires_at]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        invite_url: { type: string }
+        expires_at: { type: string, format: date-time }
+    Me:
+      type: object
+      required: [user, projects]
+      properties:
+        user: { $ref: '#/components/schemas/User' }
+        projects:
+          type: array
+          items:
+            type: object
+            required: [key, name, role]
+            properties:
+              key: { type: string }
+              name: { type: string }
+              role: { $ref: '#/components/schemas/ProjectRole' }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, format: email }
+        password: { type: string }
+    InviteInfo:
+      type: object
+      required: [email, name, expires_at, kind]
+      properties:
+        email: { type: string }
+        name: { type: string }
+        kind: { type: string, enum: [invite, reset_password] }
+        expires_at: { type: string, format: date-time }
+    TokenScope: { type: string, enum: [read, write, run] }
+    ApiToken:
+      type: object
+      required: [id, name, prefix, scopes, project_keys, expires_at, last_used_at, created_at, revoked_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        prefix: { type: string, example: qat_ab12cd34 }
+        scopes: { type: array, items: { $ref: '#/components/schemas/TokenScope' } }
+        project_keys:
+          description: null = semua project yang bisa diakses user
+          type: [array, 'null']
+          items: { type: string }
+        expires_at: { type: [string, 'null'], format: date-time }
+        last_used_at: { type: [string, 'null'], format: date-time }
+        created_at: { type: string, format: date-time }
+        revoked_at: { type: [string, 'null'], format: date-time }
+    ApiTokenCreate:
+      type: object
+      required: [name, scopes]
+      properties:
+        name: { type: string, minLength: 1 }
+        scopes: { type: array, minItems: 1, items: { $ref: '#/components/schemas/TokenScope' } }
+        project_keys: { type: [array, 'null'], items: { type: string } }
+        expires_in_days: { type: [integer, 'null'], minimum: 1, maximum: 365 }
+
+    # ---- projects
+    ProjectSummary:
+      type: object
+      required: [id, key, name, description, archived_at, my_role, test_case_count, flow_count, last_run, pass_rate_7d]
+      properties:
+        id: { type: string }
+        key: { type: string }
+        name: { type: string }
+        description: { type: string }
+        archived_at: { type: [string, 'null'], format: date-time }
+        my_role: { $ref: '#/components/schemas/ProjectRole' }
+        test_case_count: { type: integer }
+        flow_count: { type: integer }
+        pass_rate_7d: { type: [number, 'null'], description: '0..1' }
+        last_run:
+          oneOf:
+            - { $ref: '#/components/schemas/RunSummary' }
+            - { type: 'null' }
+    Project:
+      type: object
+      required: [id, key, name, description, archived_at, my_role, default_run_options, artifact_retention_days, created_at]
+      properties:
+        id: { type: string }
+        key: { type: string }
+        name: { type: string }
+        description: { type: string }
+        archived_at: { type: [string, 'null'], format: date-time }
+        my_role: { $ref: '#/components/schemas/ProjectRole' }
+        default_run_options: { $ref: '#/components/schemas/RunOptions' }
+        artifact_retention_days: { type: integer }
+        created_at: { type: string, format: date-time }
+    Member:
+      type: object
+      required: [user, role, added_at]
+      properties:
+        user: { $ref: '#/components/schemas/UserRef' }
+        role: { $ref: '#/components/schemas/ProjectRole' }
+        added_at: { type: string, format: date-time }
+    ProjectStats:
+      type: object
+      required: [range, total_runs, pass_rate, avg_duration_ms, daily, top_failing, awaiting_manual]
+      properties:
+        range: { type: string, enum: [7d, 30d] }
+        total_runs: { type: integer }
+        pass_rate: { type: [number, 'null'] }
+        avg_duration_ms: { type: [integer, 'null'] }
+        awaiting_manual: { type: integer }
+        daily:
+          type: array
+          items:
+            type: object
+            required: [date, passed, failed, other]
+            properties:
+              date: { type: string, format: date }
+              passed: { type: integer }
+              failed: { type: integer }
+              other: { type: integer }
+        top_failing:
+          type: array
+          items:
+            type: object
+            required: [test_case_key, title, failures, runs]
+            properties:
+              test_case_key: { type: string }
+              title: { type: string }
+              failures: { type: integer }
+              runs: { type: integer }
+
+    # ---- environments
+    Environment:
+      type: object
+      required: [id, name, variables, secrets, is_default, updated_at]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        is_default: { type: boolean }
+        variables:
+          type: object
+          additionalProperties: { type: string }
+        secrets:
+          description: Hanya nama; nilai tidak pernah dikembalikan.
+          type: array
+          items:
+            type: object
+            required: [name, updated_at]
+            properties:
+              name: { type: string }
+              updated_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    EnvironmentInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        is_default: { type: boolean }
+        variables:
+          type: object
+          additionalProperties: { type: string }
+
+    # ---- test cases
+    Priority: { type: string, enum: [low, medium, high, critical] }
+    TestCaseStatus: { type: string, enum: [draft, ready, deprecated] }
+    Execution: { type: string, enum: [automated, manual] }
+    StepAction:
+      type: string
+      enum:
+        - goto
+        - click
+        - dblclick
+        - hover
+        - fill
+        - type
+        - press
+        - select_option
+        - check
+        - uncheck
+        - wait_for
+        - screenshot
+        - extract_text
+        - expect_visible
+        - expect_hidden
+        - expect_text
+        - expect_value
+        - expect_url
+        - expect_title
+        - expect_count
+        - http_request
+        - expect_status
+        - expect_json
+        - expect_header
+        - expect_response_time
+        - set_variable
+        - wait
+        - manual
+    Step:
+      description: |
+        Satu step DSL. Field parameter bergantung pada `action` (lihat docs/04-test-definition.md);
+        skema per-action yang ketat ada di `step-dsl.schema.json` (Phase 2).
+      type: object
+      required: [id, action]
+      properties:
+        id: { type: string }
+        action: { $ref: '#/components/schemas/StepAction' }
+        description: { type: string }
+        expected: { type: string }
+        timeout_ms: { type: integer, minimum: 100, maximum: 120000 }
+        continue_on_failure: { type: boolean }
+        enabled: { type: boolean }
+        screenshot: { type: boolean }
+        selector: { type: string }
+        url: { type: string }
+        value: { type: [string, number, boolean] }
+        match: { type: string, enum: [equals, contains, regex] }
+        op: { type: string }
+        key: { type: string }
+        state: { type: string, enum: [visible, hidden, attached] }
+        name: { type: string }
+        save_as: { type: string }
+        full_page: { type: boolean }
+        label: { type: string }
+        delay_ms: { type: integer }
+        method: { type: string, enum: [GET, POST, PUT, PATCH, DELETE, HEAD, OPTIONS] }
+        headers: { type: object, additionalProperties: { type: string } }
+        query: { type: object, additionalProperties: { type: string } }
+        body: { type: string }
+        body_type: { type: string, enum: [json, text, form] }
+        save: { type: object, additionalProperties: { type: string } }
+        path: { type: string }
+        in: { type: array, items: { type: integer } }
+        max_ms: { type: integer }
+        ms: { type: integer }
+    TestCaseSummary:
+      type: object
+      required: [id, key, folder_id, title, priority, status, execution, tags, step_count, revision, last_run_status, last_run_at, updated_at, updated_by]
+      properties:
+        id: { type: string }
+        key: { type: string }
+        folder_id: { type: [string, 'null'] }
+        title: { type: string }
+        priority: { $ref: '#/components/schemas/Priority' }
+        status: { $ref: '#/components/schemas/TestCaseStatus' }
+        execution: { $ref: '#/components/schemas/Execution' }
+        tags: { type: array, items: { type: string } }
+        step_count: { type: integer }
+        revision: { type: integer }
+        last_run_status:
+          oneOf:
+            - { $ref: '#/components/schemas/RunStatus' }
+            - { type: 'null' }
+        last_run_at: { type: [string, 'null'], format: date-time }
+        updated_at: { type: string, format: date-time }
+        updated_by: { $ref: '#/components/schemas/UserRef' }
+    TestCase:
+      allOf:
+        - { $ref: '#/components/schemas/TestCaseSummary' }
+        - type: object
+          required: [project_key, description, preconditions, variables, steps, created_at, created_by]
+          properties:
+            project_key: { type: string }
+            description: { type: string }
+            preconditions: { type: string }
+            variables: { type: object, additionalProperties: { type: string } }
+            steps: { type: array, items: { $ref: '#/components/schemas/Step' } }
+            created_at: { type: string, format: date-time }
+            created_by: { $ref: '#/components/schemas/UserRef' }
+    TestCaseInput:
+      type: object
+      required: [title, steps]
+      properties:
+        folder_id: { type: [string, 'null'] }
+        title: { type: string, minLength: 1 }
+        description: { type: string }
+        preconditions: { type: string }
+        priority: { $ref: '#/components/schemas/Priority' }
+        status: { $ref: '#/components/schemas/TestCaseStatus' }
+        execution: { $ref: '#/components/schemas/Execution' }
+        tags: { type: array, items: { type: string } }
+        variables: { type: object, additionalProperties: { type: string } }
+        steps: { type: array, items: { $ref: '#/components/schemas/Step' } }
+    ValidationResult:
+      type: object
+      required: [valid, errors, warnings]
+      properties:
+        valid: { type: boolean }
+        errors: { type: array, items: { $ref: '#/components/schemas/FieldError' } }
+        warnings: { type: array, items: { $ref: '#/components/schemas/FieldError' } }
+    BulkTestCaseAction:
+      type: object
+      required: [ids, action]
+      properties:
+        ids: { type: array, minItems: 1, items: { type: string } }
+        action: { type: string, enum: [move, set_status, add_tags, remove_tags, delete] }
+        folder_id: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/TestCaseStatus' }
+        tags: { type: array, items: { type: string } }
+    Folder:
+      type: object
+      required: [id, parent_id, name, position, test_case_count]
+      properties:
+        id: { type: string }
+        parent_id: { type: [string, 'null'] }
+        name: { type: string }
+        position: { type: integer }
+        test_case_count: { type: integer }
+    RevisionSummary:
+      type: object
+      required: [revision, author, change_note, created_at]
+      properties:
+        revision: { type: integer }
+        author: { $ref: '#/components/schemas/UserRef' }
+        change_note: { type: string }
+        created_at: { type: string, format: date-time }
+    Revision:
+      allOf:
+        - { $ref: '#/components/schemas/RevisionSummary' }
+        - type: object
+          required: [snapshot]
+          properties:
+            snapshot: { $ref: '#/components/schemas/TestCaseInput' }
+
+    # ---- flows
+    FlowItem:
+      type: object
+      required: [id, test_case, continue_on_failure, enabled]
+      properties:
+        id: { type: string }
+        test_case:
+          type: object
+          required: [id, key, title, execution, status, step_count]
+          properties:
+            id: { type: string }
+            key: { type: string }
+            title: { type: string }
+            execution: { $ref: '#/components/schemas/Execution' }
+            status: { $ref: '#/components/schemas/TestCaseStatus' }
+            step_count: { type: integer }
+        continue_on_failure: { type: boolean }
+        enabled: { type: boolean }
+    FlowSummary:
+      type: object
+      required: [id, key, name, description, tags, shared_session, stop_on_failure, item_count, has_manual, last_run_status, last_run_at, updated_at]
+      properties:
+        id: { type: string }
+        key: { type: string }
+        name: { type: string }
+        description: { type: string }
+        tags: { type: array, items: { type: string } }
+        shared_session: { type: boolean }
+        stop_on_failure: { type: boolean }
+        item_count: { type: integer }
+        has_manual: { type: boolean }
+        last_run_status:
+          oneOf:
+            - { $ref: '#/components/schemas/RunStatus' }
+            - { type: 'null' }
+        last_run_at: { type: [string, 'null'], format: date-time }
+        updated_at: { type: string, format: date-time }
+    Flow:
+      allOf:
+        - { $ref: '#/components/schemas/FlowSummary' }
+        - type: object
+          required: [project_key, variables, items, revision]
+          properties:
+            project_key: { type: string }
+            variables: { type: object, additionalProperties: { type: string } }
+            items: { type: array, items: { $ref: '#/components/schemas/FlowItem' } }
+            revision: { type: integer }
+    FlowInput:
+      type: object
+      required: [name, items]
+      properties:
+        name: { type: string, minLength: 1 }
+        description: { type: string }
+        tags: { type: array, items: { type: string } }
+        shared_session: { type: boolean }
+        stop_on_failure: { type: boolean }
+        variables: { type: object, additionalProperties: { type: string } }
+        items:
+          type: array
+          items:
+            type: object
+            required: [test_case_id]
+            properties:
+              test_case_id: { type: string }
+              continue_on_failure: { type: boolean }
+              enabled: { type: boolean }
+
+    # ---- runs
+    RunStatus: { type: string, enum: [queued, running, awaiting_manual, passed, failed, blocked, error, cancelled] }
+    RunKind: { type: string, enum: [test_case, flow] }
+    RunTrigger: { type: string, enum: [manual, mcp, api, schedule] }
+    StepStatus: { type: string, enum: [pending, running, passed, failed, blocked, skipped, error] }
+    RunOptions:
+      type: object
+      required: [browser, headless, viewport, screenshot, video, step_timeout_ms, retries]
+      properties:
+        browser: { type: string, enum: [chromium, firefox, webkit] }
+        headless: { type: boolean }
+        viewport:
+          type: object
+          required: [width, height]
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+        screenshot: { type: string, enum: [off, on_failure, every_step] }
+        video: { type: string, enum: [off, on_failure, always] }
+        step_timeout_ms: { type: integer }
+        retries: { type: integer, minimum: 0, maximum: 2 }
+    RunCreate:
+      type: object
+      properties:
+        test_case: { type: string, description: Key test case, example: SHOP-T12 }
+        flow: { type: string, description: Key flow, example: SHOP-F3 }
+        environment_id: { type: [string, 'null'] }
+        options:
+          description: Opsi parsial; sisanya dari default project.
+          type: object
+          properties:
+            browser: { type: string, enum: [chromium, firefox, webkit] }
+            headless: { type: boolean }
+            viewport:
+              type: object
+              required: [width, height]
+              properties:
+                width: { type: integer }
+                height: { type: integer }
+            screenshot: { type: string, enum: [off, on_failure, every_step] }
+            video: { type: string, enum: [off, on_failure, always] }
+            step_timeout_ms: { type: integer }
+            retries: { type: integer, minimum: 0, maximum: 2 }
+        assignee_id: { type: [string, 'null'], description: Tester untuk bagian manual (default pemicu) }
+    Counts:
+      type: object
+      required: [total, passed, failed, blocked, skipped, other]
+      properties:
+        total: { type: integer }
+        passed: { type: integer }
+        failed: { type: integer }
+        blocked: { type: integer }
+        skipped: { type: integer }
+        other: { type: integer }
+    RunSummary:
+      type: object
+      required: [id, key, project_key, kind, target, environment, status, trigger, triggered_by, assignee, has_manual, summary, queued_at, started_at, finished_at, duration_ms]
+      properties:
+        id: { type: string }
+        key: { type: string }
+        project_key: { type: string }
+        kind: { $ref: '#/components/schemas/RunKind' }
+        target:
+          type: object
+          required: [id, key, title]
+          properties:
+            id: { type: string }
+            key: { type: string }
+            title: { type: string }
+        environment:
+          oneOf:
+            - type: object
+              required: [id, name]
+              properties:
+                id: { type: string }
+                name: { type: string }
+            - { type: 'null' }
+        status: { $ref: '#/components/schemas/RunStatus' }
+        trigger: { $ref: '#/components/schemas/RunTrigger' }
+        triggered_by: { $ref: '#/components/schemas/UserRef' }
+        assignee:
+          oneOf:
+            - { $ref: '#/components/schemas/UserRef' }
+            - { type: 'null' }
+        has_manual: { type: boolean }
+        summary:
+          type: object
+          required: [cases, steps]
+          properties:
+            cases: { $ref: '#/components/schemas/Counts' }
+            steps: { $ref: '#/components/schemas/Counts' }
+        queued_at: { type: string, format: date-time }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        duration_ms: { type: [integer, 'null'] }
+    Run:
+      allOf:
+        - { $ref: '#/components/schemas/RunSummary' }
+        - type: object
+          required: [options, shared_session, stop_on_failure, error_message, cancel_requested, resume_position, cases]
+          properties:
+            options: { $ref: '#/components/schemas/RunOptions' }
+            shared_session: { type: boolean, description: Snapshot opsi flow saat run dibuat (false untuk run test case) }
+            stop_on_failure: { type: boolean }
+            error_message: { type: [string, 'null'] }
+            cancel_requested: { type: boolean }
+            resume_position: { type: [integer, 'null'] }
+            cases: { type: array, items: { $ref: '#/components/schemas/RunCase' } }
+    RunCase:
+      type: object
+      required: [id, position, test_case_id, test_case_key, test_case_revision, title, execution, status, executed_by, started_at, finished_at, duration_ms, video, attachments, steps]
+      properties:
+        id: { type: string }
+        position: { type: integer }
+        test_case_id: { type: string }
+        test_case_key: { type: string }
+        test_case_revision: { type: integer }
+        title: { type: string }
+        execution: { $ref: '#/components/schemas/Execution' }
+        status: { $ref: '#/components/schemas/StepStatus' }
+        executed_by:
+          oneOf:
+            - { $ref: '#/components/schemas/UserRef' }
+            - { type: 'null' }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        duration_ms: { type: [integer, 'null'] }
+        video:
+          oneOf:
+            - { $ref: '#/components/schemas/Artifact' }
+            - { type: 'null' }
+        attachments: { type: array, items: { $ref: '#/components/schemas/Artifact' } }
+        steps: { type: array, items: { $ref: '#/components/schemas/RunStep' } }
+    RunStep:
+      type: object
+      required: [id, position, step_id, action, summary, description, expected, status, duration_ms, error_message, actual_result, screenshot, details]
+      properties:
+        id: { type: string }
+        position: { type: integer }
+        step_id: { type: string }
+        action: { $ref: '#/components/schemas/StepAction' }
+        summary: { type: string, description: Ringkasan human-readable (variable ter-interpolasi, secret dimask) }
+        description: { type: string }
+        expected: { type: string }
+        status: { $ref: '#/components/schemas/StepStatus' }
+        duration_ms: { type: [integer, 'null'] }
+        error_message: { type: [string, 'null'] }
+        actual_result: { type: [string, 'null'] }
+        screenshot:
+          oneOf:
+            - { $ref: '#/components/schemas/Artifact' }
+            - { type: 'null' }
+        details:
+          description: Mis. request/response ringkas untuk HTTP step, expected vs actual.
+          type: [object, 'null']
+          additionalProperties: true
+    Artifact:
+      type: object
+      required: [id, kind, name, url, mime, size_bytes, expired, created_at]
+      properties:
+        id: { type: string }
+        kind: { type: string, enum: [screenshot, video, trace, log, attachment] }
+        name: { type: string }
+        url: { type: string }
+        mime: { type: string }
+        size_bytes: { type: integer }
+        expired: { type: boolean }
+        run_step_id: { type: [string, 'null'] }
+        created_at: { type: string, format: date-time }
+    RunEvent:
+      type: object
+      required: [type, run_key]
+      properties:
+        type: { type: string, enum: [run_started, case_started, step_started, step_finished, case_finished, awaiting_manual, run_finished] }
+        run_key: { type: string }
+        run_case_id: { type: string }
+        run_step_id: { type: string }
+        status: { type: string }
