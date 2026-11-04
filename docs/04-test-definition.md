@@ -80,7 +80,7 @@ Rekomendasi di UI & ke AI: utamakan `role`/`label`/`testid` daripada CSS rapuh. 
 
 | Action | Parameter |
 |--------|-----------|
-| `http_request` | `method`, `url`, `headers?`, `query?`, `body?` (json/text/form), `save?` (`{ "token": "$.data.token" }` → JSONPath ke `vars`) |
+| `http_request` | `method`, `url`, `headers?`, `query?`, `body?` (json/text/form), `save?` (`{ "token": "$.data.token" }` → JSONPath ke `vars`), `save_regex?` (`{ "otp": "code: (\\d{6})" }` → regex ke `vars`), `regex_decode?` (`none`/`quoted_printable`/`html`/`auto`), `poll_timeout_ms?`, `poll_interval_ms?`, `poll_until?` — lihat [Email testing](#email-testing-mailpit--mailhog) |
 | `expect_status` | `value` (int) atau `in` (array) |
 | `expect_json` | `path` (JSONPath), `op` (`eq`,`neq`,`contains`,`exists`,`gt`,`lt`,`matches`), `value?` |
 | `expect_header` | `name`, `value`, `match` |
@@ -130,9 +130,78 @@ Sintaks `{{...}}`, dievaluasi tepat sebelum step dijalankan.
 | `env.*` | Variable environment yang dipilih saat run | `{{env.BASE_URL}}` |
 | `secret.*` | Secret environment (terenkripsi; **dimask `••••` di report, log, dan output MCP**) | `{{secret.QA_PASSWORD}}` |
 | `vars.*` | Variable test case/flow + hasil `save`/`extract_text`/`set_variable` | `{{vars.token}}` |
-| `fn.*` | Built-in | `{{fn.uuid}}`, `{{fn.now}}`, `{{fn.random_email}}`, `{{fn.random_int 1 100}}` |
+| `fn.*` | Built-in | `{{fn.uuid}}`, `{{fn.now}}`, `{{fn.random_email}}`, `{{fn.random_int 1 100}}`, `{{fn.totp secret.OTP_SEED}}` ([2FA](#2fa-totp)) |
 
 Urutan prioritas (yang belakang menimpa): environment → flow variables → test case variables → runtime (`save`/`set_variable`).
+
+## 2FA (TOTP)
+
+`{{fn.totp <ref> [digits=6] [period=30] [algorithm=SHA1|SHA256|SHA512]}}` menghasilkan kode TOTP (RFC 6238) — kode yang sama dengan aplikasi authenticator.
+
+| Bagian | Keterangan |
+|--------|-----------|
+| `<ref>` (wajib, argumen pertama) | `secret.NAMA`, `env.NAMA`, `vars.nama` (di-resolve seperti variable biasa; nilainya = seed **base32**), atau seed base32 literal. Spasi, `-`, huruf kecil, dan padding `=` ditoleransi (mis. `jbsw y3dp ehpk 3pxp`). Seed literal tidak boleh mengandung spasi. |
+| `digits=` | 6–8, default 6 |
+| `period=` | 10–300 detik, default 30 |
+| `algorithm=` | `SHA1` (default), `SHA256`, `SHA512` (case-insensitive) |
+
+- Kode dihitung **saat step dieksekusi** (tepat sebelum interpolasi step). Jika sisa periode < 3 detik, runner menunggu periode berikutnya dulu agar kode tidak kedaluwarsa saat dicek target.
+- Seed tidak valid / ref tidak dikenal → step `failed` dengan pesan jelas (`Invalid {{fn.totp secret.OTP_SEED}}: the seed is not valid base32 …`); seed **tidak pernah** dicetak (seed literal ditampilkan sebagai `{{fn.totp …}}`).
+- Ringkasan/report menampilkan ekspresinya (`Fill label=Kode with "{{fn.totp secret.OTP_SEED}}"`). Kode yang dihasilkan (dan seed-nya) diperlakukan seperti secret: dimask `••••` di semua event runner sesudahnya.
+- Validasi (editor, `POST …/validate`, MCP): argumen `fn.totp` yang salah = **error**; fungsi `fn.*` yang tidak dikenal = **warning**.
+
+```json
+{ "id": "s5", "action": "fill", "selector": "label=Kode autentikasi", "value": "{{fn.totp secret.QA_TOTP_SEED}}" }
+```
+
+Seed dari halaman setup 2FA aplikasi: `extract_text` (`save_as: "otp_seed"`) lalu `{{fn.totp vars.otp_seed}}`.
+
+## Email testing (Mailpit / MailHog)
+
+`http_request` bisa **menunggu** sesuatu yang asinkron (email masuk, job selesai) dan **mengambil** kode/link dari teks dengan regex.
+
+| Param | Keterangan |
+|-------|-----------|
+| `save_regex` | Objek `{ "nama": "regex" }`. Regex JavaScript (`pola` atau `/pola/flags`). Nilai yang disimpan = capture group 1 jika ada, selain itu seluruh match. Dijalankan pada body response setelah `regex_decode`. Tidak cocok → step gagal: `Cannot save "otp": pattern /code: (\d{6})/ not found in the response` (kecuali sedang polling). |
+| `regex_decode` | `none` (default, body apa adanya) · `quoted_printable` (soft line break `=\n` + `=XX` → UTF-8) · `html` (entitas `&amp;`, `&#39;`, `&#x41;` …) · `auto` (quoted-printable bila teks terlihat QP — ada soft line break, `=3D`, atau header `Content-Transfer-Encoding: quoted-printable` — lalu entitas HTML). Selain `none`, body **JSON** dicari pada nilai string-nya (sudah di-unescape, satu per baris), sehingga `\u0026`/`\n` dari encoder JSON tidak mengganggu. |
+| `poll_timeout_ms` | `0`/kosong = kirim sekali. `1…120000` = kirim ulang sampai: status **2xx** **dan** `poll_until` (jika ada) ditemukan **dan** semua `save` (JSONPath) serta `save_regex` ter-resolve → step `passed` dan nilai disimpan. Habis waktu → `failed` dengan response terakhir di `details`, `details.attempts`, dan pesan berisi apa yang belum ditemukan. |
+| `poll_interval_ms` | Jeda antar percobaan, default 1000, min 200. |
+| `poll_until` | JSONPath yang harus ada dan bukan `null`/array kosong, mis. `$.messages[0]`. |
+
+- Polling tidak dibatasi `timeout_ms` step (itu batas per request); total dibatasi `poll_timeout_ms`. Error jaringan saat polling dihitung "belum".
+- Ringkasan menambah ` (poll ≤15s)`: `GET {{env.MAILPIT_URL}}/api/v1/search?query=to:{{vars.email}} (poll ≤15s)`.
+- Gunakan param `query` (bukan menulis `?query=to:…` di URL) agar `+` di alamat email ter-encode (`%2B`); `+` mentah di URL dibaca server sebagai spasi.
+- JSONPath `save`/`poll_until` yang salah sintaks dan regex yang tidak valid gagal seketika (tidak di-poll).
+
+**Mailpit** (`MAILPIT_URL` = URL UI/API Mailpit, mis. `http://127.0.0.1:8025`) — diverifikasi dengan Mailpit v1.33.0:
+
+| Endpoint | Isi |
+|----------|-----|
+| `GET /api/v1/search?query=to:<email>` | `{ total, count, messages: [{ ID, Subject, From, To, Snippet, … }] }` — kosong = `messages: []` dengan status 200 |
+| `GET /api/v1/message/<ID>` | `{ ID, Subject, Text, HTML, From, To, … }` (`latest` = pesan terbaru) |
+| `GET /view/<ID>.html`, `/view/<ID>.txt` | Body HTML / teks apa adanya (tanpa JSON) |
+| `GET /api/v1/message/<ID>/raw` | Sumber email mentah (sering quoted-printable → `regex_decode: auto`) |
+
+```json
+[
+  { "id": "e1", "action": "http_request", "method": "GET", "url": "{{env.MAILPIT_URL}}/api/v1/search",
+    "query": { "query": "to:{{vars.email}}" }, "save": { "mail_id": "$.messages[0].ID" },
+    "poll_timeout_ms": 15000, "description": "Tunggu email verifikasi" },
+  { "id": "e2", "action": "http_request", "method": "GET", "url": "{{env.MAILPIT_URL}}/api/v1/message/{{vars.mail_id}}",
+    "save": { "subject": "$.Subject" },
+    "save_regex": { "otp": "code: (\\d{6})", "verify_link": "href=\"([^\"]+/verify[^\"]*)\"" }, "regex_decode": "auto" },
+  { "id": "e3", "action": "expect_json", "path": "$.Subject", "op": "contains", "value": "Verifikasi" },
+  { "id": "e4", "action": "goto", "url": "{{vars.verify_link}}" }
+]
+```
+
+**MailHog** — `GET {{env.MAILHOG_URL}}/api/v2/search?kind=to&query=<email>` → `$.items[0].Content.Body` (body mentah, biasanya quoted-printable):
+
+```json
+{ "id": "h1", "action": "http_request", "method": "GET", "url": "{{env.MAILHOG_URL}}/api/v2/search",
+  "query": { "kind": "to", "query": "{{vars.email}}" }, "poll_until": "$.items[0].Content.Body",
+  "save_regex": { "reset_link": "href=\"([^\"]+)\"" }, "regex_decode": "auto", "poll_timeout_ms": 15000 }
+```
 
 ## Flow
 
@@ -159,6 +228,8 @@ Urutan prioritas (yang belakang menimpa): environment → flow variables → tes
 
 - JSON Schema memvalidasi struktur per `action` (field wajib, tipe, enum).
 - Validasi semantik tambahan: `id` step unik, variable `secret.*` yang dirujuk ada di environment (warning, bukan error, karena environment dipilih saat run), `wait` > 30s ditolak.
+- `http_request`: `poll_timeout_ms` 0–120000, `poll_interval_ms` ≥ 200, `regex_decode` enum, setiap pola `save_regex` tidak kosong dan ≤ 1000 karakter. Editor (TS) juga meng-compile pola dengan `new RegExp`; backend Go **tidak** (RE2 berbeda dengan regex JavaScript: lookbehind/backreference valid di JS ditolak RE2), jadi regex tidak valid dilaporkan editor dan runner. Path & pesan identik di TS dan Go.
+- `{{fn.*}}` di param step (bukan `description`/`expected`): fungsi tidak dikenal → warning; argumen `fn.totp` salah → error.
 - Endpoint `POST /api/v1/projects/{key}/test-cases/validate` dan tool MCP `validate_test_case` mengembalikan error per step (path + pesan) → AI bisa memperbaiki sendiri.
 
 ## Kandidat lanjutan (bukan v1)

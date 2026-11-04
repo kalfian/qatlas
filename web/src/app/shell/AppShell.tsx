@@ -24,7 +24,6 @@ import {
 } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import { Toaster } from 'sonner'
 import { useLogout, useMyManualRuns, useProject } from '@/api/queries'
 import { ErrorState } from '@/components/page'
 import { Avatar } from '@/components/ui/avatar'
@@ -43,43 +42,13 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Kbd } from '@/components/ui/kbd'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { TooltipProvider } from '@/components/ui/tooltip'
 import { LANGUAGES, type Language } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useAuth, useCan, useIsAdmin } from '../auth'
-import { IS_MOCK, rememberProject } from '../config'
+import { rememberProject } from '../config'
 import { useChangeLanguage } from '../language'
 import { useTheme } from '../theme'
 import { CommandPalette, useCommandPalette } from './CommandPalette'
-import { DevToolbar } from './DevToolbar'
-
-/* ------------------------------------------------------------------ root */
-
-export function RootLayout() {
-  const { theme } = useTheme()
-  const resolved = theme === 'system' ? undefined : theme
-  return (
-    <TooltipProvider delayDuration={300}>
-      <Outlet />
-      <Toaster position="bottom-right" theme={resolved ?? 'system'} toastOptions={{ className: 'text-sm' }} closeButton />
-      {IS_MOCK && <DevToolbar />}
-    </TooltipProvider>
-  )
-}
-
-export function NotFoundPage() {
-  const { t } = useTranslation('nav')
-  return (
-    <div className="flex min-h-dvh flex-col items-start justify-center gap-2 px-6 md:px-16">
-      <p className="font-mono text-xs text-muted-foreground">404</p>
-      <h1 className="text-xl font-semibold">{t('notFound.title')}</h1>
-      <p className="text-sm text-muted-foreground">{t('notFound.description')}</p>
-      <Button asChild variant="outline" className="mt-2">
-        <Link to="/">{t('notFound.home')}</Link>
-      </Button>
-    </div>
-  )
-}
 
 /* ------------------------------------------------------------------ shell */
 

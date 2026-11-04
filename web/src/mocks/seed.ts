@@ -227,6 +227,69 @@ const PAY_CASES: TcSeed[] = [
     ] },
 ]
 
+/**
+ * SHOP cases added later (2FA, email verification). Appended after SHOP_CASES (keys SHOP-T20…T22)
+ * and declared after PAY_CASES, so the existing keys and step ids stay unchanged.
+ */
+const SHOP_AUTH_EMAIL_CASES: TcSeed[] = [
+  { folder: 'Auth', title: 'Log in with TOTP 2FA', priority: 'high', tags: ['auth', '2fa'],
+    description: 'Password login followed by a time-based one-time code (RFC 6238) generated from the QA_TOTP_SEED secret.',
+    preconditions: 'qa.2fa@tokoku.id has two-factor authentication enabled with the seed stored in QA_TOTP_SEED.',
+    variables: { email: 'qa.2fa@tokoku.id' },
+    steps: [
+      S('goto', { url: '{{env.BASE_URL}}/login', description: 'Open the login page' }),
+      S('fill', { selector: 'label=Email', value: '{{vars.email}}' }),
+      S('fill', { selector: 'label=Password', value: '{{secret.QA_PASSWORD}}' }),
+      S('click', { selector: "role=button[name='Log in']" }),
+      S('expect_url', { value: '/login/2fa', match: 'contains', description: 'The second factor is requested' }),
+      S('fill', { selector: 'label=Authentication code', value: '{{fn.totp secret.QA_TOTP_SEED}}', description: 'Current 6-digit TOTP code' }),
+      S('click', { selector: "role=button[name='Verify']" }),
+      S('expect_url', { value: '/account', match: 'contains', description: 'Redirected to the account page', expected: 'URL contains /account' }),
+      S('expect_visible', { selector: 'text=Hi, QA 2FA' }),
+    ] },
+  { folder: 'Email', title: 'Sign up and verify email (Mailpit)', priority: 'high', tags: ['auth', 'email', 'signup'],
+    description: 'Signs up with a fresh address, waits for the verification email in Mailpit, and opens the link from it.',
+    preconditions: 'The shop sends its email to the Mailpit instance at MAILPIT_URL.',
+    steps: [
+      S('set_variable', { name: 'email', value: '{{fn.random_email}}', description: 'A fresh address for every run' }),
+      S('goto', { url: '{{env.BASE_URL}}/signup' }),
+      S('fill', { selector: 'label=Name', value: 'QA Signup' }),
+      S('fill', { selector: 'label=Email', value: '{{vars.email}}' }),
+      S('fill', { selector: 'label=Password', value: 'Signup-Demo-2026!' }),
+      S('click', { selector: "role=button[name='Create account']" }),
+      S('expect_visible', { selector: "role=heading[name='Check your email']" }),
+      S('http_request', { method: 'GET', url: '{{env.MAILPIT_URL}}/api/v1/search', query: { query: 'to:{{vars.email}}' },
+        poll_timeout_ms: 15000, poll_interval_ms: 500, poll_until: '$.messages[0].ID', save: { mail_id: '$.messages[0].ID' },
+        description: 'Wait for the verification email', expected: 'One message to the new address' }),
+      S('expect_json', { path: '$.messages[0].Subject', op: 'eq', value: 'Verify your Tokoku account' }),
+      S('http_request', { method: 'GET', url: '{{env.MAILPIT_URL}}/api/v1/message/{{vars.mail_id}}/raw',
+        save_regex: { verify_url: 'href="([^"]+/verify\\?token=[^"]+)"' }, regex_decode: 'auto',
+        description: 'Read the raw email (quoted-printable HTML) and take the link' }),
+      S('goto', { url: '{{vars.verify_url}}', description: 'Open the verification link' }),
+      S('expect_visible', { selector: "role=heading[name='Email verified']" }),
+    ] },
+  { folder: 'Email', title: 'Verify email with the 6-digit code', priority: 'medium', tags: ['auth', 'email', 'signup'],
+    description: 'Same sign-up, but confirms the address with the code from the email instead of the link.',
+    preconditions: 'The shop sends its email to the Mailpit instance at MAILPIT_URL.',
+    steps: [
+      S('set_variable', { name: 'email', value: '{{fn.random_email}}' }),
+      S('goto', { url: '{{env.BASE_URL}}/signup' }),
+      S('fill', { selector: 'label=Name', value: 'QA Code' }),
+      S('fill', { selector: 'label=Email', value: '{{vars.email}}' }),
+      S('fill', { selector: 'label=Password', value: 'Signup-Demo-2026!' }),
+      S('click', { selector: "role=button[name='Create account']" }),
+      S('expect_visible', { selector: "role=heading[name='Check your email']" }),
+      S('http_request', { method: 'GET', url: '{{env.MAILPIT_URL}}/api/v1/search', query: { query: 'to:{{vars.email}}' },
+        poll_timeout_ms: 15000, poll_interval_ms: 500, poll_until: '$.messages[0].ID', save: { mail_id: '$.messages[0].ID' },
+        description: 'Wait for the verification email' }),
+      S('http_request', { method: 'GET', url: '{{env.MAILPIT_URL}}/api/v1/message/{{vars.mail_id}}',
+        save_regex: { code: 'code is (\\d{6})' }, regex_decode: 'auto', description: 'Take the 6-digit code from the email' }),
+      S('fill', { selector: 'label=Verification code', value: '{{vars.code}}' }),
+      S('click', { selector: "role=button[name='Verify']" }),
+      S('expect_visible', { selector: "role=heading[name='Email verified']" }),
+    ] },
+]
+
 /* ------------------------------------------------------------------ builder */
 
 export function buildSeed(): MockState {
@@ -259,11 +322,13 @@ export function buildSeed(): MockState {
 
   const environments: DbEnvironment[] = [
     { id: 'env_shop_stg', project_id: 'p_shop', name: 'staging', is_default: true,
-      variables: { BASE_URL: 'https://staging.tokoku.id', API_URL: 'https://api.staging.tokoku.id' },
+      variables: { BASE_URL: 'https://staging.tokoku.id', API_URL: 'https://api.staging.tokoku.id', MAILPIT_URL: 'https://mailpit.staging.tokoku.id' },
       secrets: [
         { name: 'QA_PASSWORD', value: 'Qa-Staging-2026!', updated_at: iso(12 * DAY) },
         { name: 'ADMIN_TOKEN', value: 'adm_stg_8f3a', updated_at: iso(30 * DAY) },
-      ], updated_at: iso(12 * DAY) },
+        // demo-target's public demo-only TOTP seed (DEMO_TOTP_SEED default) of qa.2fa@tokoku.id
+        { name: 'QA_TOTP_SEED', value: 'TOKOKU2FADEMOSEEDQATLASTOTPDEMOA', updated_at: iso(2 * DAY) },
+      ], updated_at: iso(2 * DAY) },
     { id: 'env_shop_prod', project_id: 'p_shop', name: 'production', is_default: false,
       variables: { BASE_URL: 'https://tokoku.id', API_URL: 'https://api.tokoku.id' },
       secrets: [{ name: 'QA_PASSWORD', value: 'Qa-Prod-2026!', updated_at: iso(20 * DAY) }], updated_at: iso(20 * DAY) },
@@ -314,7 +379,7 @@ export function buildSeed(): MockState {
       })
     })
   }
-  makeCases(projects[0], SHOP_CASES, ['u_rina', 'u_dimas'])
+  makeCases(projects[0], [...SHOP_CASES, ...SHOP_AUTH_EMAIL_CASES], ['u_rina', 'u_dimas'])
   makeCases(projects[1], PAY_CASES, ['u_dimas', 'u_sari'])
 
   const revisions = testCases.flatMap((t) =>

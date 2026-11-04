@@ -38,7 +38,44 @@ type Config struct {
 	// that overwrites these headers, otherwise login rate limiting can be bypassed.
 	TrustProxy bool
 	LogLevel   slog.Level // QATLAS_LOG_LEVEL debug|info|warn|error (default info)
+
+	// Storage selects the artifact store: "local" (QATLAS_DATA_DIR/artifacts, the
+	// default) or "s3" (QATLAS_STORAGE).
+	Storage string
+	// S3 configures the S3-compatible artifact store (QATLAS_S3_*). Required when
+	// Storage is "s3"; also used by `qatlas artifacts migrate --to s3`.
+	S3 S3Config
 }
+
+// S3Config is the S3-compatible artifact store (AWS S3, Garage, MinIO, …).
+type S3Config struct {
+	Endpoint       string // QATLAS_S3_ENDPOINT, absolute http(s) URL without path (e.g. https://garage.example.com)
+	Region         string // QATLAS_S3_REGION (default us-east-1; Garage: the s3_region of garage.toml, usually "garage")
+	Bucket         string // QATLAS_S3_BUCKET
+	AccessKey      string // QATLAS_S3_ACCESS_KEY
+	SecretKey      string // QATLAS_S3_SECRET_KEY — never logged
+	ForcePathStyle bool   // QATLAS_S3_FORCE_PATH_STYLE (default true): https://host/bucket/key instead of https://bucket.host/key
+	Prefix         string // QATLAS_S3_PREFIX, optional key prefix without leading/trailing slash (e.g. "qatlas")
+}
+
+// String renders the configuration without the secret key.
+func (s S3Config) String() string {
+	secret := ""
+	if s.SecretKey != "" {
+		secret = "[redacted]"
+	}
+	return fmt.Sprintf("{Endpoint:%s Region:%s Bucket:%s AccessKey:%s SecretKey:%s ForcePathStyle:%t Prefix:%s}",
+		s.Endpoint, s.Region, s.Bucket, s.AccessKey, secret, s.ForcePathStyle, s.Prefix)
+}
+
+// GoString keeps %#v from printing the secret key too.
+func (s S3Config) GoString() string { return "config.S3Config" + s.String() }
+
+// Storage backends (QATLAS_STORAGE).
+const (
+	StorageLocal = "local"
+	StorageS3    = "s3"
+)
 
 // Defaults.
 const (
@@ -48,6 +85,7 @@ const (
 	DefaultWorkerConcurrency = 2
 	DefaultRunnerCmd         = "node runner/dist/main.js"
 	DefaultRunTimeout        = 15 * time.Minute
+	DefaultS3Region          = "us-east-1"
 )
 
 // Load reads the environment and validates every value that is set.
@@ -72,6 +110,16 @@ func load(getenv func(string) string) (*Config, error) {
 		WorkerConcurrency:  DefaultWorkerConcurrency,
 		RunnerCmd:          orDefault(get("QATLAS_RUNNER_CMD"), DefaultRunnerCmd),
 		RunTimeout:         DefaultRunTimeout,
+		Storage:            strings.ToLower(orDefault(get("QATLAS_STORAGE"), StorageLocal)),
+		S3: S3Config{
+			Endpoint:       strings.TrimRight(get("QATLAS_S3_ENDPOINT"), "/"),
+			Region:         orDefault(get("QATLAS_S3_REGION"), DefaultS3Region),
+			Bucket:         get("QATLAS_S3_BUCKET"),
+			AccessKey:      get("QATLAS_S3_ACCESS_KEY"),
+			SecretKey:      get("QATLAS_S3_SECRET_KEY"),
+			ForcePathStyle: true,
+			Prefix:         strings.Trim(get("QATLAS_S3_PREFIX"), "/"),
+		},
 	}
 
 	if u, err := url.Parse(c.BaseURL); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
@@ -137,10 +185,87 @@ func load(getenv func(string) string) (*Config, error) {
 		}
 	}
 
+	if v := get("QATLAS_S3_FORCE_PATH_STYLE"); v != "" {
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("QATLAS_S3_FORCE_PATH_STYLE must be a boolean, got %q", v))
+		} else {
+			c.S3.ForcePathStyle = b
+		}
+	}
+	switch c.Storage {
+	case StorageLocal:
+		// S3 settings may be present (e.g. for `qatlas artifacts migrate`): check
+		// the ones that are set, completeness only when they are needed.
+		errs = append(errs, c.S3.formatErrors()...)
+	case StorageS3:
+		if err := c.S3.Validate(); err != nil {
+			errs = append(errs, err)
+		}
+	default:
+		errs = append(errs, fmt.Errorf("QATLAS_STORAGE must be local or s3, got %q", c.Storage))
+	}
+
 	if len(errs) > 0 {
 		return nil, errors.Join(errs...)
 	}
 	return c, nil
+}
+
+// Validate reports every missing or malformed S3 setting (one error per
+// variable; values of secrets are never included).
+func (s S3Config) Validate() error {
+	var errs []error
+	for _, req := range []struct{ name, value string }{
+		{"QATLAS_S3_ENDPOINT", s.Endpoint},
+		{"QATLAS_S3_BUCKET", s.Bucket},
+		{"QATLAS_S3_ACCESS_KEY", s.AccessKey},
+		{"QATLAS_S3_SECRET_KEY", s.SecretKey},
+	} {
+		if req.value == "" {
+			errs = append(errs, fmt.Errorf("%s is required for S3 artifact storage", req.name))
+		}
+	}
+	errs = append(errs, s.formatErrors()...)
+	return errors.Join(errs...)
+}
+
+// formatErrors checks the S3 settings that are set.
+func (s S3Config) formatErrors() []error {
+	var errs []error
+	if s.Endpoint != "" {
+		u, err := url.Parse(s.Endpoint)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" ||
+			(u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.User != nil {
+			errs = append(errs, fmt.Errorf("QATLAS_S3_ENDPOINT must be an http(s) URL with scheme and host only (e.g. https://garage.example.com), got %q", s.Endpoint))
+		}
+	}
+	if s.Bucket != "" && !validBucket(s.Bucket) {
+		errs = append(errs, fmt.Errorf("QATLAS_S3_BUCKET %q is not a valid bucket name (3-63 characters: a-z, 0-9, '.', '-')", s.Bucket))
+	}
+	if s.Prefix != "" {
+		for _, seg := range strings.Split(s.Prefix, "/") {
+			if seg == "" || seg == "." || seg == ".." || strings.ContainsAny(seg, "\\\x00") {
+				errs = append(errs, fmt.Errorf("QATLAS_S3_PREFIX %q must be slash-separated names without empty, '.' or '..' segments", s.Prefix))
+				break
+			}
+		}
+	}
+	return errs
+}
+
+// validBucket applies the S3 bucket naming rules.
+func validBucket(b string) bool {
+	if len(b) < 3 || len(b) > 63 {
+		return false
+	}
+	for i, r := range b {
+		ok := (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || ((r == '.' || r == '-') && i > 0 && i < len(b)-1)
+		if !ok {
+			return false
+		}
+	}
+	return !strings.Contains(b, "..")
 }
 
 // RequireDatabase reports an error when QATLAS_DATABASE_URL is missing.

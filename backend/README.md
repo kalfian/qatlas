@@ -42,6 +42,14 @@ gofmt -l . && go vet ./...
 QATLAS_TEST_DATABASE_URL='postgres://qatlas:qatlas@127.0.0.1:55432/qatlas_test?sslmode=disable' go test ./...
 ```
 
+S3 tests (`internal/artifacts`, `internal/server`) call `s3test.Config(t)`: it starts one
+single-node Garage container (`dxflrs/garage:v2.5.0`, random host port, removed by `TestMain` →
+`s3test.Main`) per test binary, or uses an existing bucket from `QATLAS_TEST_S3_ENDPOINT`,
+`_REGION`, `_BUCKET`, `_ACCESS_KEY`, `_SECRET_KEY` (`_PREFIX`, default `qatlas-test`). Each call
+gets its own key prefix, deleted afterwards. Without Docker (and without those variables) the
+tests skip. A test binary killed hard can leave a container: `docker rm -f $(docker ps -aq
+--filter label=qatlas-test=garage)`.
+
 Integration tests call `testutil.DB(t)`: it skips without `QATLAS_TEST_DATABASE_URL`,
 gives each test **package** its own schema (dropped + migrated once per test binary)
 and truncates every table per call. Packages can therefore run in parallel; tests
@@ -53,7 +61,7 @@ fixtures — extend it rather than writing a second harness).
 
 | Package | Role |
 |---|---|
-| `cmd/qatlas` | subcommands `server`, `worker`, `all`, `migrate up\|down\|status`, `user create-admin`, `seed demo`, `mcp-stdio --url --token` (stdio→HTTP MCP proxy), `version` (`-X main.version=…`, also in `/healthz`) |
+| `cmd/qatlas` | subcommands `server`, `worker`, `all`, `migrate up\|down\|status`, `user create-admin`, `seed demo`, `artifacts migrate\|check`, `mcp-stdio --url --token` (stdio→HTTP MCP proxy), `version` (`-X main.version=…`, also in `/healthz`) |
 | `internal/seed` | `qatlas seed demo`: loads `demo.json` (exported from `web/src/mocks/seed.ts`) through the real services (keys, revisions, validation, audit, encrypted secrets); idempotent per project key, `--reset`, async `--runs` |
 | `migrations` | embedded goose SQL. `0001_init.sql` = full schema (all docs/03 entities). Add `0002_….sql`; never edit a shipped file. River's tables are **not** goose files (see "Worker") |
 | `internal/config` | env config + validation (`Load`, `RequireDatabase`, `RequireMasterKey`) |
@@ -66,6 +74,7 @@ fixtures — extend it rather than writing a second harness).
 | `internal/runs` | so far only the `RunSummary` read model (`QuerySummaries`) |
 | `internal/mcp` | MCP server at `/mcp` (official go-sdk, Streamable HTTP, stateless, API tokens only): 19 tools calling the same services, resource `qatlas://docs/step-dsl` + test case template, prompts `write_test_case` / `triage_failed_run`, per-token limit of 3 queued/running MCP runs, `mcp.tool_call` audit entries; `stdio.go` = `qatlas mcp-stdio`. Spec: docs/07-mcp.md |
 | `internal/server` | router + graceful shutdown; `internal/web` serves `QATLAS_WEB_DIR` with SPA fallback |
+| `internal/artifacts` | `Store` (`Put`/`Open`/`Stat`/`Delete`, same keys everywhere): `LocalStore` (`QATLAS_DATA_DIR/artifacts`) and `S3Store` (minio-go; `QATLAS_STORAGE=s3`, `QATLAS_S3_*`; `Open` = lazy ranged GETs ≤ 8 MiB pinned to the ETag, so `http.ServeContent` Range works without downloading the whole object), `Verify` (startup probe), `Save`/`SaveFile`/`SaveWith`, `Purge`, `Migrate`/`Check` (`qatlas artifacts migrate\|check`), `GET /artifacts/{id}` (RBAC + Range + CSP sandbox); `s3test` = Garage container for tests |
 | `internal/worker` | River (`NewEnqueuer`, `NewInsertOnlyClient`, River migrations), runner `Supervisor` (NDJSON), `Executor` (run_execute), startup recovery, artifact retention job |
 
 ## Worker

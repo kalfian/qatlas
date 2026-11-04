@@ -50,11 +50,13 @@
           "is_default": true,
           "variables": {
             "BASE_URL": "https://staging.tokoku.id",
-            "API_URL": "https://api.staging.tokoku.id"
+            "API_URL": "https://api.staging.tokoku.id",
+            "MAILPIT_URL": "https://mailpit.staging.tokoku.id"
           },
           "secrets": [
             "QA_PASSWORD",
-            "ADMIN_TOKEN"
+            "ADMIN_TOKEN",
+            "QA_TOTP_SEED"
           ]
         },
         {
@@ -75,7 +77,8 @@
         "Cart",
         "Checkout",
         "API",
-        "Checkout/Payment"
+        "Checkout/Payment",
+        "Email"
       ],
       "test_cases": [
         {
@@ -884,6 +887,284 @@
               "action": "manual",
               "description": "Open the reset email in the QA inbox and click the link",
               "expected": "The set-new-password page opens"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T20",
+          "folder": "Auth",
+          "title": "Log in with TOTP 2FA",
+          "description": "Password login followed by a time-based one-time code (RFC 6238) generated from the QA_TOTP_SEED secret.",
+          "preconditions": "qa.2fa@tokoku.id has two-factor authentication enabled with the seed stored in QA_TOTP_SEED.",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "auth",
+            "2fa"
+          ],
+          "variables": {
+            "email": "qa.2fa@tokoku.id"
+          },
+          "steps": [
+            {
+              "id": "s2o",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/login",
+              "description": "Open the login page"
+            },
+            {
+              "id": "s2p",
+              "action": "fill",
+              "selector": "label=Email",
+              "value": "{{vars.email}}"
+            },
+            {
+              "id": "s2q",
+              "action": "fill",
+              "selector": "label=Password",
+              "value": "{{secret.QA_PASSWORD}}"
+            },
+            {
+              "id": "s2r",
+              "action": "click",
+              "selector": "role=button[name='Log in']"
+            },
+            {
+              "id": "s2s",
+              "action": "expect_url",
+              "value": "/login/2fa",
+              "match": "contains",
+              "description": "The second factor is requested"
+            },
+            {
+              "id": "s2t",
+              "action": "fill",
+              "selector": "label=Authentication code",
+              "value": "{{fn.totp secret.QA_TOTP_SEED}}",
+              "description": "Current 6-digit TOTP code"
+            },
+            {
+              "id": "s2u",
+              "action": "click",
+              "selector": "role=button[name='Verify']"
+            },
+            {
+              "id": "s2v",
+              "action": "expect_url",
+              "value": "/account",
+              "match": "contains",
+              "description": "Redirected to the account page",
+              "expected": "URL contains /account"
+            },
+            {
+              "id": "s2w",
+              "action": "expect_visible",
+              "selector": "text=Hi, QA 2FA"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T21",
+          "folder": "Email",
+          "title": "Sign up and verify email (Mailpit)",
+          "description": "Signs up with a fresh address, waits for the verification email in Mailpit, and opens the link from it.",
+          "preconditions": "The shop sends its email to the Mailpit instance at MAILPIT_URL.",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "auth",
+            "email",
+            "signup"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s2x",
+              "action": "set_variable",
+              "name": "email",
+              "value": "{{fn.random_email}}",
+              "description": "A fresh address for every run"
+            },
+            {
+              "id": "s2y",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/signup"
+            },
+            {
+              "id": "s2z",
+              "action": "fill",
+              "selector": "label=Name",
+              "value": "QA Signup"
+            },
+            {
+              "id": "s30",
+              "action": "fill",
+              "selector": "label=Email",
+              "value": "{{vars.email}}"
+            },
+            {
+              "id": "s31",
+              "action": "fill",
+              "selector": "label=Password",
+              "value": "Signup-Demo-2026!"
+            },
+            {
+              "id": "s32",
+              "action": "click",
+              "selector": "role=button[name='Create account']"
+            },
+            {
+              "id": "s33",
+              "action": "expect_visible",
+              "selector": "role=heading[name='Check your email']"
+            },
+            {
+              "id": "s34",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.MAILPIT_URL}}/api/v1/search",
+              "query": {
+                "query": "to:{{vars.email}}"
+              },
+              "poll_timeout_ms": 15000,
+              "poll_interval_ms": 500,
+              "poll_until": "$.messages[0].ID",
+              "save": {
+                "mail_id": "$.messages[0].ID"
+              },
+              "description": "Wait for the verification email",
+              "expected": "One message to the new address"
+            },
+            {
+              "id": "s35",
+              "action": "expect_json",
+              "path": "$.messages[0].Subject",
+              "op": "eq",
+              "value": "Verify your Tokoku account"
+            },
+            {
+              "id": "s36",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.MAILPIT_URL}}/api/v1/message/{{vars.mail_id}}/raw",
+              "save_regex": {
+                "verify_url": "href=\"([^\"]+/verify\\?token=[^\"]+)\""
+              },
+              "regex_decode": "auto",
+              "description": "Read the raw email (quoted-printable HTML) and take the link"
+            },
+            {
+              "id": "s37",
+              "action": "goto",
+              "url": "{{vars.verify_url}}",
+              "description": "Open the verification link"
+            },
+            {
+              "id": "s38",
+              "action": "expect_visible",
+              "selector": "role=heading[name='Email verified']"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T22",
+          "folder": "Email",
+          "title": "Verify email with the 6-digit code",
+          "description": "Same sign-up, but confirms the address with the code from the email instead of the link.",
+          "preconditions": "The shop sends its email to the Mailpit instance at MAILPIT_URL.",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "auth",
+            "email",
+            "signup"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s39",
+              "action": "set_variable",
+              "name": "email",
+              "value": "{{fn.random_email}}"
+            },
+            {
+              "id": "s3a",
+              "action": "goto",
+              "url": "{{env.BASE_URL}}/signup"
+            },
+            {
+              "id": "s3b",
+              "action": "fill",
+              "selector": "label=Name",
+              "value": "QA Code"
+            },
+            {
+              "id": "s3c",
+              "action": "fill",
+              "selector": "label=Email",
+              "value": "{{vars.email}}"
+            },
+            {
+              "id": "s3d",
+              "action": "fill",
+              "selector": "label=Password",
+              "value": "Signup-Demo-2026!"
+            },
+            {
+              "id": "s3e",
+              "action": "click",
+              "selector": "role=button[name='Create account']"
+            },
+            {
+              "id": "s3f",
+              "action": "expect_visible",
+              "selector": "role=heading[name='Check your email']"
+            },
+            {
+              "id": "s3g",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.MAILPIT_URL}}/api/v1/search",
+              "query": {
+                "query": "to:{{vars.email}}"
+              },
+              "poll_timeout_ms": 15000,
+              "poll_interval_ms": 500,
+              "poll_until": "$.messages[0].ID",
+              "save": {
+                "mail_id": "$.messages[0].ID"
+              },
+              "description": "Wait for the verification email"
+            },
+            {
+              "id": "s3h",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.MAILPIT_URL}}/api/v1/message/{{vars.mail_id}}",
+              "save_regex": {
+                "code": "code is (\\d{6})"
+              },
+              "regex_decode": "auto",
+              "description": "Take the 6-digit code from the email"
+            },
+            {
+              "id": "s3i",
+              "action": "fill",
+              "selector": "label=Verification code",
+              "value": "{{vars.code}}"
+            },
+            {
+              "id": "s3j",
+              "action": "click",
+              "selector": "role=button[name='Verify']"
+            },
+            {
+              "id": "s3k",
+              "action": "expect_visible",
+              "selector": "role=heading[name='Email verified']"
             }
           ]
         }

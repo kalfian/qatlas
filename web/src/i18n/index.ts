@@ -18,9 +18,12 @@ function initialLanguage(): Language {
   return 'en' // default English (keputusan Kalfian 2026-11-04)
 }
 
+const startLanguage = initialLanguage()
+
 void i18n.use(initReactI18next).init({
+  // Hanya English yang dibundel; bahasa lain ditambahkan oleh ensureLanguage() sebelum dipakai.
   resources,
-  lng: initialLanguage(),
+  lng: startLanguage,
   fallbackLng: 'en',
   ns: namespaces as unknown as string[],
   defaultNS: 'common',
@@ -31,11 +34,39 @@ void i18n.use(initReactI18next).init({
 
 if (typeof document !== 'undefined') document.documentElement.lang = i18n.language
 
+/** Bundle non-English, dimuat sekali saat pertama dibutuhkan (chunk terpisah, ~21 kB gzip untuk `id`). */
+const loaders: Record<Exclude<Language, 'en'>, () => Promise<{ default: Record<string, object> }>> = {
+  id: () => import('./resources-id'),
+}
+
+async function ensureLanguage(lang: Language): Promise<void> {
+  if (lang === 'en' || i18n.hasResourceBundle(lang, 'common')) return
+  const { default: bundles } = await loaders[lang]()
+  for (const [ns, res] of Object.entries(bundles)) i18n.addResourceBundle(lang, ns, res, true, true)
+}
+
+/**
+ * Selesai saat bahasa awal (localStorage) siap dirender — main.tsx menunggu ini sebelum render pertama agar
+ * tidak ada kilasan English. Bila chunk gagal dimuat, UI jatuh ke English (fallbackLng) alih-alih gagal total.
+ */
+export const i18nReady: Promise<void> = ensureLanguage(startLanguage).catch(async (err) => {
+  console.error('[i18n] gagal memuat bahasa', startLanguage, err)
+  await i18n.changeLanguage('en')
+  if (typeof document !== 'undefined') document.documentElement.lang = 'en'
+})
+
 export function currentLanguage(): Language {
   return (i18n.language as Language) === 'id' ? 'id' : 'en'
 }
 
 export async function setLanguage(lang: Language) {
+  try {
+    await ensureLanguage(lang)
+  } catch (err) {
+    // Chunk bahasa gagal dimuat (offline / deploy baru): tetap di bahasa sekarang, jangan setengah berganti.
+    console.error('[i18n] gagal memuat bahasa', lang, err)
+    return
+  }
   try {
     localStorage.setItem(STORAGE_KEY, lang)
   } catch {

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -67,6 +68,102 @@ func TestLoadInvalid(t *testing.T) {
 	for name, env := range cases {
 		if _, err := load(envMap(env)); err == nil {
 			t.Errorf("%s: expected error", name)
+		}
+	}
+}
+
+func s3Env(extra map[string]string) map[string]string {
+	m := map[string]string{
+		"QATLAS_STORAGE":       "s3",
+		"QATLAS_S3_ENDPOINT":   "https://garage.example.com/",
+		"QATLAS_S3_REGION":     "garage",
+		"QATLAS_S3_BUCKET":     "qatlas-artifacts",
+		"QATLAS_S3_ACCESS_KEY": "GK0123456789abcdef01234567",
+		"QATLAS_S3_SECRET_KEY": "topsecretvalue",
+	}
+	for k, v := range extra {
+		if v == "" {
+			delete(m, k)
+		} else {
+			m[k] = v
+		}
+	}
+	return m
+}
+
+func TestLoadStorage(t *testing.T) {
+	c, err := load(envMap(nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Storage != StorageLocal || c.S3.Region != DefaultS3Region || !c.S3.ForcePathStyle {
+		t.Fatalf("storage defaults: %q %+v", c.Storage, c.S3)
+	}
+
+	c, err = load(envMap(s3Env(map[string]string{"QATLAS_S3_PREFIX": "/qatlas/prod/", "QATLAS_STORAGE": "S3"})))
+	if err != nil {
+		t.Fatalf("s3: %v", err)
+	}
+	want := S3Config{Endpoint: "https://garage.example.com", Region: "garage", Bucket: "qatlas-artifacts",
+		AccessKey: "GK0123456789abcdef01234567", SecretKey: "topsecretvalue", ForcePathStyle: true, Prefix: "qatlas/prod"}
+	if c.Storage != StorageS3 || c.S3 != want {
+		t.Fatalf("s3 config: %q %+v", c.Storage, c.S3)
+	}
+	if err := c.S3.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c, err = load(envMap(s3Env(map[string]string{"QATLAS_S3_FORCE_PATH_STYLE": "false", "QATLAS_S3_REGION": ""})))
+	if err != nil || c.S3.ForcePathStyle || c.S3.Region != DefaultS3Region {
+		t.Fatalf("path style off / default region: %+v %v", c, err)
+	}
+
+	// The secret never shows up in formatted output.
+	for _, s := range []string{fmt.Sprint(c.S3), fmt.Sprintf("%v %+v %#v %s", c, c.S3, c.S3, c.S3)} {
+		if strings.Contains(s, "topsecretvalue") {
+			t.Fatalf("secret printed: %s", s)
+		}
+	}
+
+	// local storage with partial S3 settings is fine (migrate checks completeness later).
+	c, err = load(envMap(map[string]string{"QATLAS_S3_ENDPOINT": "http://127.0.0.1:3900", "QATLAS_S3_BUCKET": "qatlas"}))
+	if err != nil || c.Storage != StorageLocal {
+		t.Fatalf("local + partial s3: %v", err)
+	}
+	if err := c.S3.Validate(); err == nil || !strings.Contains(err.Error(), "QATLAS_S3_ACCESS_KEY") || !strings.Contains(err.Error(), "QATLAS_S3_SECRET_KEY") {
+		t.Fatalf("validate partial: %v", err)
+	}
+}
+
+func TestLoadStorageInvalid(t *testing.T) {
+	cases := map[string]struct {
+		env  map[string]string
+		want []string
+	}{
+		"unknown backend":    {map[string]string{"QATLAS_STORAGE": "gcs"}, []string{"QATLAS_STORAGE"}},
+		"missing everything": {map[string]string{"QATLAS_STORAGE": "s3"}, []string{"QATLAS_S3_ENDPOINT", "QATLAS_S3_BUCKET", "QATLAS_S3_ACCESS_KEY", "QATLAS_S3_SECRET_KEY"}},
+		"missing secret":     {s3Env(map[string]string{"QATLAS_S3_SECRET_KEY": ""}), []string{"QATLAS_S3_SECRET_KEY is required"}},
+		"no scheme":          {s3Env(map[string]string{"QATLAS_S3_ENDPOINT": "garage.example.com"}), []string{"QATLAS_S3_ENDPOINT"}},
+		"ftp scheme":         {s3Env(map[string]string{"QATLAS_S3_ENDPOINT": "ftp://garage.example.com"}), []string{"QATLAS_S3_ENDPOINT"}},
+		"endpoint path":      {s3Env(map[string]string{"QATLAS_S3_ENDPOINT": "https://garage.example.com/qatlas"}), []string{"QATLAS_S3_ENDPOINT"}},
+		"bad bucket":         {s3Env(map[string]string{"QATLAS_S3_BUCKET": "Bad_Bucket"}), []string{"QATLAS_S3_BUCKET"}},
+		"short bucket":       {s3Env(map[string]string{"QATLAS_S3_BUCKET": "ab"}), []string{"QATLAS_S3_BUCKET"}},
+		"bad path style":     {s3Env(map[string]string{"QATLAS_S3_FORCE_PATH_STYLE": "maybe"}), []string{"QATLAS_S3_FORCE_PATH_STYLE"}},
+		"bad prefix":         {s3Env(map[string]string{"QATLAS_S3_PREFIX": "a/../b"}), []string{"QATLAS_S3_PREFIX"}},
+		"local, bad s3 url":  {map[string]string{"QATLAS_S3_ENDPOINT": "nope"}, []string{"QATLAS_S3_ENDPOINT"}},
+	}
+	for name, tc := range cases {
+		_, err := load(envMap(tc.env))
+		if err == nil {
+			t.Errorf("%s: expected error", name)
+			continue
+		}
+		for _, w := range tc.want {
+			if !strings.Contains(err.Error(), w) {
+				t.Errorf("%s: error %q does not mention %q", name, err, w)
+			}
+		}
+		if strings.Contains(err.Error(), "topsecretvalue") {
+			t.Errorf("%s: secret in error: %v", name, err)
 		}
 	}
 }

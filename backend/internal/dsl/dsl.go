@@ -6,9 +6,13 @@ package dsl
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"regexp"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 )
 
 // Step is one DSL step. Params depend on the action, so it is kept as a JSON object
@@ -75,7 +79,7 @@ var Catalog = []Action{
 	{"expect_url", "assert_ui", KindUI, []Param{p("value", "URL", true), matchOpt}},
 	{"expect_title", "assert_ui", KindUI, []Param{p("value", "Title", true), matchOpt}},
 	{"expect_count", "assert_ui", KindUI, []Param{selReq, p("op", "Operator", false), p("value", "Count", true)}},
-	{"http_request", "http", KindHTTP, []Param{p("method", "Method", true), p("url", "URL", true), p("headers", "Headers", false), p("query", "Query", false), p("body_type", "Body type", false), p("body", "Body", false), p("save", "Save to variables (name → JSONPath)", false)}},
+	{"http_request", "http", KindHTTP, []Param{p("method", "Method", true), p("url", "URL", true), p("headers", "Headers", false), p("query", "Query", false), p("body_type", "Body type", false), p("body", "Body", false), p("save", "Save to variables (name → JSONPath)", false), p("save_regex", "Save with regex (name → pattern)", false), p("regex_decode", "Decode body before regex", false), p("poll_timeout_ms", "Poll for up to (ms)", false), p("poll_interval_ms", "Poll interval (ms)", false), p("poll_until", "Poll until (JSONPath)", false)}},
 	{"expect_status", "assert_http", KindHTTP, []Param{p("value", "Status", true)}},
 	{"expect_json", "assert_http", KindHTTP, []Param{p("path", "JSONPath", true), p("op", "Operator", true), p("value", "Value", false)}},
 	{"expect_header", "assert_http", KindHTTP, []Param{p("name", "Header name", true), p("value", "Value", true), matchOpt}},
@@ -221,8 +225,200 @@ func Validate(steps []Step, execution string) (errs, warnings []FieldError) {
 		if strings.HasPrefix(strings.TrimSpace(st.Str("selector")), "//") {
 			warnings = append(warnings, FieldError{path + ".selector", "XPath is brittle; use role=, label= or testid="})
 		}
+		if act == "http_request" {
+			errs = append(errs, validateHTTPExtras(st, path)...)
+		}
+		seenFn := map[string]bool{}
+		for _, fi := range fnIssues(st) {
+			fe := FieldError{path + "." + fi.field, fi.message}
+			key := fmt.Sprint(fi.warning, "|", fe.Path, "|", fe.Message)
+			if seenFn[key] {
+				continue
+			}
+			seenFn[key] = true
+			if fi.warning {
+				warnings = append(warnings, fe)
+			} else {
+				errs = append(errs, fe)
+			}
+		}
 	}
 	return errs, warnings
+}
+
+/* ------------------------------------------------------------------ http_request: regex & polling */
+
+// RegexDecodeValues are the accepted http_request regex_decode values.
+var RegexDecodeValues = []string{"none", "quoted_printable", "html", "auto"}
+
+const (
+	PollTimeoutMaxMS  = 120000
+	PollIntervalMinMS = 200
+	saveRegexMaxChars = 1000
+)
+
+func present(v any) bool {
+	if v == nil {
+		return false
+	}
+	if s, ok := v.(string); ok {
+		return strings.TrimSpace(s) != ""
+	}
+	return true
+}
+
+func (s Step) number(key string) (float64, bool) {
+	n, err := strconv.ParseFloat(strings.TrimSpace(s.Str(key)), 64)
+	return n, err == nil && !math.IsNaN(n) && !math.IsInf(n, 0)
+}
+
+// validateHTTPExtras checks poll_timeout_ms, poll_interval_ms, regex_decode and save_regex.
+// Paths and messages are identical to validateSteps in web/src/lib/steps.ts.
+//
+// save_regex patterns are JavaScript regular expressions (the runner compiles them with
+// `new RegExp`). Go's RE2 rejects valid JS syntax (lookbehind, backreferences, …) and accepts
+// some invalid JS, so compiling here would give wrong answers: the server only checks that each
+// pattern is non-empty and not too long; the editor (TS) and the runner report invalid syntax.
+func validateHTTPExtras(st Step, path string) []FieldError {
+	var errs []FieldError
+	if present(st["poll_timeout_ms"]) {
+		if n, ok := st.number("poll_timeout_ms"); !ok || n < 0 || n > PollTimeoutMaxMS {
+			errs = append(errs, FieldError{path + ".poll_timeout_ms", "Polling timeout must be between 0 and 120000 ms"})
+		}
+	}
+	if present(st["poll_interval_ms"]) {
+		if n, ok := st.number("poll_interval_ms"); !ok || n < PollIntervalMinMS {
+			errs = append(errs, FieldError{path + ".poll_interval_ms", "Polling interval must be at least 200 ms"})
+		}
+	}
+	if present(st["regex_decode"]) && !slices.Contains(RegexDecodeValues, st.Str("regex_decode")) {
+		errs = append(errs, FieldError{path + ".regex_decode", "Regex decode must be one of: none, quoted_printable, html, auto"})
+	}
+	if m, ok := st["save_regex"].(map[string]any); ok {
+		names := make([]string, 0, len(m))
+		for k := range m {
+			names = append(names, k)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			pattern := Step{"p": m[name]}.Str("p")
+			switch {
+			case strings.TrimSpace(pattern) == "":
+				errs = append(errs, FieldError{path + ".save_regex", `Regex for "` + name + `" is required`})
+			case utf8.RuneCountInString(pattern) > saveRegexMaxChars:
+				errs = append(errs, FieldError{path + ".save_regex", `Regex for "` + name + `" is too long (max 1000 characters)`})
+			}
+		}
+	}
+	return errs
+}
+
+/* ------------------------------------------------------------------ fn.* checks */
+
+// FnNames are the built-in {{fn.*}} functions of the runner.
+var FnNames = []string{"uuid", "now", "random_email", "random_int", "totp"}
+
+var (
+	fnToken     = regexp.MustCompile(`\{\{\s*fn\.([\w-]+)((?:\s+[^{}]*?)?)\s*\}\}`)
+	totpRef     = regexp.MustCompile(`^(secret|env|vars)\.[\w-]+$`)
+	totpLiteral = regexp.MustCompile(`^[A-Za-z2-7-]+=*$`)
+	totpOption  = regexp.MustCompile(`(?i)^(digits|period|algorithm)=(.+)$`)
+	allDigits   = regexp.MustCompile(`^\d+$`)
+)
+
+const totpOptionsHint = " (digits=6..8, period=10..300, algorithm=SHA1|SHA256|SHA512)"
+
+type fnIssue struct {
+	field   string
+	message string
+	warning bool
+}
+
+// totpArgsError checks `{{fn.totp <ref> [digits=6] [period=30] [algorithm=SHA1]}}` (ranges = runner/src/totp.ts).
+func totpArgsError(args []string) string {
+	if len(args) == 0 || strings.Contains(args[0], "=") {
+		return "fn.totp needs a seed: secret.NAME, env.NAME, vars.name or a base32 literal"
+	}
+	if !totpRef.MatchString(args[0]) && !totpLiteral.MatchString(args[0]) {
+		return "fn.totp seed must be secret.NAME, env.NAME, vars.name or a base32 literal"
+	}
+	seen := map[string]bool{}
+	for _, a := range args[1:] {
+		m := totpOption.FindStringSubmatch(a)
+		option := "…" // a bare argument may be part of a literal seed: never echo it
+		if k, _, ok := strings.Cut(a, "="); ok {
+			option = k
+		}
+		if m == nil || seen[strings.ToLower(m[1])] {
+			return `fn.totp: invalid option "` + option + `"` + totpOptionsHint
+		}
+		k, v := strings.ToLower(m[1]), m[2]
+		seen[k] = true
+		var valid bool
+		switch k {
+		case "algorithm":
+			valid = slices.Contains([]string{"SHA1", "SHA256", "SHA512"}, strings.Replace(strings.ToUpper(v), "-", "", 1))
+		default:
+			n, err := strconv.Atoi(v)
+			valid = allDigits.MatchString(v) && err == nil && ((k == "digits" && n >= 6 && n <= 8) || (k == "period" && n >= 10 && n <= 300))
+		}
+		if !valid {
+			return `fn.totp: invalid option "` + k + `"` + totpOptionsHint
+		}
+	}
+	return ""
+}
+
+func collectStrings(v any, out []string) []string {
+	switch t := v.(type) {
+	case string:
+		out = append(out, t)
+	case []any:
+		for _, x := range t {
+			out = collectStrings(x, out)
+		}
+	case map[string]any:
+		keys := make([]string, 0, len(t))
+		for k := range t {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			out = collectStrings(t[k], out)
+		}
+	}
+	return out
+}
+
+// fnIssues reports {{fn.*}} problems in every param (not id/action/description/expected), fields sorted by name.
+func fnIssues(st Step) []fnIssue {
+	fields := make([]string, 0, len(st))
+	for k := range st {
+		switch k {
+		case "id", "action", "description", "expected":
+			continue
+		}
+		fields = append(fields, k)
+	}
+	sort.Strings(fields)
+	var out []fnIssue
+	for _, field := range fields {
+		for _, text := range collectStrings(st[field], nil) {
+			for _, m := range fnToken.FindAllStringSubmatch(text, -1) {
+				name := m[1]
+				args := strings.Fields(m[2])
+				switch {
+				case !slices.Contains(FnNames, name):
+					out = append(out, fnIssue{field, `Unknown function "fn.` + name + `"`, true})
+				case name == "totp":
+					if msg := totpArgsError(args); msg != "" {
+						out = append(out, fnIssue{field, msg, false})
+					}
+				}
+			}
+		}
+	}
+	return out
 }
 
 /* ------------------------------------------------------------------ summary */
@@ -247,6 +443,15 @@ func countOp(op string) string {
 		return "≤"
 	}
 	return "="
+}
+
+// pollSuffix is " (poll ≤15s)" when http_request polls (seconds rounded to one decimal, as in steps.ts).
+func pollSuffix(s Step) string {
+	ms, ok := s.number("poll_timeout_ms")
+	if !ok || ms <= 0 {
+		return ""
+	}
+	return " (poll ≤" + strconv.FormatFloat(math.Round(ms/100)/10, 'f', -1, 64) + "s)"
 }
 
 // Summarize ports summarizeStep (English). Callers interpolate the step first if needed.
@@ -320,7 +525,7 @@ func Summarize(s Step) string {
 		if m == "" {
 			m = "GET"
 		}
-		return m + " " + s.Str("url")
+		return m + " " + s.Str("url") + pollSuffix(s)
 	case "expect_status":
 		return "Status = " + s.Str("value")
 	case "expect_json":

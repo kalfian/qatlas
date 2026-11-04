@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
+import { tr } from '@/lib/i18n-labels'
 import { cn } from '@/lib/utils'
 
 export interface VarSuggestion {
@@ -7,9 +8,34 @@ export interface VarSuggestion {
   token: string
   ns: 'env' | 'secret' | 'vars' | 'fn'
   hint?: string
+  /** Token belum lengkap (mis. `fn.totp secret.`): disisipkan tanpa `}}` lalu autocomplete lanjut. */
+  partial?: boolean
 }
 
 export const VarSuggestionsContext = React.createContext<VarSuggestion[]>([])
+
+type T = (key: string) => string
+
+/**
+ * Lengkapi daftar dari context dengan helper fn bawaan (tanpa duplikat token): fn.uuid/now/random_email/
+ * random_int, `fn.totp secret.<NAMA>` untuk tiap secret, dan `fn.totp secret.` untuk memilih secret.
+ */
+export function withFnHelpers(all: VarSuggestion[], t: T): VarSuggestion[] {
+  const seen = new Set(all.map((s) => s.token))
+  const extra: VarSuggestion[] = []
+  const add = (s: VarSuggestion) => {
+    if (seen.has(s.token)) return
+    seen.add(s.token)
+    extra.push(s)
+  }
+  add({ token: 'fn.uuid', ns: 'fn', hint: t('testcases:editor.vars.fnUuid') })
+  add({ token: 'fn.now', ns: 'fn', hint: t('testcases:editor.vars.fnNow') })
+  add({ token: 'fn.random_email', ns: 'fn', hint: t('testcases:editor.vars.fnRandomEmail') })
+  add({ token: 'fn.random_int 1 100', ns: 'fn', hint: t('testcases:editor.vars.fnRandomInt') })
+  add({ token: 'fn.totp secret.', ns: 'fn', hint: t('steps:fnHints.totpPick'), partial: true })
+  for (const s of all) if (s.ns === 'secret') add({ token: `fn.totp ${s.token}`, ns: 'fn', hint: t('steps:fnHints.totp') })
+  return [...all, ...extra]
+}
 
 const NS_LABEL: Record<VarSuggestion['ns'], string> = { env: 'env', secret: 'secret', vars: 'vars', fn: 'fn' }
 
@@ -35,18 +61,22 @@ export const VarField = React.forwardRef<HTMLInputElement | HTMLTextAreaElement,
   { value, onValueChange, multiline, rows = 3, mono, className, onKeyDown, onBlur, id, ...rest },
   forwardedRef,
 ) {
-  const all = React.useContext(VarSuggestionsContext)
+  const fromContext = React.useContext(VarSuggestionsContext)
   const ref = React.useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
   const [query, setQuery] = React.useState<{ start: number; text: string } | null>(null)
   const [active, setActive] = React.useState(0)
   const reactId = React.useId()
-  const { t } = useTranslation('testcases')
+  const { t, i18n: i18nInstance } = useTranslation('testcases')
+  const lng = i18nInstance.language
+  // `lng` di deps: hint diterjemahkan ulang saat bahasa berganti.
+  const all = React.useMemo(() => (lng ? withFnHelpers(fromContext, tr) : fromContext), [fromContext, lng])
   const listId = `${id ?? reactId}-vars`
 
   const matches = React.useMemo(() => {
     if (!query) return []
     const q = query.text.toLowerCase()
-    return all.filter((s) => s.token.toLowerCase().includes(q)).slice(0, 8)
+    // Token parsial yang sudah diketik penuh tidak ditawarkan lagi (Enter → secret pertama).
+    return all.filter((s) => s.token.toLowerCase().includes(q) && !(s.partial && s.token.toLowerCase() === q.trimEnd())).slice(0, 8)
   }, [all, query])
   const open = matches.length > 0
   const activeIdx = Math.min(active, Math.max(matches.length - 1, 0))
@@ -59,7 +89,8 @@ export const VarField = React.forwardRef<HTMLInputElement | HTMLTextAreaElement,
 
   const detect = (el: HTMLInputElement | HTMLTextAreaElement) => {
     const pos = el.selectionStart ?? el.value.length
-    const m = /\{\{\s*([\w.]*)$/.exec(el.value.slice(0, pos))
+    // `fn.totp <ref>` punya spasi: tetap dianggap satu query agar `{{fn.totp secret.` menawarkan secret.
+    const m = /\{\{\s*((?:fn\.totp\s+)?[\w.]*)$/.exec(el.value.slice(0, pos))
     if (m) setQuery({ start: pos - m[1].length, text: m[1] })
     else setQuery(null)
     setActive(0)
@@ -70,6 +101,17 @@ export const VarField = React.forwardRef<HTMLInputElement | HTMLTextAreaElement,
     if (!el || !query) return
     const pos = el.selectionStart ?? el.value.length
     const after = el.value.slice(pos)
+    if (s.partial) {
+      const caret = query.start + s.token.length
+      onValueChange(el.value.slice(0, query.start) + s.token + after)
+      setQuery(null)
+      requestAnimationFrame(() => {
+        el.focus()
+        el.setSelectionRange(caret, caret)
+        detect(el)
+      })
+      return
+    }
     const closing = /^\s*\}\}/.exec(after)
     const insert = closing ? s.token : `${s.token}}}`
     const next = el.value.slice(0, query.start) + insert + after
@@ -167,7 +209,7 @@ export const VarField = React.forwardRef<HTMLInputElement | HTMLTextAreaElement,
               className={cn('flex h-8 cursor-default items-center gap-2 rounded-sm px-2 text-sm', i === activeIdx && 'bg-accent text-accent-foreground')}
             >
               <span className="w-12 shrink-0 text-xs text-muted-foreground">{NS_LABEL[s.ns]}</span>
-              <span className="truncate font-mono text-[12px]">{`{{${s.token}}}`}</span>
+              <span className="truncate font-mono text-[12px]">{s.partial ? `{{${s.token}…}}` : `{{${s.token}}}`}</span>
               {s.hint && <span className="ml-auto truncate pl-2 text-xs text-muted-foreground">{s.hint}</span>}
             </li>
           ))}

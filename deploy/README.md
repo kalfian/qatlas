@@ -14,7 +14,8 @@ environment variables (reference: [`backend/.env.example`](../backend/.env.examp
 
 Processes: `qatlas server` (API + SPA, port **8090**), `qatlas worker` (job queue + Node runner
 + Chromium), or both in one process with `qatlas all`. Health: `GET /healthz` (process up),
-`GET /readyz` (database reachable).
+`GET /readyz` (database and artifact storage reachable). Artifacts live on local disk or in an
+S3 bucket (Garage) — see [Artifact storage](#artifact-storage-local-or-s3-garage).
 
 ---
 
@@ -69,12 +70,14 @@ The worker gets `shm_size: 1gb` (`WORKER_SHM_SIZE`) and `init: true` for Chromiu
 Server (uid 1001 `qatlas`) and worker (uid 1001 `pwuser`) share the `artifacts` volume; a
 bind-mounted artifacts directory must be `chown -R 1001:1001`.
 
-Demo target app ("Tokoku", port 8099, published on 127.0.0.1 only):
+Demo target app ("Tokoku", port 8099) and Mailpit (email catcher for the sign-up / verification
+demo cases; UI+API port 8025), both published on 127.0.0.1 only:
 
 ```sh
 docker compose -f deploy/docker-compose.yml --profile demo up -d --build
 docker compose -f deploy/docker-compose.yml exec server \
-  qatlas seed demo --target-url http://demo-target:8099 --admin-token adm_stg_8f3a
+  qatlas seed demo --target-url http://demo-target:8099 --admin-token adm_stg_8f3a \
+    --mailpit-url http://mailpit:8025
 ```
 
 `qatlas seed demo` creates the demo users (`rina@tokoku.id` admin, `dimas@`/`sari@` with
@@ -82,7 +85,10 @@ docker compose -f deploy/docker-compose.yml exec server \
 projects SHOP/PAY with environments, folders, test cases and flows. Existing projects are skipped
 (`--reset` recreates them, deleting their runs); `--runs` enqueues a few demo runs for the worker.
 `--admin-token` must match the demo target's `DEMO_ADMIN_TOKEN` (default `adm_stg_8f3a`) for
-SHOP-T17; without it the secret is random. `qatlas seed demo --help` lists every flag.
+SHOP-T17; without it the secret is random. `--mailpit-url` is where the worker reaches Mailpit for
+the email cases (SHOP-T21/T22), and `--qa-totp-seed` must match the demo target's `DEMO_TOTP_SEED`
+for the TOTP case (SHOP-T20; both default to the public demo seed). `qatlas seed demo --help` lists
+every flag.
 
 ### Upgrade / rollback
 
@@ -189,6 +195,95 @@ The last 5 releases are kept (`--keep`), plus whatever `current`/`previous` poin
 
 ---
 
+## Artifact storage: local or S3 (Garage)
+
+`QATLAS_STORAGE=local` (default) keeps screenshots, videos and attachments under
+`QATLAS_DATA_DIR/artifacts`. `QATLAS_STORAGE=s3` puts them in an S3-compatible bucket; the
+bucket stays private and downloads still go through `GET /api/v1/artifacts/{id}` (RBAC, HTTP
+Range for video seeking — translated into ranged GETs against the bucket). Storage keys are
+the same in both modes (`<project>/<run>/<artifact>.<ext>`, plus `QATLAS_S3_PREFIX/`).
+
+| Variable | Default | |
+|---|---|---|
+| `QATLAS_STORAGE` | `local` | `local` or `s3` |
+| `QATLAS_S3_ENDPOINT` | — | scheme + host, no path: `https://garage.kalfian.work`, `http://garage:3900` |
+| `QATLAS_S3_REGION` | `us-east-1` | Garage: the `s3_region` of its `garage.toml` (usually `garage`) |
+| `QATLAS_S3_BUCKET` | — | must exist |
+| `QATLAS_S3_ACCESS_KEY`, `QATLAS_S3_SECRET_KEY` | — | key with read + write on the bucket (the secret is never logged) |
+| `QATLAS_S3_FORCE_PATH_STYLE` | `true` | path-style URLs (Garage, MinIO); `false` for AWS virtual-host style |
+| `QATLAS_S3_PREFIX` | empty | optional key prefix when the bucket is shared |
+
+At start `server`, `worker` and `all` check the bucket (HEAD bucket, then write and delete a
+`.qatlas-probe-…` object) and exit with a clear message when it is missing or not writable,
+e.g. `artifact storage check failed (QATLAS_STORAGE=s3): s3 bucket "qatlas" at https://…:
+Access Denied. (check QATLAS_S3_ACCESS_KEY / QATLAS_S3_SECRET_KEY …)`. `/readyz` returns
+`{"status":"ok","database":"ok","storage":"ok","storage_backend":"s3"}`, or 503 with
+`"storage":"error"` while the bucket is unreachable.
+
+### External Garage (e.g. `https://garage.kalfian.work`)
+
+1. Garage WebUI → **Buckets** → create the bucket (e.g. `qatlas`).
+2. Garage WebUI → **Keys** → create a key (e.g. `qatlas-app`) and copy its **Access Key ID**
+   (`GK…`) and **Secret Key** (revealed on the key's page). CLI equivalent on the Garage host:
+   `garage key create qatlas-app` and `garage key info --secret-key qatlas-app`.
+3. Give the key **read** and **write** on the bucket (WebUI: the bucket's permissions / allow
+   key; CLI: `garage bucket allow --read --write qatlas --key qatlas-app`). Owner is not needed.
+4. Set the variables in `/etc/qatlas/qatlas.env` (B) or `deploy/.env` (A):
+
+   ```sh
+   QATLAS_STORAGE=s3
+   QATLAS_S3_ENDPOINT=https://garage.kalfian.work
+   QATLAS_S3_REGION=garage
+   QATLAS_S3_BUCKET=qatlas
+   QATLAS_S3_ACCESS_KEY=GK…
+   QATLAS_S3_SECRET_KEY=…
+   ```
+
+5. Move existing files (below), restart (`systemctl restart qatlas-server qatlas-worker` or
+   `docker compose -f deploy/docker-compose.yml up -d`) and check `curl -fsS http://127.0.0.1:8090/readyz`.
+
+### Bundled Garage (docker-compose, profile `s3`)
+
+`deploy/docker-compose.yml` has an optional single-node `garage` service (`dxflrs/garage:v2.5.0`,
+config [`deploy/garage/garage.toml`](garage/garage.toml), volumes `garage-meta` and
+`${GARAGE_DATA:-garage-data}`, not published on the host — add
+`ports: ["127.0.0.1:3900:3900", "127.0.0.1:3903:3903"]` in an override for host access).
+
+```sh
+echo "GARAGE_RPC_SECRET=$(openssl rand -hex 32)" >> deploy/.env
+docker compose -f deploy/docker-compose.yml --profile s3 up -d garage
+deploy/garage/init.sh          # layout, bucket "qatlas", key "qatlas-app"; prints the QATLAS_S3_* lines
+$EDITOR deploy/.env            # paste them (endpoint http://garage:3900, region garage)
+docker compose -f deploy/docker-compose.yml --profile s3 up -d
+```
+
+`init.sh` is idempotent (`deploy/garage/init.sh <bucket> <key-name>`, `GARAGE_CAPACITY=100G`);
+the secret key is printed only when the key is created (later: `docker compose -f
+deploy/docker-compose.yml exec garage /garage key info --secret-key qatlas-app`). Keep the
+`--profile s3` flag on every `up`, otherwise compose leaves Garage stopped and server/worker
+fail their storage check (they restart until it is back).
+
+### Moving existing artifacts (`qatlas artifacts migrate`)
+
+```sh
+qatlas artifacts migrate --from local --to s3 --dry-run    # list what would be copied
+qatlas artifacts migrate --from local --to s3              # copy; prints [n/total] per file + a summary
+# set QATLAS_STORAGE=s3 and restart server + worker, then run the migrate once more for
+# files written in between (already copied objects with the same size are skipped)
+qatlas artifacts check                                     # every non-expired artifact present in the active store?
+qatlas artifacts migrate --from local --to s3 --delete-local   # optional: remove the copied local files
+```
+
+With docker-compose run them as `docker compose -f deploy/docker-compose.yml exec server qatlas
+artifacts …` (the server container has the artifacts volume); with systemd as `sudo qatlas
+artifacts …`. The command reads the non-purged `artifacts` rows (orphan files without a row are
+not copied), uploads with the stored content type and verifies the size; the database is not
+modified. Local files are kept unless `--delete-local`. `--from s3 --to local` works for a
+rollback. Exit status 1 when an object failed (`migrate`) or is missing / has the wrong size
+(`check`); `check --store local|s3` checks a store other than the active one.
+
+---
+
 ## Reverse proxy and TLS
 
 `qatlas server` speaks plain HTTP on 8090; terminate TLS in the existing proxy. Set
@@ -254,7 +349,7 @@ What to keep — and what is useless without the rest:
 | Database | `pg_dump -Fc` (schedule it) + Proxmox CT backup/snapshot |
 | `QATLAS_MASTER_KEY` | password manager, separately from the dumps. Without it environment secrets cannot be decrypted. |
 | Config | `deploy/.env` (A) or `/etc/qatlas/qatlas.env` (B) |
-| Artifacts | the artifacts volume / mount point (screenshots, videos; optional — subject to retention) |
+| Artifacts | the artifacts volume / mount point (screenshots, videos; optional — subject to retention); with `QATLAS_STORAGE=s3` the Garage data instead (CT backup of the Garage host, or the `garage-meta` + `garage-data` volumes) |
 
 ```sh
 # A. docker-compose

@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -149,14 +150,34 @@ func (s *Server) Handler() http.Handler { return s.handler }
 // SSE subscriptions). ListenAndServe calls it on shutdown.
 func (s *Server) Close() { s.Events.Close() }
 
+// readyz reports whether the database and the artifact store are reachable:
+// 200 {"status":"ok","database":"ok","storage":"ok","storage_backend":"s3"}, or
+// 503 with "status":"unavailable", the failing part set to "error" and a short
+// message (details only in the log: /readyz is unauthenticated).
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
+	store := s.Artifacts.Store()
+	body := map[string]string{"status": "ok", "database": "ok", "storage": "ok", "storage_backend": artifacts.Backend(store)}
+	var problems []string
 	if err := s.deps.Pool.Ping(ctx); err != nil {
-		httpx.WriteJSON(w, http.StatusServiceUnavailable, map[string]string{"status": "unavailable", "error": "database unreachable"})
+		body["database"] = "error"
+		problems = append(problems, "database unreachable")
+	}
+	if p, ok := store.(artifacts.Pinger); ok {
+		if err := p.Ping(ctx); err != nil {
+			s.deps.Logger.WarnContext(ctx, "readyz: artifact storage check failed", "err", err)
+			body["storage"] = "error"
+			problems = append(problems, "artifact storage unreachable")
+		}
+	}
+	if len(problems) > 0 {
+		body["status"] = "unavailable"
+		body["error"] = strings.Join(problems, "; ")
+		httpx.WriteJSON(w, http.StatusServiceUnavailable, body)
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	httpx.WriteJSON(w, http.StatusOK, body)
 }
 
 func securityHeaders(next http.Handler) http.Handler {

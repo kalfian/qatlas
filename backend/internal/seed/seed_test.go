@@ -54,7 +54,7 @@ func TestDemoSeed(t *testing.T) {
 
 	var out bytes.Buffer
 	enq := &countingEnqueuer{}
-	opts := Options{TargetURL: "http://demo.test:8099/", AdminToken: "adm_test", Runs: true, Enqueuer: enq, Out: &out}
+	opts := Options{TargetURL: "http://demo.test:8099/", MailpitURL: "http://mail.test:8025/", AdminToken: "adm_test", Runs: true, Enqueuer: enq, Out: &out}
 	if err := Demo(ctx, pool, cfg, nil, opts); err != nil {
 		t.Fatalf("seed: %v\n%s", err, out.String())
 	}
@@ -103,7 +103,7 @@ func TestDemoSeed(t *testing.T) {
 	if got := strings.Join(queryStrings(t, pool, `
 		SELECT f.name || '<' || COALESCE(pf.name, '') FROM folders f JOIN projects p ON p.id = f.project_id
 		LEFT JOIN folders pf ON pf.id = f.parent_id WHERE p.key = 'SHOP' ORDER BY f.name`), ","); got !=
-		"API<,Auth<,Cart<,Catalog<,Checkout<,Payment<Checkout" {
+		"API<,Auth<,Cart<,Catalog<,Checkout<,Email<,Payment<Checkout" {
 		t.Fatalf("folders: %s", got)
 	}
 
@@ -113,7 +113,7 @@ func TestDemoSeed(t *testing.T) {
 		FROM environments e JOIN projects p ON p.id = e.project_id ORDER BY p.key, e.created_at`)
 	want := []string{
 		`PAY/sandbox:true:{"API_URL": "https://sandbox.pay.tokoku.id"}`,
-		`SHOP/staging:true:{"API_URL": "http://demo.test:8099/api", "BASE_URL": "http://demo.test:8099"}`,
+		`SHOP/staging:true:{"API_URL": "http://demo.test:8099/api", "BASE_URL": "http://demo.test:8099", "MAILPIT_URL": "http://mail.test:8025"}`,
 		`SHOP/production:false:{"API_URL": "https://api.tokoku.id", "BASE_URL": "https://tokoku.id"}`,
 	}
 	if strings.Join(envs, "\n") != strings.Join(want, "\n") {
@@ -139,6 +139,9 @@ func TestDemoSeed(t *testing.T) {
 	}
 	if v := secret("SHOP", "production", "QA_PASSWORD"); v != DefaultQAPassword {
 		t.Fatalf("production QA_PASSWORD = %q", v)
+	}
+	if v := secret("SHOP", "staging", "QA_TOTP_SEED"); v != DefaultQATOTPSeed {
+		t.Fatalf("QA_TOTP_SEED = %q", v)
 	}
 	if v := secret("SHOP", "staging", "ADMIN_TOKEN"); v != "adm_test" {
 		t.Fatalf("ADMIN_TOKEN = %q", v)
@@ -171,7 +174,7 @@ func TestDemoSeed(t *testing.T) {
 	if err := Demo(ctx, pool, cfg, nil, Options{Reset: true, Out: &out}); err != nil {
 		t.Fatalf("reset: %v\n%s", err, out.String())
 	}
-	if got := countAll(); got != "4/2/23/0" {
+	if got := countAll(); got != "4/2/26/0" {
 		t.Fatalf("after reset: %s", got)
 	}
 	if !strings.Contains(out.String(), "project SHOP deleted (--reset)") || !strings.Contains(out.String(), "project SHOP created") {

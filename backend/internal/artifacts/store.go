@@ -13,6 +13,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // ErrNotFound is returned by Store.Open / Store.Delete when the object does not exist.
@@ -24,19 +26,69 @@ type Info struct {
 	ModTime time.Time
 }
 
-// Store is the blob storage behind artifacts. Keys are slash-separated relative
-// paths ("<project>/<run>/<artifact>.png").
-//
-// TODO(phase 5): S3Store (minio-go, QATLAS_S3_ENDPOINT/BUCKET/ACCESS_KEY/SECRET_KEY/REGION)
-// implementing the same interface, plus an optional presigned-URL redirect in the handler.
+// Store is the blob storage behind artifacts: LocalStore (QATLAS_STORAGE=local)
+// or S3Store (QATLAS_STORAGE=s3). Keys are slash-separated relative paths
+// ("<project>/<run>/<artifact>.png") and identical in every store, so
+// `qatlas artifacts migrate` copies objects without touching the database.
 type Store interface {
 	// Put stores r under key. size is the expected byte count, or -1 when unknown;
 	// a mismatch is an error and leaves nothing behind.
 	Put(ctx context.Context, key string, r io.Reader, size int64, mime string) error
 	// Open returns a seekable reader (for http.ServeContent / Range requests).
 	Open(ctx context.Context, key string) (io.ReadSeekCloser, Info, error)
+	// Stat describes the object; a missing object yields ErrNotFound.
+	Stat(ctx context.Context, key string) (Info, error)
 	// Delete removes the object; a missing object yields ErrNotFound.
 	Delete(ctx context.Context, key string) error
+}
+
+// Pinger is implemented by stores with a cheap reachability check (/readyz).
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
+
+// Backend names the store kind ("local", "s3") for /readyz and CLI output.
+func Backend(s Store) string {
+	switch s.(type) {
+	case *LocalStore:
+		return "local"
+	case *S3Store:
+		return "s3"
+	default:
+		return "custom"
+	}
+}
+
+// Verify checks that the store is reachable and writable: Ping (if supported),
+// then a probe object is written and deleted. `qatlas server|worker|all` refuse
+// to start when it fails.
+func Verify(ctx context.Context, s Store) error {
+	if p, ok := s.(Pinger); ok {
+		if err := p.Ping(ctx); err != nil {
+			return err
+		}
+	}
+	key := ".qatlas-probe-" + uuid.NewString()
+	if err := s.Put(ctx, key, strings.NewReader("ok"), 2, "text/plain"); err != nil {
+		return fmt.Errorf("write probe object: %w", err)
+	}
+	if err := s.Delete(ctx, key); err != nil {
+		return fmt.Errorf("delete probe object: %w", err)
+	}
+	return nil
+}
+
+// validateKey rejects keys that could escape the store root or are ambiguous.
+func validateKey(key string) error {
+	if key == "" || strings.HasPrefix(key, "/") || strings.ContainsAny(key, "\\\x00") {
+		return fmt.Errorf("invalid artifact key %q", key)
+	}
+	for _, seg := range strings.Split(key, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("invalid artifact key %q", key)
+		}
+	}
+	return nil
 }
 
 // LocalStore keeps objects on the local filesystem under Root
@@ -58,15 +110,41 @@ func NewLocalStore(root string) (*LocalStore, error) {
 }
 
 func (s *LocalStore) path(key string) (string, error) {
-	if key == "" || strings.HasPrefix(key, "/") || strings.Contains(key, "\\") {
-		return "", fmt.Errorf("invalid artifact key %q", key)
-	}
-	for _, seg := range strings.Split(key, "/") {
-		if seg == "" || seg == "." || seg == ".." {
-			return "", fmt.Errorf("invalid artifact key %q", key)
-		}
+	if err := validateKey(key); err != nil {
+		return "", err
 	}
 	return filepath.Join(s.Root, filepath.FromSlash(key)), nil
+}
+
+// Ping checks that the root directory exists.
+func (s *LocalStore) Ping(context.Context) error {
+	st, err := os.Stat(s.Root)
+	if err != nil {
+		return fmt.Errorf("artifact dir: %w", err)
+	}
+	if !st.IsDir() {
+		return fmt.Errorf("artifact dir %s is not a directory", s.Root)
+	}
+	return nil
+}
+
+// Stat describes the object.
+func (s *LocalStore) Stat(_ context.Context, key string) (Info, error) {
+	p, err := s.path(key)
+	if err != nil {
+		return Info{}, err
+	}
+	st, err := os.Stat(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return Info{}, ErrNotFound
+	}
+	if err != nil {
+		return Info{}, err
+	}
+	if !st.Mode().IsRegular() {
+		return Info{}, fmt.Errorf("artifact %q is not a regular file", key)
+	}
+	return Info{Size: st.Size(), ModTime: st.ModTime()}, nil
 }
 
 // Put writes to a temp file in the target directory and renames it into place.

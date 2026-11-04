@@ -7,6 +7,7 @@
 //	qatlas user create-admin --email … --name … [--password …]
 //	qatlas mcp-stdio --url U --token T  MCP stdio proxy to a server's /mcp
 //	qatlas seed demo [flags]            load the demo data set (internal/seed)
+//	qatlas artifacts migrate|check      copy artifact files local ↔ S3 / verify the active store
 //	qatlas version                      print the build version
 package main
 
@@ -49,10 +50,15 @@ Commands:
   user create-admin --email E --name N [--password P]
                                           create (or reset) an admin; password from --password,
                                           QATLAS_ADMIN_PASSWORD or an interactive prompt
-  seed demo [--password P] [--target-url URL] [--qa-password P] [--admin-token T] [--reset] [--runs]
+  seed demo [--password P] [--target-url URL] [--mailpit-url URL] [--qa-password P]
+            [--qa-totp-seed S] [--admin-token T] [--reset] [--runs]
                                           load the demo users, projects SHOP/PAY, environments,
                                           folders, test cases and flows (skips existing projects);
                                           see "qatlas seed demo --help"
+  artifacts migrate --from local --to s3 [--dry-run] [--delete-local]
+                                          copy artifact files between stores (QATLAS_S3_*);
+                                          idempotent, see "qatlas artifacts --help"
+  artifacts check [--store local|s3]      verify every non-expired artifact exists in the store
   mcp-stdio --url URL --token TOKEN       MCP stdio proxy to URL/mcp for stdio-only MCP clients
                                           (or QATLAS_URL / QATLAS_TOKEN)
   version                                 print the version (also --version)
@@ -105,6 +111,8 @@ func run(args []string) error {
 		return runAll(ctx, cfg, logger)
 	case "seed":
 		return runSeed(ctx, cfg, logger, args[1:])
+	case "artifacts":
+		return runArtifacts(ctx, cfg, args[1:])
 	default:
 		fmt.Fprint(os.Stderr, usage)
 		return fmt.Errorf("unknown command %q", args[0])
@@ -128,12 +136,16 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	}
 	defer pool.Close()
 	warnPendingMigrations(ctx, pool, logger)
+	store, err := artifactStore(ctx, cfg, logger)
+	if err != nil {
+		return err
+	}
 	// Insert-only River client: the server enqueues run_execute, a worker works it.
 	client, err := worker.NewInsertOnlyClient(pool, logger)
 	if err != nil {
 		return err
 	}
-	srv, err := server.New(server.Deps{Config: cfg, Pool: pool, Logger: logger, Enqueuer: worker.NewEnqueuer(client), Version: version})
+	srv, err := server.New(server.Deps{Config: cfg, Pool: pool, Logger: logger, Enqueuer: worker.NewEnqueuer(client), ArtifactStore: store, Version: version})
 	if err != nil {
 		return err
 	}
@@ -271,9 +283,10 @@ Projects that already exist are skipped; existing users are left unchanged.
 Needs QATLAS_DATABASE_URL and QATLAS_MASTER_KEY (secrets are encrypted).
 
 SHOP "staging" points at the demo target (demo-target/, node demo-target/server.mjs):
-BASE_URL=<target-url>, API_URL=<target-url>/api. Secrets: QA_PASSWORD=--qa-password,
-ADMIN_TOKEN=--admin-token (random when empty; demo-target accepts DEMO_ADMIN_TOKEN),
-PAY API_KEY random.
+BASE_URL=<target-url>, API_URL=<target-url>/api, MAILPIT_URL=<mailpit-url> (the Mailpit the
+demo target sends its sign-up email to). Secrets: QA_PASSWORD=--qa-password,
+QA_TOTP_SEED=--qa-totp-seed (demo-target DEMO_TOTP_SEED), ADMIN_TOKEN=--admin-token (random when
+empty; demo-target accepts DEMO_ADMIN_TOKEN), PAY API_KEY random.
 
 Flags:
 `
@@ -291,6 +304,8 @@ func runSeed(ctx context.Context, cfg *config.Config, logger *slog.Logger, args 
 	fs.StringVar(&opts.Password, "password", seed.DefaultPassword, "password of the active demo users")
 	fs.StringVar(&opts.TargetURL, "target-url", seed.DefaultTargetURL, "demo target base URL for SHOP staging")
 	fs.StringVar(&opts.QAPassword, "qa-password", seed.DefaultQAPassword, "value of the QA_PASSWORD secrets (demo-target DEMO_QA_PASSWORD)")
+	fs.StringVar(&opts.MailpitURL, "mailpit-url", seed.DefaultMailpitURL, "Mailpit web/API URL for SHOP staging MAILPIT_URL (sign-up email cases)")
+	fs.StringVar(&opts.QATOTPSeed, "qa-totp-seed", seed.DefaultQATOTPSeed, "value of the QA_TOTP_SEED secret (demo-target DEMO_TOTP_SEED; the default is a public demo-only seed)")
 	fs.StringVar(&opts.AdminToken, "admin-token", "", "value of the ADMIN_TOKEN secret (default: random; demo-target DEMO_ADMIN_TOKEN)")
 	fs.BoolVar(&opts.Reset, "reset", false, "delete the demo projects (with all their runs) first")
 	fs.BoolVar(&opts.Runs, "runs", false, "enqueue a few demo runs (SHOP-F2, SHOP-T12, SHOP-F3) for a running worker; returns immediately")
@@ -312,6 +327,9 @@ func runSeed(ctx context.Context, cfg *config.Config, logger *slog.Logger, args 
 			return err
 		}
 		opts.Enqueuer = worker.NewEnqueuer(client)
+		if opts.Store, err = artifactStore(ctx, cfg, logger); err != nil {
+			return err
+		}
 	}
 	return seed.Demo(ctx, pool, cfg, logger, opts)
 }

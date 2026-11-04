@@ -8,13 +8,20 @@
 //                                      `id` is the original Indonesian shop (runner tests).
 //   DEMO_QA_PASSWORD=…                 password of qa.bot@tokoku.id (default Qa-Staging-2026!)
 //   DEMO_ADMIN_TOKEN=…                 static bearer token accepted by the API (default adm_stg_8f3a)
+//   DEMO_TOTP_SEED=…                   base32 TOTP seed of qa.2fa@tokoku.id (default TOKOKU2FADEMOSEEDQATLASTOTPDEMOA,
+//                                      a public demo-only value — never reuse it for anything real)
+//   DEMO_SMTP_HOST / DEMO_SMTP_PORT    SMTP server for sign-up emails (default 127.0.0.1:1025, e.g. Mailpit)
+//   DEMO_PUBLIC_URL=…                  base URL used in email links (default http://localhost:<port>)
+//   DEMO_MAIL_DELAY_MS=…               delivery delay of sign-up emails like a mail queue (default 1500;
+//                                      0 = deliver before the "Check your email" page)
 //
 // INTENTIONAL BUG: the voucher HEMAT10 is shown as applied, but the grand total ignores the
 // discount (see renderCheckout). The seeded "voucher" test case is meant to fail on it.
 
 import { createServer } from 'node:http'
-import { randomBytes, randomInt } from 'node:crypto'
+import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto'
 import { readFileSync } from 'node:fs'
+import { connect as netConnect } from 'node:net'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -24,8 +31,20 @@ const HOST = process.env.HOST ?? '127.0.0.1'
 const QA_PASSWORD = process.env.DEMO_QA_PASSWORD ?? 'Qa-Staging-2026!'
 const ADMIN_TOKEN = process.env.DEMO_ADMIN_TOKEN ?? 'adm_stg_8f3a'
 const LANG = (process.env.DEMO_LANG ?? 'en').toLowerCase() === 'id' ? 'id' : 'en'
+// Demo-only TOTP seed (base32, 160 bit). It is published in the README and the QAtlas demo seed;
+// it protects nothing. Override with DEMO_TOTP_SEED.
+const DEMO_TOTP_SEED_DEFAULT = 'TOKOKU2FADEMOSEEDQATLASTOTPDEMOA'
+const TOTP_SEED = process.env.DEMO_TOTP_SEED || DEMO_TOTP_SEED_DEFAULT
+const SMTP_HOST = process.env.DEMO_SMTP_HOST || '127.0.0.1'
+const SMTP_PORT = Number(process.env.DEMO_SMTP_PORT || 1025)
+let PUBLIC_URL = (process.env.DEMO_PUBLIC_URL ?? '').replace(/\/+$/, '') // set after listen when empty
+const MAIL_DELAY_MS = Math.max(0, Number(process.env.DEMO_MAIL_DELAY_MS ?? 1500) || 0)
 
-const USERS = [{ email: 'qa.bot@tokoku.id', name: 'QA Bot', password: QA_PASSWORD }]
+/** Registered accounts. `totp` = base32 seed → password login asks for an authentication code. */
+const USERS = [
+  { email: 'qa.bot@tokoku.id', name: 'QA Bot', password: QA_PASSWORD },
+  { email: 'qa.2fa@tokoku.id', name: 'QA 2FA', password: QA_PASSWORD, totp: TOTP_SEED },
+]
 
 /* ------------------------------------------------------------------ locale */
 
@@ -73,6 +92,25 @@ const LOCALES = {
       simulateFailure: 'Simulate failure', notFoundTitle: 'Not found — Tokoku', pageNotFound: 'Page not found', backHome: 'Back to home',
       voucherApplied: (code) => `Voucher ${code} applied`, voucherInvalid: 'Invalid voucher code', defaultAddress: 'Account main address',
       status_awaiting_payment: 'Awaiting payment', status_paid: 'Paid', payment_transfer_bank: 'Bank transfer', payment_ewallet: 'E-wallet',
+      // sign-up + email verification, 2FA
+      createAccountLink: 'Create an account', signupTitle: 'Create account — Tokoku', signup: 'Create account', name: 'Name',
+      passwordHint: 'At least 8 characters.', createAccount: 'Create account', alreadyHaveAccount: 'Already have an account?',
+      signupInvalid: 'Enter your name, a valid email address and a password of at least 8 characters.',
+      emailTaken: 'An account with this email already exists.', checkEmailTitle: 'Check your email — Tokoku', checkEmail: 'Check your email',
+      checkEmailText: (email) => `We sent a verification link and a 6-digit code to ${email}. The link and the code expire in 30 minutes.`,
+      codeAlternative: 'No link? Enter the code from the email instead.', verificationCode: 'Verification code', verify: 'Verify',
+      invalidVerificationCode: 'Invalid verification code', verifiedTitle: 'Email verified — Tokoku', emailVerified: 'Email verified',
+      verifiedText: (email) => `${email} is confirmed and your account is active. You can log in now.`,
+      linkInvalidTitle: 'Link expired — Tokoku', linkInvalid: 'This verification link is invalid or has expired',
+      linkInvalidText: 'Sign up again to get a new email.', signupAgain: 'Sign up again',
+      mailFailedTitle: 'Email not sent — Tokoku', mailFailed: "We couldn't send the verification email",
+      mailFailedText: (server, reason) => `The mail server ${server} did not accept the message (${reason}). Start Mailpit (scripts/demo-server.sh does) or set DEMO_SMTP_HOST / DEMO_SMTP_PORT, then sign up again.`,
+      mailSubject: 'Verify your Tokoku account', mailHi: (name) => `Hi ${name},`, mailIntro: 'Welcome to Tokoku! Confirm your email address to activate your account.',
+      mailCode: (code) => `Your verification code is ${code}`, mailLinkIntro: 'Or open this link:', mailButton: 'Verify my email',
+      mailExpiry: 'The code and the link expire in 30 minutes. If you did not sign up, ignore this email.',
+      twoFaTitle: 'Two-factor authentication — Tokoku', twoFa: 'Two-factor authentication',
+      twoFaText: 'Enter the 6-digit code from your authenticator app.', authCode: 'Authentication code',
+      invalidAuthCode: 'Invalid authentication code', twoFaOn: 'Two-factor authentication: on',
     },
   },
   id: {
@@ -115,6 +153,25 @@ const LOCALES = {
       simulateFailure: 'Simulasikan gagal', notFoundTitle: 'Tidak ditemukan — Tokoku', pageNotFound: 'Halaman tidak ditemukan', backHome: 'Kembali ke beranda',
       voucherApplied: (code) => `Voucher ${code} dipakai`, voucherInvalid: 'Kode voucher tidak valid', defaultAddress: 'Alamat utama akun',
       status_awaiting_payment: 'Menunggu pembayaran', status_paid: 'Lunas', payment_transfer_bank: 'Transfer bank', payment_ewallet: 'E-wallet',
+      // daftar + verifikasi email, 2FA
+      createAccountLink: 'Buat akun', signupTitle: 'Buat akun — Tokoku', signup: 'Buat akun', name: 'Nama',
+      passwordHint: 'Minimal 8 karakter.', createAccount: 'Buat akun', alreadyHaveAccount: 'Sudah punya akun?',
+      signupInvalid: 'Isi nama, alamat email yang valid, dan password minimal 8 karakter.',
+      emailTaken: 'Akun dengan email ini sudah ada.', checkEmailTitle: 'Cek email kamu — Tokoku', checkEmail: 'Cek email kamu',
+      checkEmailText: (email) => `Kami mengirim link verifikasi dan kode 6 digit ke ${email}. Link dan kode berlaku 30 menit.`,
+      codeAlternative: 'Tidak ada link? Masukkan kode dari email.', verificationCode: 'Kode verifikasi', verify: 'Verifikasi',
+      invalidVerificationCode: 'Kode verifikasi salah', verifiedTitle: 'Email terverifikasi — Tokoku', emailVerified: 'Email terverifikasi',
+      verifiedText: (email) => `${email} sudah dikonfirmasi dan akunmu aktif. Silakan masuk.`,
+      linkInvalidTitle: 'Link kedaluwarsa — Tokoku', linkInvalid: 'Link verifikasi tidak valid atau sudah kedaluwarsa',
+      linkInvalidText: 'Daftar lagi untuk mendapatkan email baru.', signupAgain: 'Daftar lagi',
+      mailFailedTitle: 'Email tidak terkirim — Tokoku', mailFailed: 'Email verifikasi gagal dikirim',
+      mailFailedText: (server, reason) => `Server email ${server} tidak menerima pesan (${reason}). Jalankan Mailpit (scripts/demo-server.sh menjalankannya) atau atur DEMO_SMTP_HOST / DEMO_SMTP_PORT, lalu daftar lagi.`,
+      mailSubject: 'Verifikasi akun Tokoku kamu', mailHi: (name) => `Halo ${name},`, mailIntro: 'Selamat datang di Tokoku! Konfirmasi alamat email kamu untuk mengaktifkan akun.',
+      mailCode: (code) => `Kode verifikasi kamu adalah ${code}`, mailLinkIntro: 'Atau buka link ini:', mailButton: 'Verifikasi email saya',
+      mailExpiry: 'Kode dan link berlaku 30 menit. Abaikan email ini jika kamu tidak mendaftar.',
+      twoFaTitle: 'Verifikasi dua langkah — Tokoku', twoFa: 'Verifikasi dua langkah',
+      twoFaText: 'Masukkan kode 6 digit dari aplikasi authenticator.', authCode: 'Kode autentikasi',
+      invalidAuthCode: 'Kode autentikasi salah', twoFaOn: 'Verifikasi dua langkah: aktif',
     },
   },
 }
@@ -178,6 +235,237 @@ function createOrder({ items, address, payment, voucher, source }) {
   }
   orders.set(order.id, order)
   return order
+}
+
+/* ------------------------------------------------------------------ TOTP (RFC 6238) */
+
+const TOTP_PERIOD_S = 30
+const TOTP_DIGITS = 6
+
+function base32Decode(text) {
+  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'
+  const clean = String(text).toUpperCase().replace(/[\s=-]/g, '')
+  let bits = 0
+  let value = 0
+  const out = []
+  for (const ch of clean) {
+    const i = alphabet.indexOf(ch)
+    if (i < 0) throw new Error(`invalid base32 character "${ch}" in the TOTP seed`)
+    value = (value << 5) | i
+    bits += 5
+    if (bits >= 8) {
+      out.push((value >>> (bits - 8)) & 0xff)
+      bits -= 8
+    }
+  }
+  return Buffer.from(out)
+}
+
+/** HOTP (RFC 4226) with HMAC-SHA1 and dynamic truncation. */
+function hotp(key, counter) {
+  const msg = Buffer.alloc(8)
+  msg.writeBigUInt64BE(BigInt(counter))
+  const mac = createHmac('sha1', key).update(msg).digest()
+  const offset = mac[mac.length - 1] & 0x0f
+  const bin = mac.readUInt32BE(offset) & 0x7fffffff
+  return String(bin % 10 ** TOTP_DIGITS).padStart(TOTP_DIGITS, '0')
+}
+
+/** Accept the code of the current 30 s period and of the one before/after (clock skew). */
+function verifyTotp(seed, code, now = Date.now()) {
+  const given = Buffer.from(String(code ?? '').replace(/\s/g, ''))
+  if (given.length !== TOTP_DIGITS) return false
+  const key = base32Decode(seed)
+  const counter = Math.floor(now / 1000 / TOTP_PERIOD_S)
+  let ok = false
+  for (const c of [counter - 1, counter, counter + 1]) {
+    if (timingSafeEqual(Buffer.from(hotp(key, c)), given)) ok = true
+  }
+  return ok
+}
+
+base32Decode(TOTP_SEED) // fail fast on a malformed DEMO_TOTP_SEED
+
+/* ------------------------------------------------------------------ email (SMTP) */
+
+/** Quoted-printable (RFC 2045) body encoding, CRLF line ends, lines ≤ 76 characters. */
+function quotedPrintable(text) {
+  const out = []
+  for (const line of String(text).replace(/\r\n?/g, '\n').split('\n')) {
+    const tokens = []
+    const bytes = Buffer.from(line, 'utf8')
+    bytes.forEach((b, i) => {
+      const last = i === bytes.length - 1
+      const literal = (b >= 33 && b <= 126 && b !== 61) || ((b === 32 || b === 9) && !last)
+      tokens.push(literal ? String.fromCharCode(b) : `=${b.toString(16).toUpperCase().padStart(2, '0')}`)
+    })
+    let current = ''
+    for (const token of tokens) {
+      if (current.length + token.length > 75) {
+        out.push(`${current}=`) // soft line break
+        current = ''
+      }
+      current += token
+    }
+    out.push(current)
+  }
+  return out.join('\r\n')
+}
+
+/** RFC 2047 encoded word for non-ASCII header text (display names, subject). */
+const headerText = (text) => (/^[\x20-\x7e]*$/.test(text) ? text : `=?UTF-8?B?${Buffer.from(text, 'utf8').toString('base64')}?=`)
+
+/** multipart/alternative message (text + HTML), both parts quoted-printable. */
+function buildMessage({ fromName, from, toName, to, subject, text, html }) {
+  const boundary = `tokoku-${randomBytes(12).toString('hex')}`
+  const quoteName = (n) => `"${headerText(n).replace(/["\\]/g, '')}"`
+  return [
+    `From: ${quoteName(fromName)} <${from}>`,
+    `To: ${quoteName(toName)} <${to}>`,
+    `Subject: ${headerText(subject)}`,
+    `Date: ${new Date().toUTCString().replace('GMT', '+0000')}`,
+    `Message-ID: <${randomBytes(12).toString('hex')}@tokoku.id>`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset=utf-8',
+    'Content-Transfer-Encoding: quoted-printable',
+    '',
+    quotedPrintable(text),
+    `--${boundary}`,
+    'Content-Type: text/html; charset=utf-8',
+    'Content-Transfer-Encoding: quoted-printable',
+    '',
+    quotedPrintable(html),
+    `--${boundary}--`,
+    '',
+  ].join('\r\n')
+}
+
+/**
+ * Minimal SMTP client (no TLS, no AUTH — meant for Mailpit/MailHog-style catchers):
+ * EHLO → MAIL FROM → RCPT TO → DATA → QUIT. Rejects with a readable message on any error.
+ * Without `message` it only checks that the server accepts the sender and recipient (then RSET).
+ */
+function sendMail({ host, port, from, to, message, timeoutMs = 10_000 }) {
+  return new Promise((resolve, reject) => {
+    const socket = netConnect({ host, port })
+    let buffer = ''
+    let lines = []
+    let waiting = null // { resolve, reject } of the pending reply
+    let finished = false
+    const fail = (err) => {
+      if (finished) return
+      finished = true
+      socket.destroy()
+      reject(err)
+    }
+    socket.setTimeout(timeoutMs, () => fail(new Error(`timed out after ${timeoutMs} ms`)))
+    socket.on('error', (err) => fail(new Error(err.code ?? err.message)))
+    socket.on('close', () => fail(new Error('connection closed by the server')))
+    socket.on('data', (chunk) => {
+      buffer += chunk.toString('utf8')
+      let nl
+      while ((nl = buffer.indexOf('\n')) >= 0) {
+        const line = buffer.slice(0, nl).replace(/\r$/, '')
+        buffer = buffer.slice(nl + 1)
+        lines.push(line)
+        if (/^\d{3}(?: |$)/.test(line)) {
+          // last line of a (possibly multi-line "250-…") reply
+          const reply = { code: Number(line.slice(0, 3)), text: lines.join(' | ') }
+          lines = []
+          const w = waiting
+          waiting = null
+          w?.resolve(reply)
+        }
+      }
+    })
+    const reply = () => new Promise((res, rej) => (waiting = { resolve: res, reject: rej }))
+    const expect = async (codes, command) => {
+      const r = await reply()
+      if (!codes.includes(r.code)) throw new Error(`${command ?? 'greeting'} → ${r.text}`)
+      return r
+    }
+    const cmd = (line, codes) => {
+      const p = expect(codes, line.split(':')[0])
+      socket.write(`${line}\r\n`)
+      return p
+    }
+    ;(async () => {
+      await expect([220])
+      await cmd('EHLO tokoku.local', [250])
+      await cmd(`MAIL FROM:<${from}>`, [250])
+      await cmd(`RCPT TO:<${to}>`, [250, 251])
+      if (message === undefined) {
+        await cmd('RSET', [250])
+        finished = true
+        socket.end('QUIT\r\n')
+        return resolve()
+      }
+      await cmd('DATA', [354])
+      // Dot-stuffing: a line starting with "." gets a second one; the message ends with CRLF.CRLF.
+      const body = message.replace(/\r?\n/g, '\r\n').replace(/^\./gm, '..')
+      const done = expect([250], 'DATA')
+      socket.write(`${body.endsWith('\r\n') ? body : `${body}\r\n`}.\r\n`)
+      await done
+      finished = true
+      socket.end('QUIT\r\n')
+      resolve()
+    })().catch(fail)
+  })
+}
+
+/* ------------------------------------------------------------------ sign-up state */
+
+const SIGNUP_TTL_MS = 30 * 60_000
+/** token → { name, email, password, code, token, expiresAt, attempts } (pending, unverified) */
+const signups = new Map()
+
+const findUser = (email) => USERS.find((u) => u.email.toLowerCase() === String(email ?? '').toLowerCase())
+const findSignup = (email) =>
+  [...signups.values()].find((p) => p.email.toLowerCase() === String(email ?? '').toLowerCase() && p.expiresAt > Date.now())
+const EMAIL_RE = /^[^\s@<>()",;:\\[\]]+@[^\s@<>()",;:\\[\]]+\.[a-z]{2,}$/i
+
+function activateSignup(pending) {
+  signups.delete(pending.token)
+  if (!findUser(pending.email)) USERS.push({ email: pending.email, name: pending.name, password: pending.password })
+}
+
+function verificationMail(pending) {
+  const link = `${PUBLIC_URL}/verify?token=${pending.token}`
+  const text = [
+    T.mailHi(pending.name),
+    '',
+    T.mailIntro,
+    '',
+    `${T.mailCode(pending.code)}`,
+    '',
+    T.mailLinkIntro,
+    link,
+    '',
+    T.mailExpiry,
+    '',
+    '— Tokoku (demo)',
+  ].join('\n')
+  const html = `<!doctype html>
+<html lang="${T.htmlLang}"><body style="font-family: system-ui, sans-serif; color: #111827; line-height: 1.5;">
+<p>${esc(T.mailHi(pending.name))}</p>
+<p>${esc(T.mailIntro)}</p>
+<p style="font-size: 18px;">${esc(T.mailCode('')).trim()} <strong style="letter-spacing: 2px;">${pending.code}</strong></p>
+<p><a href="${esc(link)}" style="display: inline-block; padding: 10px 16px; border-radius: 8px; background: #0f766e; color: #ffffff; text-decoration: none;">${esc(T.mailButton)}</a></p>
+<p style="color: #6b7280; font-size: 13px;">${esc(T.mailExpiry)}</p>
+<p style="color: #6b7280; font-size: 13px;">— Tokoku (demo)</p>
+</body></html>`
+  return buildMessage({
+    fromName: 'Tokoku',
+    from: 'no-reply@tokoku.id',
+    toName: pending.name,
+    to: pending.email,
+    subject: T.mailSubject,
+    text,
+    html,
+  })
 }
 
 /* ------------------------------------------------------------------ helpers */
@@ -439,7 +727,83 @@ function renderLogin(s, { error = false, email = '' } = {}) {
       <label for="password">Password</label>
       <input id="password" name="password" type="password" autocomplete="current-password" required>
       <button type="submit">${T.login}</button>
+    </form>
+    <p><a href="/signup">${T.createAccountLink}</a></p>`,
+  })
+}
+
+function renderTwoFactor(s, { error = false } = {}) {
+  return layout(s, {
+    title: T.twoFaTitle,
+    body: `<h1>${T.twoFa}</h1>
+    <p class="muted">${T.twoFaText}</p>
+    ${error ? `<p class="notice error" role="alert">${T.invalidAuthCode}</p>` : ''}
+    <form class="stack" action="/login/2fa" method="post">
+      <label for="totp">${T.authCode}</label>
+      <input id="totp" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+      <button type="submit">${T.verify}</button>
     </form>`,
+  })
+}
+
+function renderSignup(s, { error = null, name = '', email = '' } = {}) {
+  return layout(s, {
+    title: T.signupTitle,
+    body: `<h1>${T.signup}</h1>
+    ${error ? `<p class="notice error" role="alert">${esc(error)}</p>` : ''}
+    <form class="stack" action="/signup" method="post">
+      <label for="name">${T.name}</label>
+      <input id="name" name="name" autocomplete="name" maxlength="80" value="${esc(name)}" required>
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="email" maxlength="254" value="${esc(email)}" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="new-password" minlength="8" aria-describedby="password-hint" required>
+      <small id="password-hint" class="muted">${T.passwordHint}</small>
+      <button type="submit">${T.createAccount}</button>
+    </form>
+    <p>${T.alreadyHaveAccount} <a href="/login">${T.login}</a></p>`,
+  })
+}
+
+/** "Check your email" + the code form (alternative to the link). */
+function renderCheckEmail(s, { email, error = false }) {
+  return layout(s, {
+    title: T.checkEmailTitle,
+    body: `<h1>${T.checkEmail}</h1>
+    <p>${esc(T.checkEmailText(email))}</p>
+    ${error ? `<p class="notice error" role="alert">${T.invalidVerificationCode}</p>` : ''}
+    <p class="muted">${T.codeAlternative}</p>
+    <form class="stack" action="/verify" method="post">
+      <input type="hidden" name="email" value="${esc(email)}">
+      <label for="code">${T.verificationCode}</label>
+      <input id="code" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" autocomplete="one-time-code" required>
+      <button type="submit">${T.verify}</button>
+    </form>`,
+  })
+}
+
+function renderVerified(s, email) {
+  return layout(s, {
+    title: T.verifiedTitle,
+    body: `<h1>${T.emailVerified}</h1>
+    <p class="notice" role="status">${esc(T.verifiedText(email))}</p>
+    <a class="button" href="/login">${T.login}</a>`,
+  })
+}
+
+function renderLinkInvalid(s) {
+  return layout(s, {
+    title: T.linkInvalidTitle,
+    body: `<h1>${T.linkInvalid}</h1><p>${T.linkInvalidText}</p><a href="/signup">${T.signupAgain}</a>`,
+  })
+}
+
+function renderMailFailed(s, reason) {
+  return layout(s, {
+    title: T.mailFailedTitle,
+    body: `<h1>${T.mailFailed}</h1>
+    <p class="notice error" role="alert">${esc(T.mailFailedText(`${SMTP_HOST}:${SMTP_PORT}`, reason))}</p>
+    <a href="/signup">${T.signupAgain}</a>`,
   })
 }
 
@@ -449,6 +813,7 @@ function renderAccount(s) {
     title: T.accountTitle,
     body: `<h1>${esc(T.hello(s.user.name))}</h1>
     <p class="muted">${esc(s.user.email)}</p>
+    ${s.user.twoFactor ? `<p data-testid="two-factor-status">${T.twoFaOn}</p>` : ''}
     <h2>${T.myOrders}</h2>
     ${mine.length
       ? `<ul>${mine.map((o) => `<li><a href="${P.accountOrders}/${o.id}">${o.id}</a> — ${STATUS_LABEL[o.status]}</li>`).join('')}</ul>`
@@ -530,8 +895,11 @@ async function handleApi(req, res, url) {
 
   if (req.method === 'POST' && path === '/v1/auth/login') {
     const body = await readJson(req)
-    const user = USERS.find((u) => u.email === body.email && u.password === body.password)
-    if (!user) return apiError(res, 401, 'invalid_credentials', T.wrongCredentials)
+    const user = findUser(body.email)
+    if (!user || user.password !== body.password) return apiError(res, 401, 'invalid_credentials', T.wrongCredentials)
+    if (user.totp && !verifyTotp(user.totp, body.totp)) {
+      return apiError(res, 401, body.totp ? 'invalid_totp' : 'totp_required', T.invalidAuthCode)
+    }
     const token = `tkk_${randomBytes(16).toString('hex')}`
     apiTokens.add(token)
     return json(res, 201, { data: { token, user: { email: user.email, name: user.name } } })
@@ -599,10 +967,99 @@ async function handle(req, res) {
   if (method === 'GET' && path === '/login') return html(res, renderLogin(s))
   if (method === 'POST' && path === '/login') {
     const form = await readForm(req)
-    const user = USERS.find((u) => u.email === form.email && u.password === form.password)
-    if (!user) return html(res, renderLogin(s, { error: true, email: form.email }), 401)
+    const user = findUser(form.email)
+    if (!user || user.password !== form.password) return html(res, renderLogin(s, { error: true, email: form.email }), 401)
+    if (user.totp) {
+      // Password OK, second factor pending: not logged in until /login/2fa succeeds.
+      s.user = null
+      s.pending2fa = { email: user.email, expiresAt: Date.now() + 5 * 60_000, attempts: 0 }
+      return redirect(res, '/login/2fa')
+    }
     s.user = { email: user.email, name: user.name }
     return redirect(res, P.account)
+  }
+  if (path === '/login/2fa') {
+    const pending = s.pending2fa && s.pending2fa.expiresAt > Date.now() ? s.pending2fa : null
+    const user = pending && findUser(pending.email)
+    if (!user) {
+      s.pending2fa = null
+      return redirect(res, '/login')
+    }
+    if (method === 'GET') return html(res, renderTwoFactor(s))
+    if (method === 'POST') {
+      const form = await readForm(req)
+      if (!verifyTotp(user.totp, form.code)) {
+        pending.attempts += 1
+        if (pending.attempts >= 5) s.pending2fa = null // start over with the password after 5 wrong codes
+        return html(res, renderTwoFactor(s, { error: true }), 401)
+      }
+      s.pending2fa = null
+      s.user = { email: user.email, name: user.name, twoFactor: true }
+      return redirect(res, P.account)
+    }
+  }
+
+  if (method === 'GET' && path === '/signup') return html(res, renderSignup(s))
+  if (method === 'POST' && path === '/signup') {
+    const form = await readForm(req)
+    const name = String(form.name ?? '').replace(/[\r\n]+/g, ' ').trim().slice(0, 80)
+    const email = String(form.email ?? '').trim().toLowerCase()
+    const password = String(form.password ?? '')
+    if (!name || !EMAIL_RE.test(email) || email.length > 254 || password.length < 8) {
+      return html(res, renderSignup(s, { error: T.signupInvalid, name, email }), 422)
+    }
+    if (findUser(email)) return html(res, renderSignup(s, { error: T.emailTaken, name, email }), 409)
+    const previous = findSignup(email)
+    if (previous) signups.delete(previous.token) // signing up again replaces the pending account
+    const pending = {
+      name, email, password,
+      code: String(randomInt(0, 1_000_000)).padStart(6, '0'),
+      token: randomBytes(24).toString('base64url'),
+      expiresAt: Date.now() + SIGNUP_TTL_MS,
+      attempts: 0,
+    }
+    const mail = { host: SMTP_HOST, port: SMTP_PORT, from: 'no-reply@tokoku.id', to: email }
+    try {
+      // With a delay, like a real mail queue, the email arrives a moment after the "Check your
+      // email" page (test cases have to poll for it); the SMTP server is still checked up front so
+      // an unreachable server is reported on the page.
+      await sendMail(MAIL_DELAY_MS ? mail : { ...mail, message: verificationMail(pending) })
+    } catch (err) {
+      console.error(`[demo-target] sign-up email to ${email} via ${SMTP_HOST}:${SMTP_PORT} failed: ${err.message}`)
+      return html(res, renderMailFailed(s, err.message), 502)
+    }
+    if (MAIL_DELAY_MS) {
+      setTimeout(() => {
+        sendMail({ ...mail, message: verificationMail(pending) }).catch((err) =>
+          console.error(`[demo-target] queued sign-up email to ${email} via ${SMTP_HOST}:${SMTP_PORT} failed: ${err.message}`),
+        )
+      }, MAIL_DELAY_MS).unref()
+    }
+    signups.set(pending.token, pending)
+    return redirect(res, `/verify?email=${encodeURIComponent(email)}`)
+  }
+  if (method === 'GET' && path === '/verify') {
+    const token = url.searchParams.get('token')
+    if (token) {
+      const pending = signups.get(token)
+      if (!pending || pending.expiresAt <= Date.now()) return html(res, renderLinkInvalid(s), 400)
+      activateSignup(pending)
+      return html(res, renderVerified(s, pending.email))
+    }
+    const email = (url.searchParams.get('email') ?? '').trim().toLowerCase()
+    return email ? html(res, renderCheckEmail(s, { email })) : redirect(res, '/signup')
+  }
+  if (method === 'POST' && path === '/verify') {
+    const form = await readForm(req)
+    const email = String(form.email ?? '').trim().toLowerCase()
+    const pending = findSignup(email)
+    const code = String(form.code ?? '').trim()
+    if (!pending || pending.attempts >= 5 || code.length !== 6 || !timingSafeEqual(Buffer.from(code), Buffer.from(pending.code))) {
+      if (pending) pending.attempts += 1
+      return html(res, renderCheckEmail(s, { email, error: true }), 400)
+    }
+    activateSignup(pending)
+    return html(res, renderVerified(s, pending.email))
   }
   if (method === 'POST' && path === '/logout') {
     s.user = null
@@ -705,9 +1162,11 @@ const server = createServer((req, res) => {
 
 server.listen(PORT, HOST, () => {
   const { port } = server.address()
+  if (!PUBLIC_URL) PUBLIC_URL = `http://localhost:${port}`
   // Machine-readable first line (tests parse it), then a human hint.
   console.log(`Tokoku demo listening on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${port}`)
   console.log(`  language=${LANG}  BASE_URL=http://localhost:${port}  API_URL=http://localhost:${port}/api`)
+  console.log(`  smtp=${SMTP_HOST}:${SMTP_PORT}  mail_delay_ms=${MAIL_DELAY_MS}  public_url=${PUBLIC_URL}`)
 })
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

@@ -2,7 +2,7 @@
 #
 #   cp deploy/.env.example deploy/.env      # fill the CHANGE_ME values
 #   docker compose -f deploy/docker-compose.yml up -d --build
-#   docker compose -f deploy/docker-compose.yml --profile demo up -d   # + demo target app
+#   docker compose -f deploy/docker-compose.yml --profile demo up -d   # + demo target app + Mailpit
 #
 # Postgres is NOT published on the host. To reach it from the host for
 # maintenance use `docker compose exec postgres psql -U qatlas qatlas`, or add a
@@ -22,6 +22,16 @@ x-qatlas-env: &qatlas-env
   QATLAS_TRUST_PROXY: ${QATLAS_TRUST_PROXY:-false}
   QATLAS_LOG_LEVEL: ${QATLAS_LOG_LEVEL:-info}
   QATLAS_TZ: ${QATLAS_TZ:-}
+  # Artifact storage: local (the artifacts volume) or s3 (QATLAS_S3_*; the bundled
+  # Garage is http://garage:3900 with `--profile s3`, or any external S3).
+  QATLAS_STORAGE: ${QATLAS_STORAGE:-local}
+  QATLAS_S3_ENDPOINT: ${QATLAS_S3_ENDPOINT:-}
+  QATLAS_S3_REGION: ${QATLAS_S3_REGION:-}
+  QATLAS_S3_BUCKET: ${QATLAS_S3_BUCKET:-}
+  QATLAS_S3_ACCESS_KEY: ${QATLAS_S3_ACCESS_KEY:-}
+  QATLAS_S3_SECRET_KEY: ${QATLAS_S3_SECRET_KEY:-}
+  QATLAS_S3_FORCE_PATH_STYLE: ${QATLAS_S3_FORCE_PATH_STYLE:-true}
+  QATLAS_S3_PREFIX: ${QATLAS_S3_PREFIX:-}
 
 x-logging: &logging
   driver: json-file
@@ -110,6 +120,7 @@ services:
 
   # Optional fake shop used by `qatlas seed demo` and the runner tests.
   # Enabled with `--profile demo`; reachable from the worker as http://demo-target:8099.
+  # Seed with: qatlas seed demo --target-url http://demo-target:8099 --mailpit-url http://mailpit:8025
   demo-target:
     profiles: ["demo"]
     image: qatlas-demo-target:${QATLAS_VERSION:-local}
@@ -125,10 +136,51 @@ services:
         EXPOSE 8099
         CMD ["node", "server.mjs"]
     restart: unless-stopped
+    environment:
+      # Sign-up emails go to Mailpit; the link in them must work from the worker's browser.
+      DEMO_SMTP_HOST: mailpit
+      DEMO_SMTP_PORT: "1025"
+      DEMO_PUBLIC_URL: http://demo-target:8099
     ports:
       - "127.0.0.1:${DEMO_TARGET_PORT:-8099}:8099"
+    depends_on:
+      - mailpit
+    logging: *logging
+
+  # Email catcher for the demo shop's sign-up/verification emails (demo profile only).
+  # SMTP mailpit:1025 inside the network; UI + API at http://mailpit:8025 for the worker and on
+  # 127.0.0.1:${DEMO_MAILPIT_PORT:-8025} on the host. Messages are kept in memory/tmp only.
+  mailpit:
+    profiles: ["demo"]
+    image: axllent/mailpit:v1.33.0
+    restart: unless-stopped
+    environment:
+      MP_MAX_MESSAGES: "500"
+      MP_DISABLE_VERSION_CHECK: "true"
+    ports:
+      - "127.0.0.1:${DEMO_MAILPIT_PORT:-8025}:8025"
+    logging: *logging
+
+  # Optional single-node Garage (S3) for artifacts. Enabled with `--profile s3`;
+  # initialise once with deploy/garage/init.sh, then set QATLAS_STORAGE=s3 and
+  # QATLAS_S3_ENDPOINT=http://garage:3900. Not published on the host; add
+  # ports: ["127.0.0.1:3900:3900", "127.0.0.1:3903:3903"] in an override for
+  # host access (aws cli, Garage WebUI).
+  garage:
+    profiles: ["s3"]
+    image: dxflrs/garage:v2.5.0
+    restart: unless-stopped
+    environment:
+      GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-}
+      GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-}
+    volumes:
+      - ./garage/garage.toml:/etc/garage.toml:ro
+      - garage-meta:/var/lib/garage/meta
+      - ${GARAGE_DATA:-garage-data}:/var/lib/garage/data
     logging: *logging
 
 volumes:
   pgdata:
   artifacts:
+  garage-meta:
+  garage-data:

@@ -3,6 +3,13 @@
 // the real services, so keys, revisions, validation, audit entries and
 // encrypted secrets are exactly what the API would have produced.
 //
+// Regenerate demo.json after changing the mock seed (from the repository root):
+//
+//	node scripts/export-demo-seed.mjs > backend/internal/seed/demo.json
+//
+// Values that differ between mock and real mode (SHOP staging BASE_URL,
+// API_URL, MAILPIT_URL and every secret value) are set here from Options.
+//
 // The seed is idempotent per project: a project whose key already exists is
 // skipped (Options.Reset deletes the demo projects first). Users are created
 // when missing; existing users are left untouched.
@@ -50,6 +57,11 @@ const (
 	DefaultPassword   = "password123"
 	DefaultTargetURL  = "http://localhost:8099"
 	DefaultQAPassword = "Qa-Staging-2026!" // demo-target's DEMO_QA_PASSWORD default
+	// DefaultMailpitURL is the Mailpit web/API address (scripts/demo-server.sh runs it there).
+	DefaultMailpitURL = "http://localhost:8025"
+	// DefaultQATOTPSeed is demo-target's DEMO_TOTP_SEED default: a public,
+	// demo-only base32 seed of qa.2fa@tokoku.id. It protects nothing.
+	DefaultQATOTPSeed = "TOKOKU2FADEMOSEEDQATLASTOTPDEMOA"
 )
 
 // Options configures Demo.
@@ -61,6 +73,12 @@ type Options struct {
 	TargetURL string
 	// QAPassword is the value of every QA_PASSWORD secret.
 	QAPassword string
+	// MailpitURL is SHOP staging's MAILPIT_URL (the Mailpit API the
+	// sign-up test cases read the verification email from).
+	MailpitURL string
+	// QATOTPSeed is the value of the QA_TOTP_SEED secret (demo-target
+	// DEMO_TOTP_SEED, used by {{fn.totp secret.QA_TOTP_SEED}}).
+	QATOTPSeed string
 	// AdminToken is the value of ADMIN_TOKEN secrets; empty = random.
 	AdminToken string
 	// Reset deletes the demo projects (with their runs) before seeding.
@@ -200,6 +218,13 @@ func Demo(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *s
 	opts.TargetURL = strings.TrimRight(opts.TargetURL, "/")
 	if opts.QAPassword == "" {
 		opts.QAPassword = DefaultQAPassword
+	}
+	if opts.MailpitURL == "" {
+		opts.MailpitURL = DefaultMailpitURL
+	}
+	opts.MailpitURL = strings.TrimRight(opts.MailpitURL, "/")
+	if opts.QATOTPSeed == "" {
+		opts.QATOTPSeed = DefaultQATOTPSeed
 	}
 	if opts.Runs && opts.Enqueuer == nil {
 		return errors.New("seed: --runs needs a job enqueuer")
@@ -474,6 +499,7 @@ func (s *seeder) seedEnvironments(ctx context.Context, fp fixtureProject) error 
 		if fp.Key == "SHOP" && fe.Name == "staging" {
 			vars["BASE_URL"] = s.opts.TargetURL
 			vars["API_URL"] = s.opts.TargetURL + "/api"
+			vars["MAILPIT_URL"] = s.opts.MailpitURL
 		}
 		name, isDefault := fe.Name, fe.IsDefault
 		in := environments.Input{Name: &name, IsDefault: &isDefault, Variables: vars}
@@ -501,6 +527,8 @@ func (s *seeder) secretValue(name string) string {
 		return s.opts.QAPassword
 	case "ADMIN_TOKEN":
 		return s.adminToken
+	case "QA_TOTP_SEED":
+		return s.opts.QATOTPSeed
 	case "API_KEY":
 		return "sk_sandbox_" + randomHex(16)
 	default:

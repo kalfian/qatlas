@@ -1097,6 +1097,34 @@ export interface components {
             save?: {
                 [key: string]: string;
             };
+            /**
+             * @description http_request: save response values by regex, `{ "otp": "code: (\\d{6})" }` (name → JavaScript
+             *     regex, plain or `/pattern/flags`). Saves capture group 1 if the pattern has one, else the whole
+             *     match. Applied to the response body text after `regex_decode`. A pattern that does not match
+             *     fails the step (or keeps polling, see `poll_timeout_ms`).
+             */
+            save_regex?: {
+                [key: string]: string;
+            };
+            /**
+             * @description http_request: decoding applied before `save_regex` (default `none` = body as received).
+             *     `quoted_printable` (soft line breaks + `=XX`), `html` (entities such as `&amp;`), `auto`
+             *     (quoted-printable when the text looks quoted-printable, then HTML entities). With any decoding,
+             *     a JSON body is searched as its string values (JSON-unescaped, one per line). For raw emails
+             *     (Mailpit, MailHog).
+             * @enum {string}
+             */
+            regex_decode?: "none" | "quoted_printable" | "html" | "auto";
+            /**
+             * @description http_request: 0/absent = send once. Otherwise re-send the request until the status is 2xx AND
+             *     `poll_until` (if set) exists AND every `save` JSONPath and `save_regex` pattern resolves; on
+             *     timeout the step fails with the last response, `attempts` and what was still missing.
+             */
+            poll_timeout_ms?: number;
+            /** @description http_request: pause between polling attempts (default 1000). */
+            poll_interval_ms?: number;
+            /** @description http_request: JSONPath that must exist and be non-null / a non-empty array before polling stops, e.g. `$.messages[0]`. */
+            poll_until?: string;
             path?: string;
             in?: number[];
             max_ms?: number;

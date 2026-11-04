@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Real-mode end-to-end test of the full stack:
 #   Postgres (database qatlas_e2e, recreated) → qatlas migrate + seed demo → runner build →
-#   demo-target (:8099) → qatlas all (:8090, API + worker) → Vite in real API mode (:5320) →
+#   Mailpit (free random SMTP/API ports, throwaway database) → demo-target (:8099) →
+#   qatlas all (:8090, API + worker) → Vite in real API mode (:5320) →
 #   E2E_MODE=real playwright test (web/e2e). Everything started here is stopped on exit.
 #
 #   scripts/e2e-real.sh                    # whole suite
@@ -14,7 +15,8 @@
 #
 # Overrides: E2E_DB_NAME (qatlas_e2e), E2E_PG_CONTAINER (qatlas-dev-postgres),
 # E2E_PG_HOSTPORT (127.0.0.1:55432), E2E_PG_USER / E2E_PG_PASSWORD (qatlas),
-# API_PORT (8090), DEMO_PORT (8099), WEB_PORT (5320).
+# API_PORT (8090), DEMO_PORT (8099), WEB_PORT (5320), MAILPIT_BIN_DIR (where the pinned Mailpit
+# is downloaded once; default ~/.local/state/qatlas-demo/bin, shared with scripts/demo-server.sh).
 
 set -Eeuo pipefail
 
@@ -27,6 +29,7 @@ PG_PASSWORD="${E2E_PG_PASSWORD:-qatlas}"
 API_PORT="${API_PORT:-8090}"
 DEMO_PORT="${DEMO_PORT:-8099}"
 WEB_PORT="${WEB_PORT:-5320}"
+MAILPIT_BIN_DIR="${MAILPIT_BIN_DIR:-${XDG_STATE_HOME:-$HOME/.local/state}/qatlas-demo/bin}"
 PNPM=(corepack pnpm)
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 
@@ -66,6 +69,10 @@ trap cleanup EXIT
 trap 'exit 130' INT TERM
 
 port_free() { ! (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+# A port the kernel considers free right now (bind :0, read it back, release it).
+# (process.stdout.write, not console.log: FORCE_COLOR would colour the number.)
+free_port() { node -e 'const s=require("net").createServer().listen(0,"127.0.0.1",()=>{process.stdout.write(String(s.address().port));s.close()})'; }
 
 wait_http() { # url name pid
   for _ in $(seq 1 120); do
@@ -117,14 +124,24 @@ export DEMO_ADMIN_TOKEN
 log "building qatlas and the runner"
 (cd "$ROOT/backend" && go build -ldflags "-X main.version=e2e" -o "$WORK/qatlas" ./cmd/qatlas)
 "${PNPM[@]}" --filter @qatlas/runner build >"$WORK/runner-build.log" 2>&1
+MAILPIT="$("$ROOT/scripts/fetch-mailpit.sh" "$MAILPIT_BIN_DIR")" # pinned + checksum-verified, downloaded once
+MAIL_SMTP_PORT="$(free_port)"
+MAIL_PORT="$(free_port)"
+while [[ $MAIL_PORT == "$MAIL_SMTP_PORT" ]]; do MAIL_PORT="$(free_port)"; done
 
 log "migrating and seeding"
 "$WORK/qatlas" migrate up >"$WORK/migrate.log" 2>&1
-"$WORK/qatlas" seed demo --target-url "http://localhost:$DEMO_PORT" --admin-token "$DEMO_ADMIN_TOKEN" | tee "$WORK/seed.log"
+"$WORK/qatlas" seed demo --target-url "http://localhost:$DEMO_PORT" --admin-token "$DEMO_ADMIN_TOKEN" \
+  --mailpit-url "http://127.0.0.1:$MAIL_PORT" | tee "$WORK/seed.log"
 
 # ------------------------------------------------------------------ services
-log "starting demo-target :$DEMO_PORT, qatlas all :$API_PORT, vite (real mode) :$WEB_PORT"
-start demo-target env PORT="$DEMO_PORT" HOST=127.0.0.1 DEMO_LANG=en node "$ROOT/demo-target/server.mjs"
+log "starting mailpit :$MAIL_SMTP_PORT/:$MAIL_PORT, demo-target :$DEMO_PORT, qatlas all :$API_PORT, vite (real mode) :$WEB_PORT"
+start mailpit "$MAILPIT" --smtp "127.0.0.1:$MAIL_SMTP_PORT" --listen "127.0.0.1:$MAIL_PORT" \
+  --database "$WORK/mailpit.db" --disable-version-check
+MAIL_PID=${PIDS[-1]}
+start demo-target env PORT="$DEMO_PORT" HOST=127.0.0.1 DEMO_LANG=en DEMO_ADMIN_TOKEN="$DEMO_ADMIN_TOKEN" \
+  DEMO_SMTP_HOST=127.0.0.1 DEMO_SMTP_PORT="$MAIL_SMTP_PORT" DEMO_PUBLIC_URL="http://localhost:$DEMO_PORT" \
+  node "$ROOT/demo-target/server.mjs"
 DEMO_PID=${PIDS[-1]}
 # From the repo root so the default runner command finds runner/dist/main.js.
 start qatlas bash -c "cd '$ROOT' && exec '$WORK/qatlas' all"
@@ -132,6 +149,7 @@ API_PID=${PIDS[-1]}
 start vite bash -c "cd '$ROOT/web' && VITE_API_MODE=real QATLAS_API_URL='http://127.0.0.1:$API_PORT' exec ${PNPM[*]} exec vite --host 127.0.0.1 --port '$WEB_PORT' --strictPort"
 WEB_PID=${PIDS[-1]}
 
+wait_http "http://127.0.0.1:$MAIL_PORT/readyz" mailpit "$MAIL_PID"
 wait_http "http://127.0.0.1:$DEMO_PORT/api/health" demo-target "$DEMO_PID"
 wait_http "http://127.0.0.1:$API_PORT/readyz" "qatlas all" "$API_PID"
 wait_http "http://127.0.0.1:$WEB_PORT/" vite "$WEB_PID"

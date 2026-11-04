@@ -232,7 +232,7 @@ export interface MockState {
 }
 
 /** Naikkan saat bentuk/isi seed berubah → data lama di localStorage di-seed ulang. v4: seed demo berbahasa Inggris. */
-export const STATE_VERSION = 4
+export const STATE_VERSION = 5
 const STORAGE_KEY = 'qatlas.mock.db'
 
 /* ------------------------------------------------------------------ persistence */

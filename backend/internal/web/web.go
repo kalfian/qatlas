@@ -9,8 +9,13 @@ import (
 	"path"
 	"strings"
 
+	"github.com/go-chi/chi/v5/middleware"
 	"github.com/kalfian/qatlas/backend/internal/httpx"
 )
+
+// compressible lists the static asset types worth gzip-compressing (the SPA's JS/CSS/HTML/SVG/JSON).
+// Fonts (woff2) and images are already compressed; API, SSE and artifacts are not served here.
+var compressible = []string{"text/html", "text/css", "text/javascript", "application/javascript", "application/json", "image/svg+xml"}
 
 // Handler serves files from dir. Unknown paths fall back to index.html (SPA
 // routing), except /api/* (JSON 404) and /assets/* (plain 404, so a missing
@@ -27,7 +32,7 @@ func Handler(dir string) (http.Handler, error) {
 	}
 	files := http.FileServerFS(fsys)
 
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return middleware.Compress(5, compressible...)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		if p == "/api" || strings.HasPrefix(p, "/api/") {
 			httpx.NotFoundHandler(w, r)
@@ -53,7 +58,7 @@ func Handler(dir string) (http.Handler, error) {
 			}
 		}
 		serveIndex(w, r, fsys)
-	}), nil
+	})), nil
 }
 
 func serveIndex(w http.ResponseWriter, r *http.Request, fsys fs.FS) {

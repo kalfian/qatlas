@@ -4,7 +4,7 @@ import { captureScreenshot, executeStep, screenshotFile, type StepContext } from
 import type { BrowserPool } from './browsers.js'
 import { Masker, emit } from './emitter.js'
 import { CancelledError, InfraError, StepFailure } from './errors.js'
-import { interpolateStep, stringifyRecord, type Scope } from './interpolate.js'
+import { interpolateStep, stringifyRecord, waitForFreshTotp, type Scope } from './interpolate.js'
 import { log } from './log.js'
 import {
   ACTION_KIND,
@@ -290,7 +290,9 @@ export class RunExecution {
           env: vars.env,
           secrets: vars.secrets,
           vars: { ...vars.env, ...vars.runVars, ...vars.caseVars, ...vars.runtime },
+          sensitive: (v) => this.masker.add(v),
         }
+        await waitForFreshTotp(step, this.abort.signal)
         const resolved = interpolateStep(step, scope)
         const out = await executeStep(
           {

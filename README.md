@@ -109,6 +109,14 @@ Sign in as `rina@tokoku.id` / `password123` (admin). `dimas@tokoku.id` is an edi
 flows, environments, and a few real runs: one passed, one failed on the shop's deliberate
 voucher bug, one waiting for Rina's manual check under **My tasks**.
 
+The script also downloads (once, pinned and checksum-verified) and starts
+[Mailpit](https://mailpit.axllent.org), a local email catcher: SMTP on `127.0.0.1:1025`, inbox UI
+and API on `http://127.0.0.1:8025`. The shop's sign-up sends its verification email there, and
+three SHOP cases show the patterns: **SHOP-T20** logs in with TOTP 2FA via
+`{{fn.totp secret.QA_TOTP_SEED}}`, **SHOP-T21** signs up, polls Mailpit until the email arrives,
+extracts the link with `save_regex` and opens it, **SHOP-T22** does the same with the 6-digit code.
+The TOTP seed is a public demo-only value (see [demo-target/README.md](demo-target/README.md)).
+
 `scripts/demo-server.sh status | stop | reset` (reset deletes the demo database and data).
 Logs are in `~/.local/state/qatlas-demo/`; generated secrets in `~/.config/qatlas/demo.env`.
 
@@ -123,8 +131,9 @@ docker compose -f deploy/docker-compose.yml exec server \
   qatlas user create-admin --email you@example.com --name "Your Name"
 ```
 
-Add `--profile demo` to also start the demo shop, then seed it with `qatlas seed demo`
-(see [deploy/README.md](deploy/README.md#a-docker-compose)).
+Add `--profile demo` to also start the demo shop and Mailpit, then seed it with `qatlas seed demo
+--target-url http://demo-target:8099 --mailpit-url http://mailpit:8025` (see
+[deploy/README.md](deploy/README.md#a-docker-compose)).
 
 ### c) Binary + systemd
 
@@ -196,8 +205,9 @@ the [manual](docs/manual/README.md#13-api-tokens-and-mcp-for-ai).
 Phases 1–4 are done: the frontend, the Go backend, the runner and reporting, and MCP with API
 tokens. Phase 5 (hardening and extras such as CI integration, schedules, notifications) is in
 progress. The live checklist is in [docs/10-roadmap.md](docs/10-roadmap.md#checklist-progres).
-Not yet available: S3 artifact storage, scheduled runs, email delivery (invites and password
-resets are links an admin shares), and the `inspect_page` MCP tool.
+Not yet available: scheduled runs, email delivery (invites and password resets are links an
+admin shares), and the `inspect_page` MCP tool. Artifacts can live on local disk or in an
+S3-compatible bucket such as Garage ([docs/12](docs/12-deployment.md#artifact-storage-local-vs-s3-garage)).
 
 ## Documentation
 

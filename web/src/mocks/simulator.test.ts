@@ -44,6 +44,34 @@ describe('mock run simulator', () => {
     expect(rerun.status).toBe('passed')
   })
 
+  it('case 2FA & verifikasi email (SHOP-T20…T22) lolos; polling, save_regex dan fn.totp disimulasikan', () => {
+    const p = project('SHOP')
+    const byTitle = (title: string) => db().testCases.find((t) => t.title === title)!
+    expect(['SHOP-T20', 'SHOP-T21', 'SHOP-T22'].map((k) => db().testCases.find((t) => t.key === k)!.title)).toEqual([
+      'Log in with TOTP 2FA', 'Sign up and verify email (Mailpit)', 'Verify email with the 6-digit code',
+    ])
+    const runOf = (title: string) => {
+      const run = createRun({ project: p, kind: 'test_case', targetId: byTitle(title).id, env: env(p.id), options: DEFAULT_RUN_OPTIONS, userId: 'u_rina', trigger: 'manual' })
+      db().runs.push(run)
+      fastForward(run, Date.now())
+      expect(run.status).toBe('passed')
+      return run.cases[0].steps
+    }
+
+    const totp = runOf('Log in with TOTP 2FA').find((s) => s.summary.includes('Authentication code'))!
+    expect(totp.summary).toMatch(/\b\d{6}\b/)
+
+    const link = runOf('Sign up and verify email (Mailpit)')
+    const poll = link.find((s) => s.action === 'http_request')!
+    expect(poll.details).toMatchObject({ attempts: expect.any(Number), response: { body: { messages: [{ Subject: 'Verify your Tokoku account' }] } } })
+    expect((poll.details as { attempts: number }).attempts).toBeGreaterThan(1)
+    const visit = link.find((s) => s.action === 'goto' && s.summary.includes('/verify?token='))
+    expect(visit?.summary).toContain('https://staging.tokoku.id/verify?token=')
+
+    const code = runOf('Verify email with the 6-digit code').find((s) => s.action === 'fill' && s.summary.includes('Verification code'))!
+    expect(code.summary).toMatch(/\b\d{6}\b/)
+  })
+
   it('secret dimask di ringkasan step', () => {
     const p = project('SHOP')
     const tc = db().testCases.find((t) => t.key === 'SHOP-T1')!

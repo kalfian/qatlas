@@ -102,3 +102,105 @@ describe('i18n katalog step', () => {
     expect(summarizeStep({ id: 'a', action: 'click', selector: '#x' }, { lng: 'en' })).toBe('Click #x')
   })
 })
+
+describe('http_request: save_regex, regex_decode & polling', () => {
+  afterEach(() => setLanguage('en'))
+  const req = (extra: Partial<Step>): Step => ({ id: 'a', action: 'http_request', method: 'GET', url: '{{env.MAILPIT_URL}}/api/v1/search', ...extra })
+
+  it('ringkasan menambah " (poll ≤Ns)" saat polling', async () => {
+    const url = '{{env.MAILPIT_URL}}/api/v1/search?query=to:{{vars.email}}'
+    expect(summarizeStep(req({ url, poll_timeout_ms: 15000 }))).toBe(`GET ${url} (poll ≤15s)`)
+    expect(summarizeStep(req({ url, poll_timeout_ms: 1500 }))).toBe(`GET ${url} (poll ≤1.5s)`)
+    expect(summarizeStep(req({ url, poll_timeout_ms: 0 }))).toBe(`GET ${url}`)
+    expect(summarizeStep(req({ url }))).toBe(`GET ${url}`)
+    await setLanguage('id')
+    expect(summarizeStep(req({ url, poll_timeout_ms: 15000 }))).toBe(`GET ${url} (polling ≤15 dtk)`)
+    expect(summarizeStep(req({ url, poll_timeout_ms: 15000 }), { lng: 'en' })).toBe(`GET ${url} (poll ≤15s)`)
+  })
+
+  it('param baru ada di katalog dengan tipe yang benar; polling dikelompokkan', () => {
+    const def = ACTIONS.find((a) => a.action === 'http_request')!
+    const byName = Object.fromEntries(def.params.map((p) => [p.name, p]))
+    expect(byName.save_regex.type).toBe('keyvalue')
+    expect(byName.regex_decode.type).toBe('select')
+    expect(byName.regex_decode.options?.map((o) => o.value)).toEqual(['none', 'quoted_printable', 'html', 'auto'])
+    expect([byName.poll_timeout_ms.type, byName.poll_interval_ms.type, byName.poll_until.type]).toEqual(['number', 'number', 'text'])
+    expect(def.params.filter((p) => p.section === 'polling').map((p) => p.name)).toEqual(['poll_timeout_ms', 'poll_interval_ms', 'poll_until'])
+    const names = def.params.map((p) => p.name)
+    expect(names.indexOf('save_regex')).toBe(names.indexOf('save') + 1)
+  })
+
+  it('menerima konfigurasi polling & regex yang valid', () => {
+    const steps = [
+      req({ save: { id: '$.messages[0].ID' }, poll_timeout_ms: 15000, poll_interval_ms: 500, poll_until: '$.messages[0]' }),
+      req({ id: 'b', save_regex: { otp: 'code: (\\d{6})', link: '/href="([^"]+)"/i' }, regex_decode: 'auto', poll_timeout_ms: 0 }),
+    ]
+    const r = validateSteps(steps, 'automated', { lng: 'en' })
+    expect(r.errors).toEqual([])
+    expect(r.warnings).toEqual([])
+  })
+
+  it('menolak nilai di luar batas dengan path & pesan yang sama dengan backend', () => {
+    const { errors } = validateSteps(
+      [
+        req({ poll_timeout_ms: 130000, poll_interval_ms: 100, regex_decode: 'base64' as Step['regex_decode'], save_regex: { z: '([', a: '', m: 'x'.repeat(1001) } }),
+        req({ id: 'b', poll_timeout_ms: -1 }),
+      ],
+      'automated',
+      { lng: 'en' },
+    )
+    expect(errors).toEqual([
+      { path: 'steps[0].poll_timeout_ms', message: 'Polling timeout must be between 0 and 120000 ms' },
+      { path: 'steps[0].poll_interval_ms', message: 'Polling interval must be at least 200 ms' },
+      { path: 'steps[0].regex_decode', message: 'Regex decode must be one of: none, quoted_printable, html, auto' },
+      { path: 'steps[0].save_regex', message: 'Regex for "a" is required' },
+      { path: 'steps[0].save_regex', message: 'Regex for "m" is too long (max 1000 characters)' },
+      { path: 'steps[0].save_regex', message: 'Invalid regex for "z"' },
+      { path: 'steps[1].poll_timeout_ms', message: 'Polling timeout must be between 0 and 120000 ms' },
+    ])
+  })
+})
+
+describe('fn.* di step', () => {
+  const fill = (value: string): Step => ({ id: 'a', action: 'fill', selector: 'label=Code', value })
+  const run = (steps: Step[]) => validateSteps(steps, 'automated', { lng: 'en' })
+
+  it('fn.totp dengan ref atau seed literal valid', () => {
+    for (const v of [
+      '{{fn.totp secret.OTP_SEED}}',
+      '{{ fn.totp env.OTP }}',
+      '{{fn.totp vars.otp_seed digits=8 period=60 algorithm=sha256}}',
+      '{{fn.totp JBSWY3DPEHPK3PXP}}',
+      'pre {{fn.uuid}} {{fn.random_int 1 9}} {{fn.totp secret.X algorithm=SHA512}}',
+    ]) {
+      const r = run([fill(v)])
+      expect(r.errors, v).toEqual([])
+      expect(r.warnings, v).toEqual([])
+    }
+  })
+
+  it('argumen fn.totp yang salah adalah error; fn tak dikenal hanya warning', () => {
+    const r = run([
+      fill('{{fn.totp}}'),
+      { ...fill('{{fn.totp 1234}}'), id: 'b' },
+      { ...fill('{{fn.totp secret.X digits=9}}'), id: 'c' },
+      { ...fill('{{fn.totp JBSW Y3DP}}'), id: 'd' },
+      { id: 'e', action: 'http_request', method: 'POST', url: '{{env.API}}/x?{{fn.nope}}', headers: { 'X-Otp': '{{fn.totp secret.X foo=1}}', 'X-Dup': '{{fn.nope}}' } },
+    ])
+    expect(r.errors).toEqual([
+      { path: 'steps[0].value', message: 'fn.totp needs a seed: secret.NAME, env.NAME, vars.name or a base32 literal' },
+      { path: 'steps[1].value', message: 'fn.totp seed must be secret.NAME, env.NAME, vars.name or a base32 literal' },
+      { path: 'steps[2].value', message: 'fn.totp: invalid option "digits" (digits=6..8, period=10..300, algorithm=SHA1|SHA256|SHA512)' },
+      { path: 'steps[3].value', message: 'fn.totp: invalid option "…" (digits=6..8, period=10..300, algorithm=SHA1|SHA256|SHA512)' },
+      { path: 'steps[4].headers', message: 'fn.totp: invalid option "foo" (digits=6..8, period=10..300, algorithm=SHA1|SHA256|SHA512)' },
+    ])
+    expect(r.warnings).toEqual([
+      { path: 'steps[4].headers', message: 'Unknown function "fn.nope"' },
+      { path: 'steps[4].url', message: 'Unknown function "fn.nope"' },
+    ])
+  })
+
+  it('description/expected tidak dicek (teks manusia)', () => {
+    expect(run([{ ...fill('x'), description: '{{fn.nope}}', expected: '{{fn.totp}}' }]).errors).toEqual([])
+  })
+})

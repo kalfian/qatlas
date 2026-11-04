@@ -69,9 +69,13 @@ func TestStepSchemaExamples(t *testing.T) {
 		}
 	}
 	for _, bad := range []map[string]any{
-		{"id": "s1", "action": "goto"},                                        // url missing
-		{"id": "s1", "action": "teleport"},                                    // unknown action
-		{"id": "s1", "action": "expect_count", "selector": "x", "value": "3"}, // value must be an integer
+		{"id": "s1", "action": "goto"},                                                                            // url missing
+		{"id": "s1", "action": "teleport"},                                                                        // unknown action
+		{"id": "s1", "action": "expect_count", "selector": "x", "value": "3"},                                     // value must be an integer
+		{"id": "s1", "action": "http_request", "method": "GET", "url": "x", "poll_timeout_ms": 999999},            // > 120000
+		{"id": "s1", "action": "http_request", "method": "GET", "url": "x", "poll_interval_ms": 50},               // < 200
+		{"id": "s1", "action": "http_request", "method": "GET", "url": "x", "regex_decode": "base64"},             // not in enum
+		{"id": "s1", "action": "http_request", "method": "GET", "url": "x", "save_regex": map[string]any{"a": 1}}, // pattern must be a string
 	} {
 		if err := r.Validate(bad); err == nil {
 			t.Errorf("schema accepted %v", bad)

@@ -57,7 +57,8 @@ Env: `QATLAS_RUNNER_LOG_LEVEL=debug|info|warn|error` (stderr), `PLAYWRIGHT_BROWS
 - `details`: assertions → `{expected, actual}` (strings, on pass and fail); `http_request` →
   `{request:{method,url}, response:{status,time_ms,body}}` with `body` = parsed JSON when the body
   is JSON and ≤ 8 KB, else the text truncated to 8 KB (+ `…[truncated]`); on a network failure
-  `response` is `null`. All other actions → `null`.
+  `response` is `null`. A polling `http_request` (`poll_timeout_ms > 0`) adds `attempts` (number of
+  requests sent) and reports the **last** response. All other actions → `null`.
 - Paths in `screenshot` / `video` are absolute, under `artifact_dir/<case_id>/`:
   `step-NN-<step_id>[-<name>][-attemptN].png`, `video.webm`.
 - Secret values are masked (`••••`) in every emitted event as defence in depth (values ≥ 3 chars);
@@ -67,7 +68,12 @@ Env: `QATLAS_RUNNER_LOG_LEVEL=debug|info|warn|error` (stderr), `PLAYWRIGHT_BROWS
 
 - Interpolation of all step params except `description`/`expected`, deep (headers, query, body,
   save…): `{{env.X}}`, `{{secret.X}}`, `{{vars.x}}`, `{{fn.uuid}}`, `{{fn.now}}` (ISO),
-  `{{fn.random_email}}`, `{{fn.random_int}}` (0–99) / `{{fn.random_int 1 100}}` (inclusive).
+  `{{fn.random_email}}`, `{{fn.random_int}}` (0–99) / `{{fn.random_int 1 100}}` (inclusive),
+  `{{fn.totp <ref> [digits=6] [period=30] [algorithm=SHA1|SHA256|SHA512]}}` (RFC 6238; `<ref>` =
+  `secret.X` / `env.X` / `vars.x` / literal base32 seed; `src/totp.ts`). Before interpolating a step
+  that uses `fn.totp`, the runner waits for the next period if < 3 s remain. The generated code and
+  its seed are added to the run's masker, so they show as `••••` in every later event; seeds are never
+  echoed in error messages.
   `vars` = env < run `vars` < case `vars` < runtime (`save`, `extract_text`, `set_variable`).
   Runtime vars carry across cases only with `shared_session`. **An unknown key in a known
   namespace fails the step** (`Unknown variable {{vars.x}} …`) instead of sending the literal.
@@ -130,6 +136,15 @@ Probes never block: `allTextContents()`, `evaluateAll()`, `count()`, `page.url()
   `matches`; UI string values compare loosely: `"true"` eq `true`, `"10000"` eq `10000`),
   `expect_header` (case-insensitive name), `expect_response_time`.
 - JSONPath subset: `$`, `.key`, `['key']`, `[n]`, `[-n]` (e.g. `$.data[0].id`); no wildcards/filters.
+- `http_request` extras (docs/04 "Email testing"): `save_regex {name: pattern}` (JS regex or
+  `/pattern/flags`; saves group 1, else the whole match) on the body after `regex_decode`
+  (`none` | `quoted_printable` | `html` | `auto`; `src/decode.ts` — any decoding searches a JSON body
+  by its unescaped string values; `auto` only un-QPs text that looks quoted-printable).
+  `poll_timeout_ms` (≤ 120000) / `poll_interval_ms` (≥ 200, default 1000) / `poll_until` (JSONPath,
+  non-null and not `[]`): re-send until 2xx + `poll_until` + every `save`/`save_regex` resolves;
+  network errors count as "not yet"; a malformed JSONPath/regex fails at once. Timeout message:
+  `Polling GET <url> timed out after N ms (K attempts); still missing: …`. Each request's own timeout
+  is `min(step timeout, time left)` (≥ 1 s).
 - Interactions (`click`, `fill`, …) use Playwright auto-wait with the step timeout and are strict.
 
 ## Layout
@@ -141,10 +156,12 @@ src/actions.ts      every catalog action + post-step screenshots
 src/session.ts      BrowserContext/Page or standalone APIRequestContext of a case/segment
 src/browsers.ts     shared Browser pool
 src/selectors.ts    DSL selector → locator (+ description)
-src/interpolate.ts  {{…}} interpolation and fn.*
+src/interpolate.ts  {{…}} interpolation and fn.* (fn.totp → src/totp.ts)
+src/decode.ts       regex_decode (quoted-printable, HTML entities) for http_request save_regex
 src/poll.ts, match.ts, jsonpath.ts, errors.ts, emitter.ts (NDJSON + masking), log.ts (stderr)
 scripts/            smoke.mjs, shop-cases.mjs (seed SHOP cases in wire format)
-test/               node:test integration tests (spawn dist/main.js + demo-target)
+test/               node:test integration tests (spawn dist/main.js + demo-target / a local HTTP
+                    server for polling + save_regex) and unit.test.mjs (TOTP RFC 6238 vectors, decoding)
 ```
 
 ## Known limitations

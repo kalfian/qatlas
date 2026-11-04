@@ -9,7 +9,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { i18n } from '@/i18n'
-import { getAction, type ParamDef } from '@/lib/steps'
+import { SECTION_HELP, SECTION_LABELS, getAction, type ParamDef, type ParamSection } from '@/lib/steps'
 import { cn } from '@/lib/utils'
 import { actionIcon, setStepField } from '../lib'
 import { KeyValueEditor } from './KeyValueEditor'
@@ -138,9 +138,17 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
           </>
         ) : (
           <>
-            {def?.params.map((p) => (
-              <ParamField key={p.name} param={p} step={step} id={fid(p.name)} errors={fieldErr(p.name)} onSet={set} />
-            ))}
+            {groupParams(def?.params ?? []).map((g) =>
+              g.section ? (
+                <ParamSectionBlock key={`section-${g.section}`} section={g.section} id={fid(`section-${g.section}`)} params={g.params} step={step} hasErrors={g.params.some((p) => fieldErr(p.name).length > 0)}>
+                  {g.params.map((p) => (
+                    <ParamField key={p.name} param={p} step={step} id={fid(p.name)} errors={fieldErr(p.name)} onSet={set} />
+                  ))}
+                </ParamSectionBlock>
+              ) : (
+                g.params.map((p) => <ParamField key={p.name} param={p} step={step} id={fid(p.name)} errors={fieldErr(p.name)} onSet={set} />)
+              ),
+            )}
             <div className="flex flex-col gap-4 border-t border-border pt-4">
               <Field id={fid('description')} label={t('panel.description')} optional errors={[]} help={t('panel.descriptionHelp')}>
                 {(a) => <VarField {...a} value={step.description ?? ''} onValueChange={(v) => set('description', v)} />}
@@ -247,6 +255,60 @@ function CheckField({ id, label, help, checked, onChange }: { id: string; label:
   )
 }
 
+/** Param berurutan dengan `section` yang sama dikelompokkan; sisanya tetap satu per satu. */
+function groupParams(params: ParamDef[]): { section?: ParamSection; params: ParamDef[] }[] {
+  const out: { section?: ParamSection; params: ParamDef[] }[] = []
+  for (const p of params) {
+    const last = out.at(-1)
+    if (p.section && last?.section === p.section) last.params.push(p)
+    else out.push({ section: p.section, params: [p] })
+  }
+  return out
+}
+
+/** Section param yang bisa dilipat (mis. Polling); terbuka bila ada nilai atau error di dalamnya. */
+function ParamSectionBlock({
+  section,
+  id,
+  params,
+  step,
+  hasErrors,
+  children,
+}: {
+  section: ParamSection
+  id: string
+  params: ParamDef[]
+  step: Step
+  hasErrors: boolean
+  children: React.ReactNode
+}) {
+  const { t } = useTranslation('testcases')
+  const isSet = params.some((p) => (step as unknown as Record<string, unknown>)[p.name] !== undefined)
+  const [open, setOpen] = React.useState(isSet)
+  const shown = open || hasErrors
+  return (
+    <div className="flex flex-col gap-3">
+      <button
+        type="button"
+        aria-expanded={shown}
+        aria-controls={id}
+        onClick={() => setOpen((o) => !o)}
+        className="-ml-1 flex h-7 items-center gap-1 self-start rounded-md px-1 text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+      >
+        <ChevronRight className={cn('size-4 transition-transform duration-150', shown && 'rotate-90')} aria-hidden />
+        {SECTION_LABELS[section]}
+        {!shown && isSet && <span className="text-xs font-normal">· {t('panel.advancedSet')}</span>}
+      </button>
+      {shown && (
+        <div id={id} role="group" aria-label={SECTION_LABELS[section]} className="flex flex-col gap-4 pl-5">
+          <p className="-mt-1 text-xs text-muted-foreground">{SECTION_HELP[section]}</p>
+          {children}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function ParamField({ param, step, id, errors, onSet }: { param: ParamDef; step: Step; id: string; errors: FieldError[]; onSet: (name: string, v: unknown) => void }) {
   const raw = (step as unknown as Record<string, unknown>)[param.name]
   const mono = MONO_TYPES.has(param.type)
@@ -285,10 +347,10 @@ function ParamField({ param, step, id, errors, onSet }: { param: ParamDef; step:
             idPrefix={id}
             value={raw as Record<string, string> | undefined}
             onChange={(v) => onSet(param.name, v)}
-            keyLabel={param.name === 'save' ? t('panel.kv.variableName') : t('panel.kv.name')}
-            valueLabel={param.name === 'save' ? 'JSONPath' : t('panel.kv.value')}
-            keyPlaceholder={param.name === 'save' ? 'token' : param.name === 'headers' ? 'Authorization' : 'page'}
-            valuePlaceholder={param.name === 'save' ? '$.data.token' : param.name === 'headers' ? 'Bearer {{vars.token}}' : '1'}
+            keyLabel={param.name === 'save' || param.name === 'save_regex' ? t('panel.kv.variableName') : t('panel.kv.name')}
+            valueLabel={param.name === 'save' ? 'JSONPath' : param.name === 'save_regex' ? 'Regex' : t('panel.kv.value')}
+            keyPlaceholder={param.name === 'save' ? 'token' : param.name === 'save_regex' ? 'otp' : param.name === 'headers' ? 'Authorization' : 'page'}
+            valuePlaceholder={param.name === 'save' ? '$.data.token' : param.name === 'save_regex' ? 'code: (\\d{6})' : param.name === 'headers' ? 'Bearer {{vars.token}}' : '1'}
             addLabel={param.name === 'headers' ? t('panel.kv.addHeader') : param.name === 'query' ? t('panel.kv.addParam') : t('panel.kv.addVariable')}
           />
           {help && <p className="text-xs text-muted-foreground">{help}</p>}

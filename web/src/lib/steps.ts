@@ -14,6 +14,9 @@ import { lazyLabels, tr, translatorFor, type Translate } from '@/lib/i18n-labels
 
 export type ParamType = 'text' | 'selector' | 'url' | 'number' | 'select' | 'textarea' | 'keyvalue' | 'boolean' | 'int-list'
 
+/** Optional group of params rendered together (collapsible) in the step form. */
+export type ParamSection = 'polling'
+
 export interface ParamDef {
   name: keyof Step & string
   label: string
@@ -22,6 +25,7 @@ export interface ParamDef {
   placeholder?: string
   help?: string
   options?: { value: string; label: string }[]
+  section?: ParamSection
 }
 
 export type ActionGroup = 'navigation' | 'interaction' | 'wait' | 'data' | 'assert_ui' | 'http' | 'assert_http' | 'common' | 'manual'
@@ -42,6 +46,11 @@ const GROUPS: readonly ActionGroup[] = ['navigation', 'interaction', 'wait', 'da
 /** Label grup (diterjemahkan saat dibaca — mengikuti bahasa aktif). */
 export const GROUP_LABELS: Record<ActionGroup, string> = lazyLabels(GROUPS, (g) => `steps:groups.${g}`)
 
+const SECTIONS: readonly ParamSection[] = ['polling']
+/** Judul & bantuan section param (mis. "Polling"). */
+export const SECTION_LABELS: Record<ParamSection, string> = lazyLabels(SECTIONS, (s) => `steps:sections.${s}.label`)
+export const SECTION_HELP: Record<ParamSection, string> = lazyLabels(SECTIONS, (s) => `steps:sections.${s}.help`)
+
 /* ------------------------------------------------------------------ param factory
  * Label/placeholder/help adalah getter yang memanggil i18n.t, jadi `param.label` tetap string
  * tetapi selalu dalam bahasa aktif. Kunci label disimpan terpisah agar validasi bisa
@@ -59,6 +68,7 @@ interface ParamExtra {
   /** Kunci di `steps:help.*`. */
   helpKey?: string
   options?: { value: string; label: string }[]
+  section?: ParamSection
 }
 
 function param(name: ParamDef['name'], labelKey: string, type: ParamType, extra: ParamExtra = {}): ParamDef {
@@ -74,6 +84,7 @@ function param(name: ParamDef['name'], labelKey: string, type: ParamType, extra:
   if (extra.placeholderKey) Object.defineProperty(def, 'placeholder', { enumerable: true, get: () => tr(`steps:placeholders.${extra.placeholderKey}`) })
   if (extra.helpKey) Object.defineProperty(def, 'help', { enumerable: true, get: () => tr(`steps:help.${extra.helpKey}`) })
   if (extra.options) def.options = extra.options
+  if (extra.section) def.section = extra.section
   PARAM_LABEL_KEY.set(def, labelKey)
   return def
 }
@@ -94,6 +105,93 @@ const val = (labelKey = 'value', required = true) => param('value', labelKey, 't
 const match = () => param('match', 'operator', 'select', { options: MATCH_OPTIONS })
 
 const q = (s: unknown) => `"${String(s ?? '')}"`
+
+/* ------------------------------------------------------------------ http_request: regex & polling (docs/04) */
+
+export const REGEX_DECODE = ['none', 'quoted_printable', 'html', 'auto'] as const
+export const POLL_TIMEOUT_MAX_MS = 120000
+export const POLL_INTERVAL_MIN_MS = 200
+const SAVE_REGEX_MAX_CHARS = 1000
+
+/** ` (poll ≤15s)` saat polling aktif; detik dibulatkan 1 desimal (sama dengan dsl.Summarize di Go). */
+function pollSuffix(s: Step, t: Translate): string {
+  const ms = Number(s.poll_timeout_ms ?? 0)
+  if (!Number.isFinite(ms) || ms <= 0) return ''
+  return t('steps:actions.http_request.pollSuffix', { s: String(Math.round(ms / 100) / 10) })
+}
+
+/** Pola regex runner: "pola" atau "/pola/flags" (runner/src/match.ts toRegExp). */
+function compileRegex(pattern: string): boolean {
+  const lit = /^\/([\s\S]+)\/([dgimsuvy]*)$/.exec(pattern)
+  try {
+    if (lit) new RegExp(lit[1], lit[2])
+    else new RegExp(pattern)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/* ------------------------------------------------------------------ fn.* (interpolasi) */
+
+export const FN_NAMES = ['uuid', 'now', 'random_email', 'random_int', 'totp'] as const
+const FN_TOKEN = /\{\{\s*fn\.([\w-]+)((?:\s+[^{}]*?)?)\s*\}\}/g
+const TOTP_REF = /^(secret|env|vars)\.[\w-]+$/
+const TOTP_LITERAL = /^[A-Za-z2-7-]+=*$/
+const TOTP_OPTION = /^(digits|period|algorithm)=(.+)$/i
+
+type FnIssue = { kind: 'error' | 'warning'; key: string; values?: Record<string, string> }
+
+/** Cek sintaks `{{fn.totp <ref> [digits=6] [period=30] [algorithm=SHA1]}}` (rentang = runner/src/totp.ts). */
+function totpIssue(args: string[]): FnIssue | null {
+  if (args.length === 0 || args[0].includes('=')) return { kind: 'error', key: 'totpSeedRequired' }
+  if (!TOTP_REF.test(args[0]) && !TOTP_LITERAL.test(args[0])) return { kind: 'error', key: 'totpSeedInvalid' }
+  const seen = new Set<string>()
+  for (const a of args.slice(1)) {
+    const m = TOTP_OPTION.exec(a)
+    // Argumen tanpa "=" tidak ditampilkan: bisa jadi potongan seed literal.
+    const option = a.includes('=') ? a.split('=')[0] : '…'
+    if (!m || seen.has(m[1].toLowerCase())) return { kind: 'error', key: 'totpOptionInvalid', values: { option } }
+    const k = m[1].toLowerCase()
+    seen.add(k)
+    const v = m[2]
+    const valid =
+      k === 'algorithm'
+        ? ['SHA1', 'SHA256', 'SHA512'].includes(v.toUpperCase().replace('-', ''))
+        : /^\d+$/.test(v) && (k === 'digits' ? Number(v) >= 6 && Number(v) <= 8 : Number(v) >= 10 && Number(v) <= 300)
+    if (!valid) return { kind: 'error', key: 'totpOptionInvalid', values: { option: k } }
+  }
+  return null
+}
+
+function collectStrings(v: unknown, out: string[] = []): string[] {
+  if (typeof v === 'string') out.push(v)
+  else if (Array.isArray(v)) v.forEach((x) => collectStrings(x, out))
+  else if (v && typeof v === 'object') Object.keys(v).sort().forEach((k) => collectStrings((v as Record<string, unknown>)[k], out))
+  return out
+}
+
+/** Masalah `{{fn.*}}` di semua param step (bukan id/action/description/expected), per field, urut nama field. */
+function fnIssues(step: Step): { field: string; issue: FnIssue }[] {
+  const out: { field: string; issue: FnIssue }[] = []
+  const rec = step as unknown as Record<string, unknown>
+  for (const field of Object.keys(rec).sort()) {
+    if (field === 'id' || field === 'action' || field === 'description' || field === 'expected') continue
+    for (const text of collectStrings(rec[field])) {
+      for (const m of text.matchAll(FN_TOKEN)) {
+        const name = m[1]
+        const args = m[2].trim() ? m[2].trim().split(/\s+/) : []
+        const issue: FnIssue | null = !(FN_NAMES as readonly string[]).includes(name)
+          ? { kind: 'warning', key: 'unknownFn', values: { name } }
+          : name === 'totp'
+            ? totpIssue(args)
+            : null
+        if (issue) out.push({ field, issue })
+      }
+    }
+  }
+  return out
+}
 const matchWord = (m?: string) => (m === 'equals' ? '=' : m === 'regex' ? '~' : '⊃')
 const countOp = (op?: string) => (op === 'gte' ? '≥' : op === 'lte' ? '≤' : '=')
 
@@ -175,8 +273,13 @@ export const ACTIONS: ActionDef[] = [
       param('body_type', 'bodyType', 'select', { options: (['json', 'text', 'form'] as const).map((b) => translatedOption(b, `steps:bodyTypes.${b}`)) }),
       param('body', 'body', 'textarea'),
       param('save', 'saveVars', 'keyvalue', { helpKey: 'saveVars' }),
+      param('save_regex', 'saveRegex', 'keyvalue', { helpKey: 'saveRegex' }),
+      param('regex_decode', 'regexDecode', 'select', { helpKey: 'regexDecode', options: REGEX_DECODE.map((d) => translatedOption(d, `steps:regexDecode.${d}`)) }),
+      param('poll_timeout_ms', 'pollTimeoutMs', 'number', { placeholder: '15000', helpKey: 'pollTimeoutMs', section: 'polling' }),
+      param('poll_interval_ms', 'pollIntervalMs', 'number', { placeholder: '1000', helpKey: 'pollIntervalMs', section: 'polling' }),
+      param('poll_until', 'pollUntil', 'text', { placeholder: '$.messages[0]', helpKey: 'pollUntil', section: 'polling' }),
     ],
-    (s) => `${s.method ?? 'GET'} ${s.url ?? ''}`),
+    (s, t) => `${s.method ?? 'GET'} ${s.url ?? ''}${pollSuffix(s, t)}`),
   action('expect_status', 'assert_http', 'http', [param('value', 'status', 'number', { required: true, placeholder: '200' })], (s) => `Status = ${s.value ?? ''}`),
   action('expect_json', 'assert_http', 'http',
     [
@@ -296,9 +399,44 @@ export function validateSteps(steps: Step[], execution: Execution = 'automated',
     if (typeof step.selector === 'string' && /^\s*\/\//.test(step.selector)) {
       warnings.push({ path: `${p}.selector`, message: t('steps:validation.xpath') })
     }
+    if (step.action === 'http_request') validateHttpExtras(step, p, t, errors)
+    const seenFn = new Set<string>()
+    for (const { field, issue } of fnIssues(step)) {
+      const fe = { path: `${p}.${field}`, message: t(`steps:validation.${issue.key}`, issue.values) }
+      const dedupe = `${issue.kind}|${fe.path}|${fe.message}`
+      if (seenFn.has(dedupe)) continue
+      seenFn.add(dedupe)
+      ;(issue.kind === 'error' ? errors : warnings).push(fe)
+    }
   })
 
   return { errors, warnings }
+}
+
+const present = (v: unknown) => v !== undefined && v !== null && !(typeof v === 'string' && v.trim() === '')
+
+/** poll_timeout_ms, poll_interval_ms, regex_decode, save_regex (pesan & path identik dengan backend/internal/dsl). */
+function validateHttpExtras(step: Step, p: string, t: Translate, errors: FieldError[]) {
+  if (present(step.poll_timeout_ms)) {
+    const n = Number(step.poll_timeout_ms)
+    if (!Number.isFinite(n) || n < 0 || n > POLL_TIMEOUT_MAX_MS) errors.push({ path: `${p}.poll_timeout_ms`, message: t('steps:validation.pollTimeout') })
+  }
+  if (present(step.poll_interval_ms)) {
+    const n = Number(step.poll_interval_ms)
+    if (!Number.isFinite(n) || n < POLL_INTERVAL_MIN_MS) errors.push({ path: `${p}.poll_interval_ms`, message: t('steps:validation.pollInterval') })
+  }
+  if (present(step.regex_decode) && !(REGEX_DECODE as readonly string[]).includes(String(step.regex_decode))) {
+    errors.push({ path: `${p}.regex_decode`, message: t('steps:validation.regexDecode') })
+  }
+  const sr = step.save_regex as unknown
+  if (sr && typeof sr === 'object' && !Array.isArray(sr)) {
+    const rec = sr as Record<string, unknown>
+    for (const name of Object.keys(rec).sort()) {
+      const pattern = typeof rec[name] === 'string' ? (rec[name] as string) : rec[name] == null ? '' : JSON.stringify(rec[name])
+      const key = !pattern.trim() ? 'saveRegexEmpty' : [...pattern].length > SAVE_REGEX_MAX_CHARS ? 'saveRegexTooLong' : !compileRegex(pattern) ? 'saveRegexInvalid' : null
+      if (key) errors.push({ path: `${p}.save_regex`, message: t(`steps:validation.${key}`, { name }) })
+    }
+  }
 }
 
 /** Index error per step berdasarkan path `steps[i].field`. */

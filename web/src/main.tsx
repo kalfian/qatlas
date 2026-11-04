@@ -1,7 +1,7 @@
 import '@fontsource-variable/inter'
 import '@fontsource-variable/jetbrains-mono'
 import './styles/globals.css'
-import './i18n'
+import { i18nReady } from './i18n'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { RouterProvider } from '@tanstack/react-router'
 import { StrictMode } from 'react'
@@ -23,10 +23,9 @@ const queryClient = new QueryClient({
 const router = createAppRouter(queryClient)
 
 async function bootstrap() {
-  if (IS_MOCK) {
-    const { startMockApi } = await import('./mocks/browser')
-    await startMockApi()
-  }
+  // Bahasa awal non-English (chunk terpisah) dimuat paralel dengan mock API; render setelah keduanya siap.
+  const mock = IS_MOCK ? import('./mocks/browser').then(({ startMockApi }) => startMockApi()) : undefined
+  await Promise.all([i18nReady, mock])
   createRoot(document.getElementById('root')!).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

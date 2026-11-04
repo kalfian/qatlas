@@ -1,0 +1,28 @@
+# Garage (https://garagehq.deuxfleurs.fr) — single-node S3 store for QAtlas
+# artifacts, used by the `garage` service of deploy/docker-compose.yml
+# (`--profile s3`). Initialise it once with deploy/garage/init.sh.
+#
+# Secrets are not in this file: GARAGE_RPC_SECRET (required, `openssl rand -hex 32`)
+# and GARAGE_ADMIN_TOKEN (optional, admin API / Garage WebUI) come from deploy/.env.
+
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+
+# One node, one copy. Back up the data volume (or the CT) if artifacts matter.
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+
+[s3_api]
+# QATLAS_S3_REGION must match this value.
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+# Virtual-host style is not used by QAtlas (QATLAS_S3_FORCE_PATH_STYLE=true).
+root_domain = ".s3.garage.localhost"
+
+[admin]
+# Admin API (metrics, Garage WebUI). Enabled for writes only when
+# GARAGE_ADMIN_TOKEN is set.
+api_bind_addr = "[::]:3903"

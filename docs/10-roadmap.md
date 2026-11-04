@@ -24,7 +24,7 @@ Urutan sengaja **frontend dulu**: Phase 1 membangun seluruh user journey di FE d
 **Phase 3 — Runner & reporting**
 - [x] Runner Node + Playwright resmi (protokol NDJSON) + demo target app (19 tes integrasi)
 - [x] Worker Go (River), supervisor runner, enqueue transaksional, cancel, timeout, crash recovery
-- [x] Artifact store lokal + retention, SSE live progress (S3 belum)
+- [x] Artifact store lokal + S3 (Garage; `QATLAS_STORAGE=s3`, migrasi `qatlas artifacts migrate|check`) + retention, SSE live progress
 - [x] Flow run (shared/isolated, stop on failure, campuran manual), retries, re-run failed
 
 **Phase 4 — MCP & API token**
@@ -35,6 +35,12 @@ Urutan sengaja **frontend dulu**: Phase 1 membangun seluruh user journey di FE d
 - [x] Demo seed backend (`qatlas seed demo`) terhadap demo target + `scripts/e2e-real.sh`
 - [x] JUnit export & contoh CI trigger: `GET /runs/{runKey}/junit.xml` (+ menu "Download JUnit XML" di halaman run, juga di mock), `scripts/qatlas-ci.sh` (start → poll → JUnit, exit 0/1/2) dan contoh GitHub Actions di [`docs/ci/`](ci/README.md); Bitbucket Pipelines belum ada contoh
 - [x] README + manual pengguna (EN + ID) dengan 39 screenshot, 3 video MP4 & GIF preview (`docs/manual/`)
+
+**Phase 6 — Peningkatan (setelah review 2026-11-04)**
+- [x] Penyimpanan artifact di S3 self-hosted (`QATLAS_STORAGE=s3`, diuji dengan Garage v2.5.0) + `qatlas artifacts migrate/check` — instance demo masih lokal sampai access key Garage diisi
+- [x] DSL: `{{fn.totp …}}` (2FA TOTP), `save_regex` + `regex_decode`, polling di `http_request` (runner 42 tes, validasi TS = Go)
+- [x] Demo: alur daftar + verifikasi email (Mailpit v1.33.0) dan login TOTP di toko demo; SHOP-T20–T22 lolos dengan runner asli
+- [x] Frontend: code-splitting (login 524 → 215 KB gzip, dashboard 253 KB) + gzip aset statis di server Go
 
 ```mermaid
 flowchart LR

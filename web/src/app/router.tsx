@@ -1,25 +1,10 @@
 import { QueryClient } from '@tanstack/react-query'
-import { createRootRouteWithContext, createRoute, createRouter, Outlet, redirect } from '@tanstack/react-router'
+import { createRootRouteWithContext, createRoute, createRouter, lazyRouteComponent, Outlet, redirect } from '@tanstack/react-router'
 import { api, ApiError, unwrap } from '@/api/client'
 import { qk } from '@/api/queries'
 import type { Me, RunKind, RunStatus, RunTrigger } from '@/api/types'
-import { AdminUsersPage } from '@/features/admin/AdminUsersPage'
-import { ProfilePage } from '@/features/account/ProfilePage'
-import { TokensPage } from '@/features/account/TokensPage'
-import { InvitePage } from '@/features/auth/InvitePage'
-import { LoginPage } from '@/features/auth/LoginPage'
-import { DashboardPage } from '@/features/dashboard/DashboardPage'
-import { EnvironmentsPage } from '@/features/environments/EnvironmentsPage'
-import { FlowBuilderPage } from '@/features/flows/FlowBuilderPage'
-import { FlowsPage } from '@/features/flows/FlowsPage'
-import { ProjectsPage } from '@/features/projects/ProjectsPage'
-import { RunPage } from '@/features/runs/RunPage'
-import { RunsPage } from '@/features/runs/RunsPage'
-import { ProjectSettingsPage } from '@/features/settings/ProjectSettingsPage'
-import { MyTasksPage } from '@/features/tasks/MyTasksPage'
-import { TestCaseEditorPage } from '@/features/testcases/TestCaseEditorPage'
-import { TestCasesPage } from '@/features/testcases/TestCasesPage'
-import { AppShell, NotFoundPage, ProjectLayout, RootLayout } from './shell/AppShell'
+import { AuthPending, PagePending, ShellPending } from './shell/RoutePending'
+import { NotFoundPage, RootLayout } from './shell/RootLayout'
 import { lastProject } from './config'
 import { applyUserLanguageOnce } from './language'
 
@@ -65,6 +50,31 @@ export interface SettingsSearch {
   section?: 'general' | 'members' | 'run-defaults' | 'retention' | 'danger'
 }
 
+/* ------------------------------------------------------------------ lazy pages */
+
+/*
+ * Tiap halaman = chunk sendiri, dimuat saat route dicocokkan (atau saat hover/fokus link: defaultPreload 'intent').
+ * Yang tetap di bundle awal hanya definisi route: validateSearch, beforeLoad (auth, redirect), dan pending UI.
+ */
+const AdminUsersPage = lazyRouteComponent(() => import('@/features/admin/AdminUsersPage'), 'AdminUsersPage')
+const ProfilePage = lazyRouteComponent(() => import('@/features/account/ProfilePage'), 'ProfilePage')
+const TokensPage = lazyRouteComponent(() => import('@/features/account/TokensPage'), 'TokensPage')
+const InvitePage = lazyRouteComponent(() => import('@/features/auth/InvitePage'), 'InvitePage')
+const LoginPage = lazyRouteComponent(() => import('@/features/auth/LoginPage'), 'LoginPage')
+const DashboardPage = lazyRouteComponent(() => import('@/features/dashboard/DashboardPage'), 'DashboardPage')
+const EnvironmentsPage = lazyRouteComponent(() => import('@/features/environments/EnvironmentsPage'), 'EnvironmentsPage')
+const FlowBuilderPage = lazyRouteComponent(() => import('@/features/flows/FlowBuilderPage'), 'FlowBuilderPage')
+const FlowsPage = lazyRouteComponent(() => import('@/features/flows/FlowsPage'), 'FlowsPage')
+const ProjectsPage = lazyRouteComponent(() => import('@/features/projects/ProjectsPage'), 'ProjectsPage')
+const RunPage = lazyRouteComponent(() => import('@/features/runs/RunPage'), 'RunPage')
+const RunsPage = lazyRouteComponent(() => import('@/features/runs/RunsPage'), 'RunsPage')
+const ProjectSettingsPage = lazyRouteComponent(() => import('@/features/settings/ProjectSettingsPage'), 'ProjectSettingsPage')
+const MyTasksPage = lazyRouteComponent(() => import('@/features/tasks/MyTasksPage'), 'MyTasksPage')
+const TestCaseEditorPage = lazyRouteComponent(() => import('@/features/testcases/TestCaseEditorPage'), 'TestCaseEditorPage')
+const TestCasesPage = lazyRouteComponent(() => import('@/features/testcases/TestCasesPage'), 'TestCasesPage')
+const AppShell = lazyRouteComponent(() => import('./shell/AppShell'), 'AppShell')
+const ProjectLayout = lazyRouteComponent(() => import('./shell/AppShell'), 'ProjectLayout')
+
 /* ------------------------------------------------------------------ routes */
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
@@ -77,12 +87,14 @@ const loginRoute = createRoute({
   path: '/login',
   validateSearch: (s: Record<string, unknown>): { error?: string; redirect?: string } => ({ error: str(s.error), redirect: str(s.redirect) }),
   component: LoginPage,
+  pendingComponent: AuthPending,
 })
 
 const inviteRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/invite/$token',
   component: InvitePage,
+  pendingComponent: AuthPending,
 })
 
 /** Layout terproteksi: memastikan user sudah login. */
@@ -103,6 +115,8 @@ const appRoute = createRoute({
     }
   },
   component: AppShell,
+  // Shell belum dirender saat /me atau chunk shell masih dimuat → skeleton berbentuk shell.
+  pendingComponent: ShellPending,
 })
 
 const indexRoute = createRoute({
@@ -219,6 +233,11 @@ export function createAppRouter(queryClient: QueryClient) {
     context: { queryClient },
     defaultPreload: 'intent',
     scrollRestoration: true,
+    // Chunk halaman / beforeLoad yang lambat: skeleton baru tampil setelah 150ms (tanpa kedip untuk respons
+    // cepat), lalu bertahan minimal 300ms agar tidak berkedip saat chunk tiba tepat setelahnya (ui-direction §6).
+    defaultPendingComponent: PagePending,
+    defaultPendingMs: 150,
+    defaultPendingMinMs: 300,
   })
 }
 

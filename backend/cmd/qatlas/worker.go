@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -61,8 +63,46 @@ func newWorker(cfg *config.Config, pool *pgxpool.Pool, store artifacts.Store, lo
 	})
 }
 
-func artifactStore(cfg *config.Config) (artifacts.Store, error) {
-	return artifacts.NewLocalStore(filepath.Join(cfg.DataDir, "artifacts"))
+// artifactStore opens the store selected by QATLAS_STORAGE and verifies that it
+// is reachable and writable; server, worker and all refuse to start otherwise.
+func artifactStore(ctx context.Context, cfg *config.Config, logger *slog.Logger) (artifacts.Store, error) {
+	store, err := openStore(cfg, cfg.Storage)
+	if err != nil {
+		return nil, err
+	}
+	vctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	if err := artifacts.Verify(vctx, store); err != nil {
+		return nil, fmt.Errorf("artifact storage check failed (QATLAS_STORAGE=%s): %w", cfg.Storage, err)
+	}
+	logger.Info("artifact storage ready", "storage", describeStore(store))
+	return store, nil
+}
+
+// openStore builds a store of the given kind (local | s3) without contacting it.
+func openStore(cfg *config.Config, kind string) (artifacts.Store, error) {
+	switch kind {
+	case config.StorageLocal:
+		return artifacts.NewLocalStore(filepath.Join(cfg.DataDir, "artifacts"))
+	case config.StorageS3:
+		if err := cfg.S3.Validate(); err != nil {
+			return nil, fmt.Errorf("S3 artifact storage is not configured:\n%w", err)
+		}
+		return artifacts.NewS3Store(cfg.S3)
+	default:
+		return nil, fmt.Errorf("unknown artifact storage %q (local | s3)", kind)
+	}
+}
+
+// describeStore names a store for logs and CLI output (never credentials).
+func describeStore(s artifacts.Store) string {
+	switch st := s.(type) {
+	case *artifacts.LocalStore:
+		return "local " + st.Root
+	case fmt.Stringer:
+		return st.String()
+	}
+	return artifacts.Backend(s)
 }
 
 // runWorker: `qatlas worker`.
@@ -75,7 +115,7 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		return err
 	}
 	defer pool.Close()
-	store, err := artifactStore(cfg)
+	store, err := artifactStore(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}
@@ -97,7 +137,7 @@ func runAll(ctx context.Context, cfg *config.Config, logger *slog.Logger) error 
 	}
 	defer pool.Close()
 	warnPendingMigrations(ctx, pool, logger)
-	store, err := artifactStore(cfg)
+	store, err := artifactStore(ctx, cfg, logger)
 	if err != nil {
 		return err
 	}

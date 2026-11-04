@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import type { APIResponse, Page } from 'playwright'
 import { CancelledError, InfraError, StepFailure, cleanPlaywrightMessage, isTargetClosed } from './errors.js'
+import { regexDecodeMode, textForRegex, type RegexDecode } from './decode.js'
 import { toVarString } from './interpolate.js'
 import { evalJsonPath } from './jsonpath.js'
 import { matchMode, matchPhrase, matches, normalizeWs, toRegExp, type MatchMode } from './match.js'
@@ -278,12 +279,106 @@ function asStringRecord(v: unknown, name: string): Record<string, string> | unde
   return out
 }
 
+type FetchOptions = Parameters<Awaited<ReturnType<Session['api']>>['fetch']>[1]
+
+const POLL_MAX_MS = 120_000
+const POLL_MIN_INTERVAL_MS = 200
+const POLL_DEFAULT_INTERVAL_MS = 1000
+
+function optionalNumber(step: WireStep, name: string): number | undefined {
+  const v = step[name]
+  if (v === undefined || v === null || v === '') return undefined
+  const n = typeof v === 'number' ? v : Number(String(v).trim())
+  if (!Number.isFinite(n)) throw new StepFailure(`"${name}" must be a number, got ${JSON.stringify(v)}`)
+  return n
+}
+
+interface PollSettings {
+  timeoutMs: number
+  intervalMs: number
+  until: string | undefined
+}
+
+function pollSettings(step: WireStep): PollSettings | null {
+  const timeoutMs = optionalNumber(step, 'poll_timeout_ms') ?? 0
+  if (timeoutMs < 0 || timeoutMs > POLL_MAX_MS) throw new StepFailure(`poll_timeout_ms must be between 0 and ${POLL_MAX_MS}`)
+  const intervalMs = optionalNumber(step, 'poll_interval_ms') ?? POLL_DEFAULT_INTERVAL_MS
+  if (intervalMs < POLL_MIN_INTERVAL_MS) throw new StepFailure(`poll_interval_ms must be at least ${POLL_MIN_INTERVAL_MS}`)
+  const until = typeof step.poll_until === 'string' && step.poll_until.trim() ? step.poll_until.trim() : undefined
+  return timeoutMs > 0 ? { timeoutMs, intervalMs, until } : null
+}
+
+/** One request/response exchange of an http_request step. */
+interface Exchange {
+  last: LastResponse | null
+  details: Record<string, unknown>
+  /** Network/protocol error message when no response arrived. */
+  error: string | null
+}
+
+/** What the response still lacks: [] when every save/save_regex/poll_until is satisfied. */
+interface Extraction {
+  saves: Record<string, string>
+  missing: string[]
+}
+
+function extract(
+  last: LastResponse,
+  save: Record<string, string> | undefined,
+  saveRegex: [string, string, RegExp][],
+  decode: RegexDecode,
+  until: string | undefined,
+): Extraction {
+  const saves: Record<string, string> = {}
+  const missing: string[] = []
+  const evalPath = (path: string) => {
+    try {
+      return evalJsonPath(last.json, path)
+    } catch (e) {
+      // A malformed JSONPath never resolves: fail at once instead of polling until the timeout.
+      throw new StepFailure((e as Error).message)
+    }
+  }
+  if (until) {
+    const r = last.isJson ? evalPath(until) : { found: false, value: undefined }
+    if (!last.isJson) missing.push(`poll_until ${until}: response body is not JSON`)
+    else if (!r.found || r.value === null) missing.push(`poll_until ${until} not found`)
+    else if (Array.isArray(r.value) && r.value.length === 0) missing.push(`poll_until ${until} is an empty array`)
+  }
+  for (const [name, path] of Object.entries(save ?? {})) {
+    if (!last.isJson) {
+      missing.push(`Cannot save "${name}" from ${path}: response body is not JSON`)
+      continue
+    }
+    const r = evalPath(path)
+    if (!r.found) missing.push(`Cannot save "${name}": ${path} not found in the response`)
+    else saves[name] = toVarString(r.value)
+  }
+  if (saveRegex.length) {
+    const text = textForRegex(last.text, last.json, last.isJson, decode)
+    for (const [name, pattern, re] of saveRegex) {
+      re.lastIndex = 0
+      const m = re.exec(text)
+      if (!m) missing.push(`Cannot save "${name}": pattern ${pattern} not found in the response${decode === 'none' ? '' : ` (decoded: ${decode})`}`)
+      else saves[name] = m.length > 1 ? (m[1] ?? '') : m[0]
+    }
+  }
+  return { saves, missing }
+}
+
 async function httpRequest(ctx: StepContext, step: WireStep): Promise<StepOutcome> {
   const method = String(step.method ?? 'GET').toUpperCase()
   const rawUrl = String(requireParam(step, 'url'))
   const headers = { ...(asStringRecord(step.headers, 'headers') ?? {}) }
   const query = asStringRecord(step.query, 'query')
   const save = asStringRecord(step.save, 'save')
+  const saveRegex: [string, string, RegExp][] = Object.entries(asStringRecord(step.save_regex, 'save_regex') ?? {}).map(([name, pattern]) => {
+    if (!pattern.trim()) throw new StepFailure(`save_regex "${name}" needs a pattern`)
+    const re = toRegExp(pattern)
+    return [name, re.toString(), re]
+  })
+  const decode = regexDecodeMode(step.regex_decode)
+  const poll = pollSettings(step)
   let url = rawUrl
   if (query && Object.keys(query).length) {
     const u = new URL(rawUrl)
@@ -293,7 +388,7 @@ async function httpRequest(ctx: StepContext, step: WireStep): Promise<StepOutcom
   const hasHeader = (name: string) => Object.keys(headers).some((h) => h.toLowerCase() === name)
   const bodyType = String(step.body_type ?? 'json')
   const body = step.body
-  const fetchOpts: Parameters<Awaited<ReturnType<Session['api']>>['fetch']>[1] = {
+  const fetchOpts: FetchOptions = {
     method,
     headers,
     timeout: ctx.timeoutMs,
@@ -326,48 +421,87 @@ async function httpRequest(ctx: StepContext, step: WireStep): Promise<StepOutcom
   }
   const requestInfo = { method, url }
   const api = await ctx.session.api()
-  const started = performance.now()
-  let res: APIResponse
-  let text: string
-  try {
-    res = await withCancel(api.fetch(url, fetchOpts), ctx.signal)
-    text = await withCancel(res.text(), ctx.signal)
-  } catch (err) {
-    if (err instanceof CancelledError || ctx.signal.aborted) throw new CancelledError()
-    throw new StepFailure(cleanPlaywrightMessage(err, `${method} ${url}`), { request: requestInfo, response: null })
-  }
-  const timeMs = Math.round(performance.now() - started)
-  const resHeaders = res.headers() // lower-cased names
-  let json: unknown = undefined
-  let isJson = false
-  if (text) {
+
+  const send = async (timeout: number): Promise<Exchange> => {
+    const started = performance.now()
+    let res: APIResponse
+    let text: string
     try {
-      json = JSON.parse(text)
-      isJson = true
-    } catch {
-      /* not JSON */
+      res = await withCancel(api.fetch(url, { ...fetchOpts, timeout }), ctx.signal)
+      text = await withCancel(res.text(), ctx.signal)
+    } catch (err) {
+      if (err instanceof CancelledError || ctx.signal.aborted) throw new CancelledError()
+      return { last: null, details: { request: requestInfo, response: null }, error: cleanPlaywrightMessage(err, `${method} ${url}`) }
     }
-  }
-  ctx.http.last = { status: res.status(), headers: resHeaders, timeMs, text, json, isJson }
-  const truncated = Buffer.byteLength(text, 'utf8') > BODY_LIMIT
-  const details = {
-    request: requestInfo,
-    response: { status: res.status(), time_ms: timeMs, body: isJson && !truncated ? json : truncateBody(text) },
-  }
-  if (save) {
-    for (const [name, path] of Object.entries(save)) {
-      if (!isJson) throw new StepFailure(`Cannot save "${name}" from ${path}: response body is not JSON`, details)
-      let r
+    const timeMs = Math.round(performance.now() - started)
+    let json: unknown = undefined
+    let isJson = false
+    if (text) {
       try {
-        r = evalJsonPath(json, path)
-      } catch (e) {
-        throw new StepFailure((e as Error).message, details)
+        json = JSON.parse(text)
+        isJson = true
+      } catch {
+        /* not JSON */
       }
-      if (!r.found) throw new StepFailure(`Cannot save "${name}": ${path} not found in the response`, details)
-      ctx.runtime[name] = toVarString(r.value)
+    }
+    const last: LastResponse = { status: res.status(), headers: res.headers() /* lower-cased names */, timeMs, text, json, isJson }
+    const truncated = Buffer.byteLength(text, 'utf8') > BODY_LIMIT
+    return {
+      last,
+      details: { request: requestInfo, response: { status: last.status, time_ms: timeMs, body: isJson && !truncated ? json : truncateBody(text) } },
+      error: null,
     }
   }
-  return ok(details)
+
+  if (!poll) {
+    const ex = await send(ctx.timeoutMs)
+    if (!ex.last) throw new StepFailure(ex.error ?? `${method} ${url} failed`, ex.details)
+    ctx.http.last = ex.last
+    let r: Extraction
+    try {
+      r = extract(ex.last, save, saveRegex, decode, undefined)
+    } catch (e) {
+      throw e instanceof StepFailure ? new StepFailure(e.message, ex.details) : e
+    }
+    if (r.missing.length) throw new StepFailure(r.missing[0], ex.details)
+    Object.assign(ctx.runtime, r.saves)
+    return ok(ex.details)
+  }
+
+  // Polling: re-send until 2xx AND poll_until AND every save/save_regex resolves, or the deadline.
+  const deadline = Date.now() + poll.timeoutMs
+  let attempts = 0
+  let ex: Exchange
+  let missing: string[]
+  for (;;) {
+    attempts++
+    const remaining = deadline - Date.now()
+    ex = await send(Math.max(1000, Math.min(ctx.timeoutMs, remaining)))
+    if (ex.last) {
+      ctx.http.last = ex.last
+      let r: Extraction
+      try {
+        r = extract(ex.last, save, saveRegex, decode, poll.until)
+      } catch (e) {
+        throw e instanceof StepFailure ? new StepFailure(e.message, { ...ex.details, attempts }) : e
+      }
+      const ok2xx = ex.last.status >= 200 && ex.last.status < 300
+      missing = ok2xx ? r.missing : [`status ${ex.last.status} (waiting for 2xx)`]
+      if (missing.length === 0) {
+        Object.assign(ctx.runtime, r.saves)
+        return ok({ ...ex.details, attempts })
+      }
+    } else {
+      missing = [`no response (${ex.error})`]
+    }
+    const left = deadline - Date.now()
+    if (left <= 0) break
+    await sleep(Math.min(poll.intervalMs, left), ctx.signal)
+  }
+  throw new StepFailure(
+    `Polling ${method} ${url} timed out after ${poll.timeoutMs} ms (${attempts} attempt${attempts === 1 ? '' : 's'}); still missing: ${missing.join('; ')}`,
+    { ...ex.details, attempts },
+  )
 }
 
 function lastResponse(ctx: StepContext, action: string): LastResponse {

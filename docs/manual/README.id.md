@@ -253,10 +253,56 @@ Ketik `{{` di field mana pun untuk melihat saran.
 | `env.*` | Environment yang dipilih untuk run | `{{env.BASE_URL}}/login` |
 | `secret.*` | Secret environment (dimask di report) | `{{secret.QA_PASSWORD}}` |
 | `vars.*` | Tab **Variables** test case atau flow, plus `save` / `extract_text` / `set_variable` selama run | `{{vars.order_id}}` |
-| `fn.*` | Helper bawaan | `{{fn.uuid}}`, `{{fn.now}}`, `{{fn.random_email}}`, `{{fn.random_int 1 100}}` |
+| `fn.*` | Helper bawaan | `{{fn.uuid}}`, `{{fn.now}}`, `{{fn.random_email}}`, `{{fn.random_int 1 100}}`, `{{fn.totp secret.NAMA}}` |
 
 Kalau nama yang sama didefinisikan dua kali, sumber yang belakangan menang: environment →
 variable flow → variable test case → nilai yang diset selama run.
+
+### 2FA dan email
+
+- **Kode TOTP.** `{{fn.totp secret.NAMA}}` menghasilkan kode aplikasi authenticator saat ini
+  (RFC 6238) dari seed base32 (spasi, huruf kecil, dan padding `=` boleh). Seed juga bisa diambil
+  dari `env.NAMA` atau `vars.nama`, atau ditulis langsung. Opsi: `digits=6..8` (default 6),
+  `period=10..300` (default 30), `algorithm=SHA1|SHA256|SHA512`, mis.
+  `{{fn.totp secret.OTP digits=8}}`. Kode dibuat saat step dijalankan; kalau sisa umur kode kurang
+  dari 3 detik, runner menunggu kode berikutnya. Report menampilkan ekspresinya, tidak pernah
+  seed-nya, dan kode yang dihasilkan dimask `••••`.
+- **Menunggu email.** Di step **HTTP request**, buka **Polling** dan isi *Polling maksimal (ms)*
+  (maks 120000). Request dikirim ulang setiap *Interval polling* (default 1000 ms, min 200) sampai
+  status 2xx, *Polling sampai* (JSONPath) punya nilai yang tidak kosong, dan semua entri *Simpan*
+  serta *Simpan dengan regex* ditemukan. Kalau waktu habis, step gagal dengan response terakhir,
+  jumlah percobaan, dan apa yang belum ditemukan. Ringkasan step diakhiri `(polling ≤15 dtk)`.
+- **Mengambil kode atau link dari email.** *Simpan dengan regex* (`nama → pola`) menjalankan regex
+  JavaScript pada body response dan menyimpan capture group 1 (atau seluruh match). Untuk email
+  mentah atau HTML, set *Decode body sebelum regex* ke `auto`: quoted-printable (`=3D`, soft line
+  break) dan entitas HTML (`&amp;`) di-decode, dan response JSON dicari pada nilai string-nya.
+- **API penangkap email.** Mailpit: `GET {{env.MAILPIT_URL}}/api/v1/search` dengan query parameter
+  `query` = `to:{{vars.email}}` → `$.messages[0].ID`, lalu
+  `GET {{env.MAILPIT_URL}}/api/v1/message/{{vars.mail_id}}` → `$.Subject`, `$.Text`, `$.HTML`
+  (`/view/<ID>.html` dan `/view/<ID>.txt` menampilkan body apa adanya). MailHog:
+  `GET …/api/v2/search?kind=to&query=<email>` → `$.items[0].Content.Body` dengan
+  `regex_decode: auto`. Detail di [docs/04](../04-test-definition.md).
+
+### Contoh: 2FA dan verifikasi email (test case demo)
+
+Project demo SHOP punya tiga test case yang menunjukkan cara menguji faktor kedua serta link atau
+kode yang dikirim lewat email tanpa campur tangan orang:
+
+- **SHOP-T20 Log in with TOTP 2FA** — login sebagai `qa.2fa@tokoku.id` lalu mengisi
+  `label=Authentication code` dengan `{{fn.totp secret.QA_TOTP_SEED}}`: kode 6 digit aplikasi
+  authenticator saat ini, dihitung dari seed base32 yang disimpan sebagai secret.
+- **SHOP-T21 Sign up and verify email (Mailpit)** — mendaftar dengan `{{fn.random_email}}`, lalu
+  `http_request` ke `{{env.MAILPIT_URL}}/api/v1/search` dengan `poll_timeout_ms` dan
+  `poll_until: $.messages[0].ID` diulang sampai email masuk (`save` menyimpan ID-nya). Request
+  kedua membaca email mentah (`/api/v1/message/{{vars.mail_id}}/raw`, HTML quoted-printable) dan
+  `save_regex` dengan `regex_decode: auto` mengambil link verifikasi, yang lalu dibuka oleh `goto`.
+- **SHOP-T22 Verify email with the 6-digit code** — sama, tetapi `save_regex` `code is (\d{6})`
+  mengambil kode dari JSON pesan Mailpit dan test case mengetiknya ke form.
+
+[Mailpit](https://mailpit.axllent.org) adalah penangkap email lokal: `scripts/demo-server.sh`
+menjalankannya di samping toko demo (UI di `http://127.0.0.1:8025`), dan environment `staging`
+punya `MAILPIT_URL` serta secret `QA_TOTP_SEED`. Untuk aplikasimu sendiri, arahkan `MAILPIT_URL`
+ke instance Mailpit/MailHog-mu dan simpan seed 2FA akun test sebagai secret.
 
 ### Mode JSON
 

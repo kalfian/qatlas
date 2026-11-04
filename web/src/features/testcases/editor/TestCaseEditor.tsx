@@ -48,7 +48,7 @@ import {
   type JsonIssue,
 } from '../lib'
 import { InfoTab } from './InfoTab'
-import { JsonView } from './JsonView'
+import { JsonView } from './LazyJsonView'
 import { RevisionsTab } from './RevisionsTab'
 import { RunsTab } from './RunsTab'
 import { EmptyPanel, StepPanel } from './StepPanel'

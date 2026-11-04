@@ -21,7 +21,7 @@ Binding conventions for everyone implementing the backend, runner, MCP and deplo
 ## Repository layout
 ```
 backend/                       Go module `github.com/kalfian/qatlas/backend` (go 1.27)
-  cmd/qatlas/main.go           subcommands: server | worker | all | migrate up|down|status | user create-admin | seed demo | mcp-stdio | version
+  cmd/qatlas/main.go           subcommands: server | worker | all | migrate up|down|status | user create-admin | seed demo | artifacts migrate|check | mcp-stdio | version
   internal/config              env config (QATLAS_*), validated at start
   internal/db                  pgx pool, goose migrations (embedded), tx helper, testutil (truncate)
   internal/httpx               JSON helpers, APIError, middleware (request id, slog, recover, auth, csrf), pagination
@@ -96,7 +96,7 @@ NDJSON over stdin/stdout (one JSON object per line; runner logs go to stderr):
 {"type":"run.finished","run_id":"…","status":"passed|failed|error|cancelled"}
 {"type":"runner.error","run_id":"…|null","message":"…"}
 ```
-Runner semantics: interpolation `{{env.X}}`, `{{secret.X}}`, `{{vars.x}}`, `{{fn.uuid|now|random_email|random_int}}`; `vars` precedence env < run vars < case vars < runtime (`save`, `extract_text`, `set_variable`), runtime vars carry across cases only when `shared_session`. Selector mapping per docs/04. Failed step → rest `skipped` unless `continue_on_failure`. Flow-level: a failed case with `stop_on_failure` and not `continue_on_failure` → remaining cases emitted as `case.finished` `skipped`. Retries re-run a failed case (fresh context unless shared). Screenshot `every_step` / `on_failure` / per-step `screenshot:true`; HTTP steps never screenshot. Video `always` / `on_failure` (record, delete if passed); shared session ⇒ one video for the segment (attached to the first case). `details` for assertions = `{expected, actual}`, for `http_request` = `{request:{method,url}, response:{status,time_ms,body}}` (body truncated to 8 KB).
+Runner semantics: interpolation `{{env.X}}`, `{{secret.X}}`, `{{vars.x}}`, `{{fn.uuid|now|random_email|random_int}}`, `{{fn.totp <ref> [digits] [period] [algorithm]}}` (see docs/04); `vars` precedence env < run vars < case vars < runtime (`save`, `extract_text`, `set_variable`), runtime vars carry across cases only when `shared_session`. Selector mapping per docs/04. Failed step → rest `skipped` unless `continue_on_failure`. Flow-level: a failed case with `stop_on_failure` and not `continue_on_failure` → remaining cases emitted as `case.finished` `skipped`. Retries re-run a failed case (fresh context unless shared). Screenshot `every_step` / `on_failure` / per-step `screenshot:true`; HTTP steps never screenshot. Video `always` / `on_failure` (record, delete if passed); shared session ⇒ one video for the segment (attached to the first case). `details` for assertions = `{expected, actual}`, for `http_request` = `{request:{method,url}, response:{status,time_ms,body}}` (body truncated to 8 KB).
 
 ### Runner behaviour the worker must handle (from `runner/README.md`)
 - `case.finished` may arrive **twice** for the first case of a shared-session segment (second one carries the video path) → treat as idempotent upsert.

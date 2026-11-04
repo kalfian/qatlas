@@ -27,12 +27,18 @@ export function emit(event: OutboundEvent): void {
 
 /** Replace every secret value in strings (deep). The worker masks too; this is defence in depth. */
 export class Masker {
-  private readonly values: string[]
+  private values: string[]
   constructor(secrets: Record<string, unknown> | undefined) {
     this.values = Object.values(secrets ?? {})
       .map((v) => (v === null || v === undefined ? '' : String(v)))
       .filter((v) => v.length >= 3)
       .sort((a, b) => b.length - a.length)
+  }
+
+  /** Mask a value produced during the run as well (e.g. a generated TOTP code), from now on. */
+  add(value: string): void {
+    if (value.length < 3 || this.values.includes(value)) return
+    this.values = [...this.values, value].sort((a, b) => b.length - a.length)
   }
 
   str(s: string): string {

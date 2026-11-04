@@ -74,13 +74,13 @@ type rnFixture struct {
 
 const rnSecret = "s3cr3t-value"
 
-func rnSetup(t *testing.T) *rnFixture {
+func rnSetup(t *testing.T, opts ...func(*Deps)) *rnFixture {
 	t.Helper()
 	f := &rnFixture{}
-	f.e = newEnv(t, func(d *Deps) {
+	f.e = newEnv(t, append([]func(*Deps){func(d *Deps) {
 		f.enq = &rnEnqueuer{pool: d.Pool}
 		d.Enqueuer = f.enq
-	})
+	}}, opts...)...)
 	e := f.e
 	f.maint = e.createUser("mia@example.com", "Mia", "member", "active", testPassword)
 	f.ed = e.createUser("eddie@example.com", "Eddie", "member", "active", testPassword)
@@ -635,7 +635,13 @@ func (c *client) getRange(path, rng string) response {
 }
 
 func TestManualAttachmentsAndArtifacts(t *testing.T) {
-	f := rnSetup(t)
+	testAttachmentsAndArtifacts(t, rnSetup(t), nil)
+}
+
+// testAttachmentsAndArtifacts runs the upload / download / Range / RBAC /
+// retention flow against f's artifact store. stored (optional) is called with
+// the uploaded artifact and after the purge (purged=true) to inspect the store.
+func testAttachmentsAndArtifacts(t *testing.T, f *rnFixture, stored func(a artifacts.Artifact, purged bool)) {
 	e := f.e
 	run := f.create(f.cE, map[string]any{"test_case": "SHOP-T2"})
 	path := casePath(run, 0, "attachments")
@@ -663,6 +669,9 @@ func TestManualAttachmentsAndArtifacts(t *testing.T) {
 	got := f.get(f.cE, run.Key)
 	if len(got.Cases[0].Attachments) != 1 || got.Cases[0].Attachments[0].ID != art.ID {
 		t.Fatalf("attachments in run: %+v", got.Cases[0].Attachments)
+	}
+	if stored != nil {
+		stored(art, false)
 	}
 
 	// Download: full, Range, RBAC.
@@ -705,6 +714,9 @@ func TestManualAttachmentsAndArtifacts(t *testing.T) {
 	}
 	if n, _ := artifacts.Purge(e.ctx, e.pool, e.srv.Artifacts.Store(), time.Now(), nil); n != 0 {
 		t.Fatal("purge is not idempotent")
+	}
+	if stored != nil {
+		stored(art, true)
 	}
 }
 

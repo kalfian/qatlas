@@ -184,7 +184,7 @@ func TestMCPAuthAndDiscovery(t *testing.T) {
 		Examples   []any          `json:"examples"`
 	}
 	ok(t, cs, "get_step_schema", nil, &schema)
-	if schema.StepSchema["type"] != "object" || len(schema.Examples) != 2 {
+	if schema.StepSchema["type"] != "object" || len(schema.Examples) != 3 {
 		t.Fatalf("get_step_schema: %+v", schema)
 	}
 	var proj map[string]any

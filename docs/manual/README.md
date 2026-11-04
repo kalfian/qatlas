@@ -247,10 +247,57 @@ Type `{{` in any field to get suggestions.
 | `env.*` | The environment chosen for the run | `{{env.BASE_URL}}/login` |
 | `secret.*` | Environment secrets (masked in reports) | `{{secret.QA_PASSWORD}}` |
 | `vars.*` | The **Variables** tab of the test case or flow, plus `save` / `extract_text` / `set_variable` during the run | `{{vars.order_id}}` |
-| `fn.*` | Built-in helpers | `{{fn.uuid}}`, `{{fn.now}}`, `{{fn.random_email}}`, `{{fn.random_int 1 100}}` |
+| `fn.*` | Built-in helpers | `{{fn.uuid}}`, `{{fn.now}}`, `{{fn.random_email}}`, `{{fn.random_int 1 100}}`, `{{fn.totp secret.NAME}}` |
 
 When the same name is defined twice, the later source wins: environment → flow variables → test
 case variables → values set during the run.
+
+### 2FA and email
+
+- **TOTP codes.** `{{fn.totp secret.NAME}}` gives the current code of an authenticator app
+  (RFC 6238), computed from a base32 seed (spaces, lowercase and `=` padding are fine). The seed can
+  also come from `env.NAME` or `vars.name`, or be written literally. Options: `digits=6..8`
+  (default 6), `period=10..300` (default 30), `algorithm=SHA1|SHA256|SHA512`, e.g.
+  `{{fn.totp secret.OTP digits=8}}`. The code is generated when the step runs; if fewer than
+  3 seconds of the current code remain, the runner waits for the next one. Reports show the
+  expression, never the seed, and the generated code is masked as `••••`.
+- **Waiting for an email.** In an **HTTP request** step, open **Polling** and set *Poll for up to
+  (ms)* (max 120000). The request is sent again every *Poll interval* (default 1000 ms, min 200)
+  until the status is 2xx, *Poll until* (a JSONPath) has a non-empty value, and every *Save* and
+  *Save with regex* entry is found. If time runs out, the step fails with the last response, the
+  number of attempts and what was still missing. The step summary ends with `(poll ≤15s)`.
+- **Getting a code or link out of an email.** *Save with regex* (`name → pattern`) runs a
+  JavaScript regex on the response body and saves capture group 1 (or the whole match). For raw or
+  HTML emails, set *Decode body before regex* to `auto`: it undoes quoted-printable (`=3D`, soft
+  line breaks) and HTML entities (`&amp;`), and searches a JSON response by its string values.
+- **Mail catcher APIs.** Mailpit: `GET {{env.MAILPIT_URL}}/api/v1/search` with the query
+  parameter `query` = `to:{{vars.email}}` → `$.messages[0].ID`, then
+  `GET {{env.MAILPIT_URL}}/api/v1/message/{{vars.mail_id}}` → `$.Subject`, `$.Text`, `$.HTML`
+  (`/view/<ID>.html` and `/view/<ID>.txt` show the bodies as-is). MailHog:
+  `GET …/api/v2/search?kind=to&query=<email>` → `$.items[0].Content.Body` with
+  `regex_decode: auto`. More in [docs/04](../04-test-definition.md).
+
+### Example: 2FA and email verification (demo cases)
+
+The demo project SHOP has three cases that show how to test a second factor and an emailed link
+or code without a person in the loop:
+
+- **SHOP-T20 Log in with TOTP 2FA** — logs in as `qa.2fa@tokoku.id` and fills
+  `label=Authentication code` with `{{fn.totp secret.QA_TOTP_SEED}}`: the current 6-digit code of
+  an authenticator app, computed from the base32 seed stored as a secret.
+- **SHOP-T21 Sign up and verify email (Mailpit)** — signs up with `{{fn.random_email}}`, then an
+  `http_request` to `{{env.MAILPIT_URL}}/api/v1/search` with `poll_timeout_ms` and
+  `poll_until: $.messages[0].ID` repeats until the email has arrived (`save` keeps its ID). A
+  second request reads the raw email (`/api/v1/message/{{vars.mail_id}}/raw`, quoted-printable
+  HTML) and `save_regex` with `regex_decode: auto` takes the verification link, which the next
+  `goto` opens.
+- **SHOP-T22 Verify email with the 6-digit code** — the same, but `save_regex`
+  `code is (\d{6})` reads the code from Mailpit's JSON message and the case types it into the form.
+
+[Mailpit](https://mailpit.axllent.org) is a local email catcher: `scripts/demo-server.sh` starts
+it next to the demo shop (UI at `http://127.0.0.1:8025`), and the `staging` environment has
+`MAILPIT_URL` and the secret `QA_TOTP_SEED`. For your own app, point `MAILPIT_URL` at your
+Mailpit/MailHog instance and store your test account's 2FA seed as a secret.
 
 ### JSON mode
 

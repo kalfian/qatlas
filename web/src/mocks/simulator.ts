@@ -148,6 +148,12 @@ function uuidV4(): string {
   return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`
 }
 
+/** Mock `{{fn.totp …}}`: a 6-digit code that changes every 30 s (mock mode never sees real seeds). */
+function mockTotp(now = Date.now()): string {
+  const period = Math.floor(now / 30_000)
+  return String((Math.imul(period ^ 0x5bd1e995, 2654435761) >>> 0) % 1_000_000).padStart(6, '0')
+}
+
 export interface VarContext {
   env: Record<string, string>
   secretNames: string[]
@@ -165,6 +171,7 @@ export function interpolate(text: string, ctx: VarContext): string {
       if (key === 'now') return new Date().toISOString()
       if (key === 'random_email') return `qa+${Math.floor(Math.random() * 1e6)}@tokoku.id`
       if (key === 'random_int') return String(Math.floor(Math.random() * 100))
+      if (key === 'totp') return mockTotp()
     }
     return whole
   })
@@ -178,9 +185,105 @@ function interpolateStep(step: Step, ctx: VarContext): Step {
   return out
 }
 
+/* ------------------------------------------------------------------ HTTP palsu (Mailpit dkk.) */
+
+/** Parameter step di luar tipe Step yang digenerate (save_regex, poll_*, …) dibaca lewat sini. */
+const param = (step: Step, name: string): unknown => (step as Record<string, unknown>)[name]
+
+function stringRecord(v: unknown): Record<string, string> {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
+  return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, String(x)]))
+}
+
+/** JSONPath sederhana: `$.a.b[0]['c']`. */
+function jsonPathGet(doc: unknown, path: string): unknown {
+  if (!path.startsWith('$')) return undefined
+  let cur: unknown = doc
+  const re = /\.([A-Za-z_][\w-]*)|\[(\d+)\]|\[['"]([^'"]+)['"]\]/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(path.slice(1)))) {
+    if (cur === null || typeof cur !== 'object') return undefined
+    const key = m[2] !== undefined ? Number(m[2]) : (m[1] ?? m[3])
+    cur = (cur as Record<string | number, unknown>)[key]
+  }
+  return cur
+}
+
+function decodeQuotedPrintable(text: string): string {
+  const unfolded = text.replace(/=[ \t]*\r?\n/g, '')
+  const bytes: number[] = []
+  for (let i = 0; i < unfolded.length; i++) {
+    const hex = unfolded.slice(i + 1, i + 3)
+    if (unfolded[i] === '=' && /^[0-9A-Fa-f]{2}$/.test(hex)) {
+      bytes.push(parseInt(hex, 16))
+      i += 2
+    } else {
+      bytes.push(...new TextEncoder().encode(unfolded[i]))
+    }
+  }
+  return new TextDecoder().decode(new Uint8Array(bytes))
+}
+
+function jsonStrings(v: unknown, out: string[] = []): string[] {
+  if (typeof v === 'string') out.push(v)
+  else if (Array.isArray(v)) v.forEach((x) => jsonStrings(x, out))
+  else if (v && typeof v === 'object') Object.values(v).forEach((x) => jsonStrings(x, out))
+  return out
+}
+
+/** Teks yang dicocokkan save_regex — meniru runner (runner/src/decode.ts) secukupnya. */
+function regexText(body: unknown, mode: string): string {
+  const raw = typeof body === 'string' ? body : JSON.stringify(body)
+  if (!mode || mode === 'none') return raw
+  let text = typeof body === 'string' ? body : jsonStrings(body).join('\n')
+  if (mode === 'quoted_printable' || (mode === 'auto' && /=\r?\n|=3D/i.test(text))) text = decodeQuotedPrintable(text)
+  if (mode === 'html' || mode === 'auto') text = text.replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+  return text
+}
+
+const MOCK_MAIL_ID = (rng: Rng) => Array.from({ length: 22 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789'[Math.floor(rng() * 56)]).join('')
+
+/** Respons palsu untuk API Mailpit (bentuk sama dengan Mailpit v1.33) — dipakai test case email di seed. */
+function mailpitResponse(url: string, ctx: { env: Record<string, string>; vars: Record<string, string> }, rng: Rng): unknown | undefined {
+  const m = /\/api\/v1\/(search|messages|message\/([\w-]+)(\/raw)?)(?:[/?#]|$)/.exec(url)
+  if (!m) return undefined
+  const to = ctx.vars.email ?? 'qa@tokoku.id'
+  const id = m[2] && !m[2].startsWith('{{') ? m[2] : MOCK_MAIL_ID(rng)
+  const code = String(between(rng, 100000, 999999))
+  const link = `${ctx.env.BASE_URL ?? 'https://staging.tokoku.id'}/verify?token=${MOCK_MAIL_ID(rng)}`
+  const subject = 'Verify your Tokoku account'
+  const text = `Hi QA,\r\n\r\nWelcome to Tokoku! Confirm your email address to activate your account.\r\n\r\nYour verification code is ${code}\r\n\r\nOr open this link:\r\n${link}\r\n`
+  const htmlBody = `<p>Your verification code is <strong>${code}</strong></p>\r\n<p><a href="${link}">Verify my email</a></p>`
+  const address = (a: string, name = '') => ({ Name: name, Address: a })
+  if (m[1] === 'search' || m[1] === 'messages') {
+    const msg = { ID: id, MessageID: `${id.slice(0, 12)}@tokoku.id`, Read: false, From: address('no-reply@tokoku.id', 'Tokoku'), To: [address(to)],
+      Cc: null, Bcc: null, ReplyTo: null, Subject: subject, Created: new Date().toISOString(), Username: '', Tags: [], Size: 1971, Attachments: 0,
+      Snippet: `Hi QA, Welcome to Tokoku! Confirm your email address to activate your account. Your verification code is ${code} Verify my email…` }
+    return { total: 1, unread: 1, count: 1, messages_count: 1, messages_unread: 1, start: 0, tags: [], messages: [msg] }
+  }
+  if (m[3]) {
+    // /raw: sumber RFC 822 dengan HTML quoted-printable (soft line break di tengah link)
+    const qp = htmlBody.replace(/=/g, '=3D').replace(/(.{70})/g, '$1=\r\n')
+    return `From: "Tokoku" <no-reply@tokoku.id>\r\nTo: <${to}>\r\nSubject: ${subject}\r\nMIME-Version: 1.0\r\nContent-Type: text/html; charset=utf-8\r\nContent-Transfer-Encoding: quoted-printable\r\n\r\n${qp}\r\n`
+  }
+  return { ID: id, MessageID: `${id.slice(0, 12)}@tokoku.id`, From: address('no-reply@tokoku.id', 'Tokoku'), To: [address(to)], Cc: [], Bcc: [], ReplyTo: [],
+    ReturnPath: 'no-reply@tokoku.id', Subject: subject, Date: new Date().toISOString(), Tags: [], Username: '', Text: text, HTML: htmlBody,
+    Size: 1971, Inline: [], Attachments: [] }
+}
+
 /* ------------------------------------------------------------------ pembuatan run */
 
-function planStep(step: Step, tc: DbTestCase, isLastAssertion: boolean, timeout: number, interpolated: Step, rng: Rng): SimPlan & { details?: Record<string, unknown> } {
+type StepPlan = SimPlan & { details?: Record<string, unknown>; saves?: Record<string, string> }
+
+function planStep(
+  step: Step,
+  tc: DbTestCase,
+  isLastAssertion: boolean,
+  timeout: number,
+  interpolated: Step,
+  rng: Rng,
+  vctx: { env: Record<string, string>; vars: Record<string, string> } = { env: {}, vars: {} },
+): StepPlan {
   if (step.action === 'manual') return { outcome: 'passed', duration_ms: 0 }
   let fail = containsFailMarker(step)
   if (!fail && (step.action === 'expect_text' || step.action === 'expect_value')) {
@@ -193,22 +296,51 @@ function planStep(step: Step, tc: DbTestCase, isLastAssertion: boolean, timeout:
     return { outcome: 'failed', error: f.error, duration_ms: f.duration, details: f.details }
   }
   let details: Record<string, unknown> | undefined
+  let saves: Record<string, string> | undefined
+  let duration: number | undefined // undefined → normalDuration (dipanggil terakhir: urutan rng run lama tetap)
   if (step.action === 'http_request') {
     const status = interpolated.method === 'POST' ? 201 : 200
-    details = {
-      request: { method: interpolated.method ?? 'GET', url: interpolated.url },
-      response: {
-        status,
-        time_ms: between(rng, 80, 600),
-        body: interpolated.method === 'POST' ? { data: { id: `ord_${between(rng, 1000, 9999)}`, status: 'created' } } : { data: [{ id: 'p_1', name: 'Plain Black T-shirt', price: 90000 }], meta: { total: 1 } },
-      },
+    const mail = mailpitResponse(interpolated.url ?? '', vctx, rng)
+    const response = {
+      status,
+      time_ms: between(rng, 80, 600),
+      body: mail ?? (interpolated.method === 'POST' ? { data: { id: `ord_${between(rng, 1000, 9999)}`, status: 'created' } } : { data: [{ id: 'p_1', name: 'Plain Black T-shirt', price: 90000 }], meta: { total: 1 } }),
+    }
+    details = { request: { method: interpolated.method ?? 'GET', url: interpolated.url }, response }
+    // save / save_regex → vars untuk step berikutnya (seperti runner)
+    saves = {}
+    for (const [name, path] of Object.entries(stringRecord(param(interpolated, 'save')))) {
+      const v = jsonPathGet(response.body, path)
+      if (v !== undefined) saves[name] = typeof v === 'string' ? v : JSON.stringify(v)
+    }
+    const regexes = stringRecord(param(interpolated, 'save_regex'))
+    if (Object.keys(regexes).length) {
+      const text = regexText(response.body, String(param(interpolated, 'regex_decode') ?? 'none'))
+      for (const [name, pattern] of Object.entries(regexes)) {
+        let match: RegExpExecArray | null = null
+        try {
+          match = new RegExp(pattern).exec(text)
+        } catch {
+          /* pola tidak valid → nilai contoh */
+        }
+        saves[name] = match ? (match[1] ?? match[0]) : `mock-${name}`
+      }
+    }
+    // Polling: email "datang" setelah beberapa percobaan.
+    const pollTimeout = Number(param(interpolated, 'poll_timeout_ms') ?? 0)
+    if (pollTimeout > 0) {
+      const interval = Math.max(200, Number(param(interpolated, 'poll_interval_ms') ?? 1000))
+      const attempts = Math.min(between(rng, 2, 4), Math.max(1, Math.floor(pollTimeout / interval)))
+      details.attempts = attempts
+      duration = (attempts - 1) * interval + response.time_ms
     }
   }
+  if (step.action === 'set_variable' && interpolated.name) saves = { [interpolated.name]: String(interpolated.value ?? '') }
   if (step.action === 'expect_text' || step.action === 'expect_value') {
     const truth = MOCK_TRUTH[interpolated.selector ?? '']
     details = { expected: String(interpolated.value ?? ''), actual: truth ?? String(interpolated.value ?? '') }
   }
-  return { outcome: 'passed', duration_ms: normalDuration(step, rng), details }
+  return { outcome: 'passed', duration_ms: duration ?? normalDuration(step, rng), details, saves }
 }
 
 function buildCase(
@@ -222,11 +354,14 @@ function buildCase(
   const enabled = tc.steps.filter((s) => s.enabled !== false)
   const lastAssertIdx = enabled.map((s) => s.action.startsWith('expect_')).lastIndexOf(true)
   let assertCounter = -1
+  const runtime: Record<string, string> = {} // hasil save / save_regex / set_variable
   const steps: DbRunStep[] = tc.steps.map((step, i): DbRunStep => {
-    const interp = interpolateStep(step, { ...ctx, vars: { ...tc.variables, ...ctx.vars } })
+    const vars = { ...tc.variables, ...ctx.vars, ...runtime }
+    const interp = interpolateStep(step, { ...ctx, vars })
     const timeout = step.timeout_ms ?? run.options.step_timeout_ms
     if (step.enabled !== false && step.action.startsWith('expect_')) assertCounter += 1
-    const plan = step.enabled === false ? undefined : planStep(step, tc, assertCounter === lastAssertIdx && step.action.startsWith('expect_'), timeout, interp, rng)
+    const plan = step.enabled === false ? undefined : planStep(step, tc, assertCounter === lastAssertIdx && step.action.startsWith('expect_'), timeout, interp, rng, { env: ctx.env, vars })
+    if (plan?.outcome === 'passed' && plan.saves) Object.assign(runtime, plan.saves)
     return {
       id: newId('rs'),
       position: i + 1,
@@ -360,7 +495,7 @@ export function createRun(a: CreateRunArgs): DbRun {
 /* ------------------------------------------------------------------ artifacts */
 
 const PAGE_VARIANTS: [RegExp, string][] = [
-  [/login|otp|logout|password|auth/i, 'login'],
+  [/login|log in|otp|logout|password|auth|2fa|sign up|signup|verify|email/i, 'login'],
   [/keranjang|cart/i, 'cart'],
   [/checkout|voucher|bayar|pembayaran|payment|invoice|order/i, 'checkout'],
   [/produk|product|katalog|catalog|cari|search|filter/i, 'catalog'],
