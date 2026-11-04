@@ -1,4 +1,4 @@
-// Records the manual's walkthrough videos (Playwright recordVideo, 1280×800) against a running
+// Records the manual's walkthrough videos (incl. the README end-to-end demo) (Playwright recordVideo, 1280×800) against a running
 // QAtlas seeded with `qatlas seed demo`. Each walkthrough creates real data on that instance
 // (a test case, runs, a flow run that waits for manual work). Encode afterwards with encode.sh.
 //
@@ -47,9 +47,9 @@ const CURSOR = () => {
   })
 }
 
-async function recorder(name) {
+async function recorder(name, { signedIn = true } = {}) {
   const ctx = await newContext(browser, { viewport: SIZE, video: { dir: RAW_DIR, size: SIZE } })
-  await ctx.addCookies(storageState.cookies)
+  if (signedIn) await ctx.addCookies(storageState.cookies)
   await ctx.addInitScript(CURSOR)
   const page = await ctx.newPage()
   let mouse = { x: 640, y: 400 }
@@ -105,6 +105,152 @@ async function addStep(h, action, fields) {
 }
 
 const walkthroughs = {
+  /* (e2e) the whole product in one take: sign in → environment → write a test case → run → report →
+     flow with a manual step → history/dashboard → API token for MCP → language switch */
+  async 'end-to-end'() {
+    const h = await recorder('end-to-end', { signedIn: false })
+    const { page } = h
+    const nav = page.getByRole('navigation', { name: 'Project navigation' })
+    const scrollTop = () =>
+      page.evaluate(() => {
+        for (const el of document.querySelectorAll('*')) if (el.scrollTop > 0) el.scrollTop = 0
+        window.scrollTo(0, 0)
+      })
+
+    // 1. Sign in
+    await page.goto('/login')
+    await settle(page, 1200)
+    await h.click(page.getByLabel('Email', { exact: true }))
+    await h.type(page.getByLabel('Email', { exact: true }), 'rina@tokoku.id', 45)
+    await h.click(page.getByLabel('Password', { exact: true }))
+    await h.type(page.getByLabel('Password', { exact: true }), 'password123', 45)
+    await h.beat(400)
+    await h.click(page.getByRole('button', { name: 'Sign in', exact: true }))
+    await page.waitForURL((u) => !u.pathname.startsWith('/login'))
+    await settle(page, 1200)
+
+    // 2. Pick the project → dashboard
+    if (!/\/p\/SHOP/.test(page.url())) {
+      await h.click(page.getByRole('link', { name: /SHOP/ }).first())
+      await page.waitForURL(/\/p\/SHOP/)
+    }
+    await settle(page, 2500)
+
+    // 3. Environment: variables + write-only secrets used by the tests
+    await h.click(nav.getByRole('link', { name: 'Environments' }))
+    await settle(page, 2800)
+
+    // 4. Write a test case in the step editor
+    await h.click(nav.getByRole('link', { name: 'Test cases' }))
+    await settle(page, 1800)
+    await h.click(page.getByRole('link', { name: 'Test case', exact: true }).or(page.getByRole('button', { name: 'Test case', exact: true })).first())
+    await page.waitForURL(/\/tests\/new/)
+    await settle(page, 700)
+    await h.click(page.getByLabel('Test case title'))
+    await h.type(page.getByLabel('Test case title'), 'End-to-end demo: add the black tee to the cart')
+    await h.beat(500)
+    await addStep(h, 'goto', [['URL', '{{env.BASE_URL}}/products/plain-black-tee']])
+    await addStep(h, 'expect_text', [
+      ['Selector', 'testid=product-price'],
+      ['Text', 'Rp 90.000'],
+    ])
+    await addStep(h, 'click', [['Selector', "role=button[name='Add to cart']"]])
+    await addStep(h, 'expect_visible', [['Selector', 'text=Added to cart']])
+    await h.beat(800)
+    await page.keyboard.press('Control+s')
+    await page.waitForURL(/\/tests\/SHOP-T\d+/)
+    await settle(page, 1400)
+
+    // 5. Run it with a screenshot of every step and a video
+    await h.click(page.getByRole('button', { name: /^Run$/ }))
+    let dialog = page.getByRole('dialog')
+    await h.beat(700)
+    await h.click(dialog.locator('[aria-label="Screenshot"]').getByText('Every step'))
+    await h.beat(300)
+    await h.click(dialog.locator('[aria-label="Video"]').getByText('Always'))
+    await h.beat(700)
+    await h.click(dialog.getByRole('button', { name: 'Run', exact: true }))
+    await page.waitForURL(/\/runs\/SHOP-R\d+/)
+    await waitForRun(page, page.url().match(/SHOP-R\d+/)[0])
+    await h.beat(2500)
+
+    // 6. Report: screenshots + video
+    await h.click(page.getByRole('tab', { name: /Screenshots/ }))
+    await h.beat(1000)
+    await h.click(page.getByRole('button', { name: /^Open Screenshot/ }).nth(1))
+    await h.beat(1300)
+    await page.keyboard.press('ArrowRight')
+    await h.beat(1100)
+    await page.keyboard.press('Escape')
+    await h.beat(500)
+    await h.click(page.getByRole('tab', { name: /Video/ }))
+    await h.beat(800)
+    await page.locator('video').first().evaluate((v) => v.play()).catch(() => {})
+    await h.beat(3000)
+
+    // 7. A flow that mixes automated cases with a manual check
+    await h.click(nav.getByRole('link', { name: 'Flows' }))
+    await settle(page, 1800)
+    await h.click(page.getByRole('button', { name: /^Run SHOP-F3/ }))
+    dialog = page.getByRole('dialog')
+    await h.beat(1500)
+    await h.click(dialog.getByRole('button', { name: 'Run', exact: true }))
+    await page.waitForURL(/\/runs\/SHOP-R\d+/)
+    const flowRun = page.url().match(/SHOP-R\d+/)[0]
+    await waitForRun(page, flowRun, ['awaiting_manual'])
+    await settle(page, 2000)
+
+    // 8. Manual execution: the flow waits for the tester, then resumes on its own
+    const decisions = page.getByRole('group', { name: 'Step result' })
+    await h.beat(1500)
+    await h.click(decisions.getByRole('button', { name: /Pass/ }))
+    await h.beat(1200)
+    const actual = page.getByLabel(/Actual result/)
+    await h.click(actual)
+    await h.type(actual, 'Totals match the order page.')
+    await h.beat(400)
+    await h.click(decisions.getByRole('button', { name: /Pass/ }))
+    await h.beat(1200)
+    await h.click(decisions.getByRole('button', { name: /Pass/ }))
+    await h.beat(1000)
+    await h.click(page.getByRole('button', { name: 'Finish', exact: true }).first())
+    await h.beat(900)
+    await h.click(page.getByRole('dialog').getByRole('button', { name: /^(Finish|Mark the rest Skipped & finish)$/ }))
+    await waitForRun(page, flowRun)
+    await h.beat(800)
+    await scrollTop()
+    await h.beat(3000)
+
+    // 9. Run history + dashboard
+    await h.click(nav.getByRole('link', { name: 'Runs' }))
+    await settle(page, 2500)
+    await h.click(nav.getByRole('link', { name: 'Dashboard' }))
+    await settle(page, 2800)
+
+    // 10. API token & MCP setup for AI agents (no token is created on camera)
+    await h.click(page.getByRole('link', { name: /API token/ }).first())
+    await settle(page, 2000)
+    const mcp = page.getByText(/claude mcp add/).first()
+    await mcp.scrollIntoViewIfNeeded().catch(() => {})
+    const box = await mcp.boundingBox().catch(() => null)
+    if (box) await page.mouse.move(box.x + 60, box.y + box.height / 2, { steps: 18 })
+    await h.beat(2800)
+
+    // 11. Switch the UI to Bahasa Indonesia and back
+    const userMenu = () => page.getByRole('button', { name: /^(Account menu for|Menu akun) Rina Kusuma$/ })
+    await h.click(userMenu())
+    await h.beat(600)
+    await h.click(page.getByRole('menuitemradio', { name: /Bahasa Indonesia/ }))
+    await settle(page, 1200)
+    await page.goto('/p/SHOP/tests')
+    await settle(page, 3000)
+    await h.click(userMenu())
+    await h.beat(600)
+    await h.click(page.getByRole('menuitemradio', { name: /English/ }))
+    await settle(page, 2000)
+    await h.finish()
+  },
+
   /* (a) write a test case in the step editor → run it → live progress → report */
   async 'create-and-run-test-case'() {
     const h = await recorder('create-and-run-test-case')

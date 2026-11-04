@@ -21,6 +21,7 @@ diterjemahkan, mis. **Add step** = **Tambah step**, **Save** = **Simpan**, **My 
 
 | Video | Isi | Durasi |
 |---|---|---|
+| [**Demo end-to-end**](video/end-to-end.mp4) | Seluruh produk dalam satu rekaman: login → environment → step editor → run → report → flow dengan cek manual → riwayat & dashboard → API token / MCP → ganti bahasa | 1 mnt 40 dtk |
 | [Membuat dan menjalankan test case](video/create-and-run-test-case.mp4) | Step editor dan palette action → simpan → run dengan screenshot dan video → report | 42 dtk |
 | [Memperbaiki test yang gagal](video/fix-a-failing-test.mp4) | Run gagal → expected vs actual dan screenshot → perbaiki step → run ulang lolos | 28 dtk |
 | [Eksekusi manual](video/manual-execution.mp4) | Flow berhenti di test case manual → tester mengerjakannya → flow lanjut otomatis | 25 dtk |

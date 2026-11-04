@@ -8,8 +8,8 @@ can be refreshed after UI changes.
 |---|---|
 | `lib.mjs` | Shared helpers: browser context (theme, viewport), sign-in, API calls, waits, redaction |
 | `screenshots.mjs` | All PNGs: 1440×900 at device scale 1, light theme; plus dark-theme, 390 px mobile (scale 2), and Indonesian-UI shots |
-| `videos.mjs` | The three walkthroughs as raw `.webm` (1280×800) |
-| `encode.sh` | `.webm` → MP4 (H.264, CRF 28, faststart) and the README GIF (960 px, 10 fps) |
+| `videos.mjs` | The walkthroughs (end-to-end demo + three short ones) as raw `.webm` (1280×800) |
+| `encode.sh` | `.webm` → MP4 (H.264, CRF 28, faststart), the README GIF (960 px, 10 fps) and the end-to-end poster |
 
 ## Run
 

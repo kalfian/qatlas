@@ -12,7 +12,7 @@ OUT="$HERE/../video"
 RAW_DIR="${RAW_DIR:-${TMPDIR:-/tmp}/qatlas-manual-raw}"
 mkdir -p "$OUT"
 
-for name in create-and-run-test-case fix-a-failing-test manual-execution; do
+for name in end-to-end create-and-run-test-case fix-a-failing-test manual-execution; do
   src="$RAW_DIR/$name.webm"
   [[ -f $src ]] || { echo "skip $name (no $src)"; continue; }
   ffmpeg -v error -y -ss 0.5 -i "$src" \
@@ -20,6 +20,17 @@ for name in create-and-run-test-case fix-a-failing-test manual-execution; do
     "$OUT/$name.mp4"
   echo "$OUT/$name.mp4 $(du -h "$OUT/$name.mp4" | cut -f1)"
 done
+
+# Poster for the README: a frame of the end-to-end walkthrough with a "play" caption.
+src="$RAW_DIR/end-to-end.webm"
+if [[ -f $src ]]; then
+  font="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+  ffmpeg -v error -y -ss 52 -i "$src" -frames:v 1 -vf "scale=1280:-1,\
+drawbox=x=0:y=ih-110:w=iw:h=110:color=black@0.72:t=fill,\
+drawtext=fontfile=$font:text='▶  Watch the end-to-end demo (1 min 40 s)':fontcolor=white:fontsize=40:x=(w-text_w)/2:y=h-78" \
+    "$OUT/end-to-end-poster.png"
+  echo "$OUT/end-to-end-poster.png $(du -h "$OUT/end-to-end-poster.png" | cut -f1)"
+fi
 
 src="$RAW_DIR/create-and-run-test-case.webm"
 if [[ -f $src ]]; then

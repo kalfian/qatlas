@@ -16,6 +16,7 @@ from a real instance: Go backend, worker, Playwright runner, and the demo shop.
 
 | Video | Shows | Length |
 |---|---|---|
+| [**End-to-end demo**](video/end-to-end.mp4) | The whole product in one take: sign in → environment → step editor → run → report → flow with a manual check → history & dashboard → API token / MCP → language switch | 1 min 40 s |
 | [Create and run a test case](video/create-and-run-test-case.mp4) | Step editor and action palette → save → run with screenshots and video → report | 42 s |
 | [Fix a failing test](video/fix-a-failing-test.mp4) | Failed run → expected vs actual and screenshot → fix the step → re-run passes | 28 s |
 | [Manual execution](video/manual-execution.mp4) | A flow pauses at a manual test case → the tester works through it → the flow resumes | 25 s |
