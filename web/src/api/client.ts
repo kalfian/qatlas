@@ -5,7 +5,10 @@ import type { ApiErrorBody, FieldError } from './types'
 export const API_BASE = '/api/v1'
 
 // `fetch` di-resolve saat dipanggil (bukan saat modul dimuat) agar mock fetch-patch ikut terpakai
-export const api = createClient<paths>({ baseUrl: API_BASE, fetch: (request) => globalThis.fetch(request) })
+/** Header anti-CSRF yang diwajibkan backend untuk request ber-cookie yang mengubah data (docs/13). */
+export const CSRF_HEADERS = { 'X-QAtlas-CSRF': '1' } as const
+
+export const api = createClient<paths>({ baseUrl: API_BASE, headers: CSRF_HEADERS, fetch: (request) => globalThis.fetch(request) })
 
 export class ApiError extends Error {
   readonly status: number

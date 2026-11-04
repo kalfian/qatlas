@@ -40,6 +40,23 @@ paths:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
         '401': { $ref: '#/components/responses/Error' }
         '429': { $ref: '#/components/responses/Error' }
+  /auth/config:
+    get:
+      tags: [auth]
+      operationId: getAuthConfig
+      security: []
+      description: Public login configuration (which sign-in methods are enabled).
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [google_enabled, mode]
+                properties:
+                  google_enabled: { type: boolean }
+                  mode: { type: string, enum: [mock, real] }
   /auth/logout:
     post:
       tags: [auth]
@@ -117,6 +134,7 @@ paths:
               type: object
               properties:
                 name: { type: string, minLength: 1 }
+                locale: { $ref: '#/components/schemas/Locale' }
                 current_password: { type: string }
                 new_password: { type: string, minLength: 10 }
       responses:
@@ -987,6 +1005,7 @@ components:
 
     # ---- identity
     SystemRole: { type: string, enum: [admin, member] }
+    Locale: { type: string, enum: [en, id], description: 'UI language preference; default en' }
     ProjectRole: { type: string, enum: [maintainer, editor, viewer] }
     UserStatus: { type: string, enum: [invited, active, disabled] }
     UserRef:
@@ -998,13 +1017,14 @@ components:
         email: { type: string }
     User:
       type: object
-      required: [id, email, name, system_role, status, has_password, google_linked, last_login_at, created_at]
+      required: [id, email, name, system_role, status, locale, has_password, google_linked, last_login_at, created_at]
       properties:
         id: { type: string }
         email: { type: string, format: email }
         name: { type: string }
         system_role: { $ref: '#/components/schemas/SystemRole' }
         status: { $ref: '#/components/schemas/UserStatus' }
+        locale: { $ref: '#/components/schemas/Locale' }
         has_password: { type: boolean }
         google_linked: { type: boolean }
         last_login_at: { type: [string, 'null'], format: date-time }

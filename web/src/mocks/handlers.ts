@@ -193,6 +193,7 @@ export const handlers = [
   })),
 
   // ---------- auth
+  http.get(`${API}/auth/config`, r(() => HttpResponse.json({ google_enabled: true, mode: 'mock' }), { latency: 20 })),
   http.post(`${API}/auth/login`, m(async ({ request }) => {
     const { email, password } = await body<{ email: string; password: string }>(request)
     const u = db().users.find((x) => x.email.toLowerCase() === (email ?? '').toLowerCase())
@@ -232,7 +233,8 @@ export const handlers = [
   http.get(`${API}/me`, r(() => HttpResponse.json(toMe(requireUser())), { latency: 40 })),
   http.patch(`${API}/me`, m(async ({ request }) => {
     const u = requireUser()
-    const b = await body<{ name?: string; current_password?: string; new_password?: string }>(request)
+    const b = await body<{ name?: string; locale?: 'en' | 'id'; current_password?: string; new_password?: string }>(request)
+    if (b.locale === 'en' || b.locale === 'id') u.locale = b.locale
     if (b.name !== undefined) {
       if (!b.name.trim()) fail(400, 'validation_failed', 'Nama wajib diisi', [{ path: 'name', message: 'Wajib diisi' }])
       u.name = b.name.trim()

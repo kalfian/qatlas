@@ -1,5 +1,5 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query'
-import { api, API_BASE, ApiError, unwrap } from './client'
+import { api, API_BASE, ApiError, CSRF_HEADERS, unwrap } from './client'
 import type {
   ApiTokenCreate,
   BulkTestCaseAction,
@@ -86,7 +86,7 @@ export function useMockGoogleLogin() {
     mutationFn: async (email: string) => {
       const res = await fetch(`${API_BASE}/__mock/google-login`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', ...CSRF_HEADERS },
         body: JSON.stringify({ email }),
       })
       const json = await res.json().catch(() => undefined)
@@ -98,6 +98,10 @@ export function useMockGoogleLogin() {
       qc.setQueryData(qk.me, me)
     },
   })
+}
+
+export function useAuthConfig() {
+  return useQuery({ queryKey: ['auth', 'config'], queryFn: () => unwrap(api.GET('/auth/config')), staleTime: Infinity })
 }
 
 export function useInvite(token: string) {
@@ -122,7 +126,7 @@ export function useAcceptInvite(token: string) {
 export function useUpdateMe() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { name?: string; current_password?: string; new_password?: string }) => unwrap(api.PATCH('/me', { body })),
+    mutationFn: (body: { name?: string; locale?: 'en' | 'id'; current_password?: string; new_password?: string }) => unwrap(api.PATCH('/me', { body })),
     onSuccess: (me) => qc.setQueryData(qk.me, me),
   })
 }
@@ -589,7 +593,7 @@ export function useUploadAttachment() {
       const form = new FormData()
       form.append('file', file)
       if (stepId) form.append('run_step_id', stepId)
-      const res = await fetch(`${API_BASE}/runs/${runKey}/cases/${caseId}/attachments`, { method: 'POST', body: form })
+      const res = await fetch(`${API_BASE}/runs/${runKey}/cases/${caseId}/attachments`, { method: 'POST', body: form, headers: CSRF_HEADERS })
       const json = await res.json().catch(() => undefined)
       if (!res.ok) throw new ApiError(res.status, json)
       return json as import('./types').Artifact

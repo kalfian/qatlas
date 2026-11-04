@@ -20,6 +20,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Public login configuration (which sign-in methods are enabled). */
+        get: operations["getAuthConfig"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/logout": {
         parameters: {
             query?: never;
@@ -839,6 +856,11 @@ export interface components {
         };
         /** @enum {string} */
         SystemRole: "admin" | "member";
+        /**
+         * @description UI language preference; default en
+         * @enum {string}
+         */
+        Locale: "en" | "id";
         /** @enum {string} */
         ProjectRole: "maintainer" | "editor" | "viewer";
         /** @enum {string} */
@@ -855,6 +877,7 @@ export interface components {
             name: string;
             system_role: components["schemas"]["SystemRole"];
             status: components["schemas"]["UserStatus"];
+            locale: components["schemas"]["Locale"];
             has_password: boolean;
             google_linked: boolean;
             /** Format: date-time */
@@ -1385,6 +1408,30 @@ export interface operations {
             429: components["responses"]["Error"];
         };
     };
+    getAuthConfig: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        google_enabled: boolean;
+                        /** @enum {string} */
+                        mode: "mock" | "real";
+                    };
+                };
+            };
+        };
+    };
     logout: {
         parameters: {
             query?: never;
@@ -1530,6 +1577,7 @@ export interface operations {
             content: {
                 "application/json": {
                     name?: string;
+                    locale?: components["schemas"]["Locale"];
                     current_password?: string;
                     new_password?: string;
                 };

@@ -42,6 +42,7 @@ export interface DbUser {
   name: string
   system_role: SystemRole
   status: UserStatus
+  locale?: 'en' | 'id'
   password: string | null
   google_linked: boolean
   last_login_at: string | null
@@ -320,6 +321,7 @@ export function toUser(u: DbUser): User {
     name: u.name,
     system_role: u.system_role,
     status: u.status,
+    locale: u.locale ?? 'en',
     has_password: !!u.password,
     google_linked: u.google_linked,
     last_login_at: u.last_login_at,
