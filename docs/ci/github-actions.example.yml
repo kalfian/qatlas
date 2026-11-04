@@ -1,0 +1,74 @@
+# Example GitHub Actions workflow: run a QAtlas flow after a deploy and publish the result.
+#
+# This file is an EXAMPLE — it lives in docs/ci/ so it never runs in the QAtlas repository.
+# Copy it to .github/workflows/qatlas.yml in the repository of the application under test,
+# and copy scripts/qatlas-ci.sh to ci/qatlas-ci.sh there (or adjust the path below).
+#
+# Repository settings → Secrets and variables → Actions:
+#   secret   QATLAS_TOKEN  API token with scopes read + run (QAtlas: Settings → API tokens)
+#   variable QATLAS_URL    e.g. https://qatlas.example.com
+#
+# Pin third-party actions to a commit SHA if your organisation requires it.
+
+name: QAtlas tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      flow:
+        description: QAtlas flow to run
+        default: SHOP-F2
+  # Run after every deploy of main; replace with your deploy workflow's name, or use
+  # `on: deployment_status` / a `needs:` dependency in your deploy workflow instead.
+  workflow_run:
+    workflows: [Deploy staging]
+    types: [completed]
+
+permissions:
+  contents: read
+  checks: write # the JUnit reporter creates a check run with the test results
+
+concurrency:
+  group: qatlas-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  qatlas:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest # has bash, curl and jq preinstalled
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run QAtlas flow
+        env: # only this step sees the token, not the third-party actions below
+          QATLAS_URL: ${{ vars.QATLAS_URL }}
+          QATLAS_TOKEN: ${{ secrets.QATLAS_TOKEN }}
+          FLOW: ${{ inputs.flow || 'SHOP-F2' }} # via env, never interpolated into the script
+        run: |
+          bash ci/qatlas-ci.sh \
+            --project SHOP \
+            --flow "$FLOW" \
+            --timeout 900 \
+            --junit reports/qatlas-junit.xml
+        # Exit code 1 (failed run) fails this step; the steps below still run (if: always()).
+        # The script also appends a Markdown summary with a link to the run to
+        # $GITHUB_STEP_SUMMARY.
+
+      - name: Upload JUnit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qatlas-junit
+          path: reports/qatlas-junit.xml
+          if-no-files-found: ignore
+
+      - name: Publish test summary
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: reports/qatlas-junit.xml
+          check_name: QAtlas
+          detailed_summary: true
+          include_passed: true
+          require_tests: false

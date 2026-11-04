@@ -135,6 +135,7 @@ export default {
     copyLink: 'Salin link',
     exported: '{{file}} diunduh',
     exportJson: 'Export JSON',
+    downloadJunit: 'Unduh JUnit XML',
     cancelTitle: 'Batalkan run {{key}}?',
     cancelBodyManual: 'Case manual yang sedang dikerjakan dan case berikutnya akan ditandai Skipped. Hasil yang sudah ada tetap tersimpan.',
     cancelBody: 'Step yang sedang berjalan dihentikan dan sisa step ditandai Skipped. Hasil yang sudah ada tetap tersimpan.',

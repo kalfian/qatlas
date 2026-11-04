@@ -77,6 +77,7 @@ Contract-first: definisi lengkap ditulis di `api/openapi.yaml` pada **Phase 1** 
 | GET | `/projects/{key}/runs?status=&target=&trigger=&from=&to=` | |
 | GET | `/runs/{runKey}` | detail + case + step |
 | GET | `/runs/{runKey}/events` | SSE |
+| GET | `/runs/{runKey}/junit.xml` | JUnit XML run yang sudah final (`application/xml`, attachment `<runKey>.junit.xml`); belum final → `409 conflict`. Scope token `read` cukup. Contoh CI: [`docs/ci/`](ci/README.md) |
 | POST | `/runs/{runKey}/cancel` | |
 | POST | `/runs/{runKey}/rerun` | `{ "only_failed": bool }` |
 | PATCH | `/runs/{runKey}/assignee` | ganti tester (maintainer) |

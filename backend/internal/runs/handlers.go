@@ -3,6 +3,7 @@ package runs
 import (
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -21,6 +22,7 @@ func (s *Service) Routes(r chi.Router) {
 	r.Post("/projects/{key}/runs", httpx.Handle(s.handleCreate))
 	r.Get("/runs/{runKey}", httpx.Handle(s.handleGet))
 	r.Get("/runs/{runKey}/events", httpx.Handle(s.handleEvents))
+	r.Get("/runs/{runKey}/junit.xml", httpx.Handle(s.handleJUnit))
 	r.Post("/runs/{runKey}/cancel", httpx.Handle(s.handleCancel))
 	r.Post("/runs/{runKey}/rerun", httpx.Handle(s.handleRerun))
 	r.Patch("/runs/{runKey}/assignee", httpx.Handle(s.handleAssignee))
@@ -76,6 +78,26 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) error {
 		return err
 	}
 	return httpx.OK(w, run)
+}
+
+// handleJUnit serves the JUnit XML report of a final run as a download.
+func (s *Service) handleJUnit(w http.ResponseWriter, r *http.Request) error {
+	actor, err := auth.MustActor(r.Context())
+	if err != nil {
+		return err
+	}
+	run, body, err := s.JUnit(r.Context(), actor, chi.URLParam(r, "runKey"))
+	if err != nil {
+		return err
+	}
+	h := w.Header()
+	h.Set("Content-Type", "application/xml; charset=utf-8")
+	h.Set("Content-Disposition", `attachment; filename="`+JUnitFilename(run.Key)+`"`)
+	h.Set("Cache-Control", "no-store")
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(body)
+	return nil
 }
 
 func (s *Service) handleEvents(w http.ResponseWriter, r *http.Request) error {

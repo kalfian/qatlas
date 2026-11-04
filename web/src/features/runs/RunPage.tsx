@@ -1,10 +1,10 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
-import { ArrowDown, Ban, ChevronDown, Ellipsis, FileJson, Film, ImageOff, Link2, RotateCw, SlidersHorizontal, SearchX } from 'lucide-react'
+import { ArrowDown, Ban, ChevronDown, Ellipsis, FileCode2, FileJson, Film, ImageOff, Link2, RotateCw, SlidersHorizontal, SearchX } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ApiError, errorMessage } from '@/api/client'
-import { useCancelRun, useRerun, useRunProgress } from '@/api/queries'
+import { useCancelRun, useRerun, useRunJUnit, useRunProgress } from '@/api/queries'
 import type { Run } from '@/api/types'
 import { useAuth, useCan } from '@/app/auth'
 import { KeyBadge, useCopy } from '@/components/misc'
@@ -41,6 +41,7 @@ import {
   BROWSER_LABEL,
   collectScreenshots,
   downloadJson,
+  downloadText,
   failedStepCount,
   firstFailedStep,
   formatClock,
@@ -343,6 +344,7 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
   const canCancelOwn = useCan('cancel_own_run', run.project_key)
   const canCancelAny = useCan('cancel_any_run', run.project_key)
   const cancel = useCancelRun()
+  const junit = useRunJUnit()
   const rerun = useRerun()
   const { copy } = useCopy()
   const [confirmCancel, setConfirmCancel] = React.useState(false)
@@ -359,7 +361,8 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
   const showCancel = isActive(run.status) && (canCancelAny || (canCancelOwn && run.triggered_by.id === me.user.id))
   const allManual = run.cases.length > 0 && run.cases.every((c) => c.execution === 'manual')
   const failedCases = run.cases.filter((c) => ['failed', 'error', 'blocked', 'skipped'].includes(c.status)).length
-  const primaryRerun = !isActive(run.status)
+  const isFinal = !isActive(run.status)
+  const primaryRerun = isFinal
 
   const doRerun = (only_failed: boolean) =>
     rerun.mutate(
@@ -483,6 +486,23 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
             >
               <FileJson /> {t('report.exportJson')}
             </DropdownMenuItem>
+            {isFinal && (
+              <DropdownMenuItem
+                disabled={junit.isPending}
+                onSelect={() => {
+                  const file = `${run.key}.junit.xml`
+                  junit.mutate(run.key, {
+                    onSuccess: (xml) => {
+                      downloadText(file, xml, 'application/xml')
+                      toast.success(t('report.exported', { file }))
+                    },
+                    onError: (err) => toast.error(errorMessage(err)),
+                  })
+                }}
+              >
+                <FileCode2 /> {t('report.downloadJunit')}
+              </DropdownMenuItem>
+            )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

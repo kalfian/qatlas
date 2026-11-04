@@ -44,6 +44,7 @@ import {
   type DbTestCase,
   type DbUser,
 } from './db'
+import { junitFilename, runToJUnit } from './junit'
 import { DEFAULT_RUN_OPTIONS } from './seed'
 import { completeManualCase, createRun } from './simulator'
 
@@ -858,6 +859,14 @@ export const handlers = [
     return HttpResponse.json(toRun(run), { status: 202 })
   })),
   http.get(`${API}/runs/:runKey`, r(({ params }) => HttpResponse.json(toRun(findRun(params.runKey as string).run)), { latency: 30 })),
+  http.get(`${API}/runs/:runKey/junit.xml`, r(({ params }) => {
+    const { run } = findRun(params.runKey as string)
+    if (!isFinal(run.status))
+      fail(409, 'conflict', `Run ${run.key} is ${run.status.replace('_', ' ')}; the JUnit report is available once the run has finished`)
+    return new HttpResponse(runToJUnit(toRun(run)), {
+      headers: { 'Content-Type': 'application/xml; charset=utf-8', 'Content-Disposition': `attachment; filename="${junitFilename(run.key)}"` },
+    })
+  })),
   http.post(`${API}/runs/:runKey/cancel`, m(({ params }) => {
     const { run, user, role } = findRun(params.runKey as string, 'cancel_own_run')
     if (run.triggered_by_id !== user.id && !can(role, 'cancel_any_run', user.system_role)) fail(403, 'forbidden', "Only maintainers can cancel other people's runs")

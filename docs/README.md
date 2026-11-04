@@ -2,7 +2,9 @@
 
 QAtlas adalah platform self-hosted untuk **mengelola test case**, **menyusun flow** (rangkaian test case), **menjalankan automation test secara async**, melihat **report** (pass/fail + screenshot/video), dan menyediakan **MCP server** agar AI bisa membuat, menjalankan, dan membaca hasil test.
 
-> Status: **draft planning v0** (2026-11-04). Belum ada kode. Semua keputusan di sini masih bisa direvisi — lihat [11-open-questions.md](11-open-questions.md).
+> **Manual pengguna** (cara memakai QAtlas, dengan screenshot & video): [Bahasa Indonesia](manual/README.id.md) · [English](manual/README.md).
+
+> Status (2026-11-04): **Phase 1–5 terimplementasi** (lihat checklist di [10-roadmap.md](10-roadmap.md)). Dokumen ini adalah planning + log keputusan; keputusan terbuka di [11-open-questions.md](11-open-questions.md). Panduan pengguna: [manual/README.md](manual/README.md) · [Bahasa Indonesia](manual/README.id.md).
 
 ## Daftar dokumen
 

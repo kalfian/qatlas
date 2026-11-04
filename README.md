@@ -1,72 +1,205 @@
 # QAtlas
 
-Platform self-hosted untuk mengelola test case per project, menyusun flow, menjalankan automation test (Playwright) secara async, melihat report (screenshot/video), test manual bila perlu, dan MCP server untuk AI.
+Self-hosted test management and execution. Write test cases per project as structured steps,
+run them on the server with Playwright, and read one report per run with screenshots, video,
+and expected vs actual. Tests that need a person run as manual test cases in the same report,
+and AI agents can do the whole loop through MCP.
 
-- Planning & keputusan: [`docs/`](docs/README.md) — mulai dari [`docs/README.md`](docs/README.md) dan [`docs/10-roadmap.md`](docs/10-roadmap.md).
-- Arahan desain UI: [`docs/design/ui-direction.md`](docs/design/ui-direction.md).
-- Kontrak API (source of truth FE & BE): [`api/openapi.yaml`](api/openapi.yaml).
+![Writing a test case in the step editor, running it, and opening the report](docs/manual/video/create-and-run-test-case.gif)
 
-## Status
+**User manual:** [English](docs/manual/README.md) · [Bahasa Indonesia](docs/manual/README.id.md)
 
-**Phase 1 — Frontend end-to-end (mock).** Semua data berasal dari mock API di browser (MSW + simulator run), disimpan di `localStorage`. Belum ada backend.
+## Features
 
-## Menjalankan (dev)
+- **Test cases as steps, not code.** A step editor with an action palette (`goto`, `click`,
+  `fill`, `expect_text`, `http_request`, …), Playwright-style selectors (`role=`, `label=`,
+  `testid=`), variables and secrets, JSON mode with schema validation, keyboard shortcuts, and a
+  revision history.
+- **UI and API in one test.** HTTP steps and assertions (`expect_status`, `expect_json`, …) run
+  next to browser steps; a browser starts only when a test needs one.
+- **Flows.** Chain test cases into one run, in one shared browser session or isolated, with
+  stop-on-failure.
+- **Asynchronous runs on real browsers.** Chromium, Firefox, or WebKit, any viewport,
+  screenshots (off / on failure / every step), video (off / on failure / always), retries,
+  live progress, cancel, re-run failed.
+- **Reports that explain the failure.** Expected vs actual, the Playwright error, a screenshot
+  of the failing step, video, and HTTP request/response details.
+- **Manual testing when it's needed.** Manual test cases with instructions and expected results;
+  testers mark steps Passed / Failed / Blocked / Skipped with notes and attachments. Flows can mix
+  automated and manual test cases and continue automatically.
+- **Teams.** Admin-managed users (invite links, optional Google sign-in for registered emails),
+  per-project roles (maintainer, editor, viewer), environments with write-only encrypted
+  secrets.
+- **AI and CI.** An MCP server with 19 tools (create → validate → run → wait → report, including
+  failed-step screenshots as images), scoped API tokens, and a JUnit XML export for CI.
+- **English and Bahasa Indonesia** UI, light and dark theme, usable on a phone.
 
-Butuh Node ≥ 22 dan pnpm 10 (via corepack).
+## Screenshots
+
+| | |
+|---|---|
+| ![Step editor with the side panel on a selector step](docs/manual/img/step-editor-panel.png) | ![Failed run: expected vs actual with a screenshot](docs/manual/img/run-failed-report.png) |
+| Step editor | Failed run report |
+| ![Executing a manual test case](docs/manual/img/manual-execution.png) | ![Project dashboard in dark theme](docs/manual/img/dark-dashboard.png) |
+| Manual execution | Dashboard (dark theme) |
+
+More in the [user manual](docs/manual/README.md).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    user[Browser<br/>React SPA] -->|REST + SSE| server
+    ai[AI client<br/>Claude Code] -->|MCP over HTTP<br/>Bearer token| server
+    ci[CI job] -->|REST<br/>Bearer token| server
+
+    subgraph qatlas[qatlas binary: server / worker / all]
+        server[server<br/>API, SPA, /mcp]
+        worker[worker<br/>River jobs]
+    end
+
+    server <--> pg[(PostgreSQL<br/>data, job queue,<br/>LISTEN/NOTIFY)]
+    worker <--> pg
+    worker <-->|NDJSON<br/>stdin/stdout| runner[Node runner<br/>Playwright]
+    runner -->|browser + HTTP| app[App under test]
+    worker --> artifacts[(Artifacts<br/>screenshots, video)]
+    server --> artifacts
+```
+
+| Part | Stack |
+|---|---|
+| Backend | Go 1.27, one binary with `server`, `worker`, `all`, `migrate`, `user create-admin`, `seed demo`, `mcp-stdio`; chi, pgx, goose |
+| Queue and events | [River](https://riverqueue.com) on PostgreSQL; LISTEN/NOTIFY → Server-Sent Events for live progress |
+| Runner | Node 22 + official Playwright 1.64, driven by the worker over NDJSON |
+| Frontend | React 19, Vite, TypeScript, TanStack Router/Query, Tailwind v4, Radix; i18next (en, id) |
+| MCP | Official Go SDK, Streamable HTTP at `/mcp`, stateless |
+| Storage | PostgreSQL 16; artifacts on the local filesystem with daily retention |
+| Contract | [`api/openapi.yaml`](api/openapi.yaml) is the source of truth for frontend and backend |
+
+## Quick start
+
+### a) Try it locally (demo)
+
+Runs the real stack (backend, worker, Playwright runner) plus **Tokoku**, a small fake shop to
+test against, on one machine without Docker images or systemd. Needs Docker (for the dev
+Postgres), Go 1.27, Node 22 with corepack, and Playwright's Chromium.
 
 ```bash
-corepack enable          # atau: corepack pnpm <cmd>
+corepack enable && pnpm install
+corepack pnpm --filter @qatlas/runner exec playwright install --with-deps chromium
+make dev-db                       # Postgres on 127.0.0.1:55432 (container qatlas-dev-postgres)
+scripts/demo-server.sh start      # builds, migrates, seeds, starts → http://<your-ip>:8090
+```
+
+Sign in as `rina@tokoku.id` / `password123` (admin). `dimas@tokoku.id` is an editor and
+`sari@tokoku.id` a viewer of the SHOP project, same password. The seed includes test cases,
+flows, environments, and a few real runs: one passed, one failed on the shop's deliberate
+voucher bug, one waiting for Rina's manual check under **My tasks**.
+
+`scripts/demo-server.sh status | stop | reset` (reset deletes the demo database and data).
+Logs are in `~/.local/state/qatlas-demo/`; generated secrets in `~/.config/qatlas/demo.env`.
+
+### b) Docker Compose
+
+```bash
+cp deploy/.env.example deploy/.env && chmod 600 deploy/.env
+# set POSTGRES_PASSWORD (openssl rand -hex 24), QATLAS_MASTER_KEY (openssl rand -base64 32),
+# QATLAS_BASE_URL — and keep QATLAS_MASTER_KEY in a password manager
+docker compose -f deploy/docker-compose.yml up -d --build
+docker compose -f deploy/docker-compose.yml exec server \
+  qatlas user create-admin --email you@example.com --name "Your Name"
+```
+
+Add `--profile demo` to also start the demo shop, then seed it with `qatlas seed demo`
+(see [deploy/README.md](deploy/README.md#a-docker-compose)).
+
+### c) Binary + systemd
+
+`make release` builds a tarball; `deploy/install.sh` installs it with systemd units, migrations,
+browsers, and rollback. Full guide, including Proxmox LXC preparation, reverse proxy (SSE),
+backups, and upgrades: [deploy/README.md](deploy/README.md).
+
+## Development
+
+Node ≥ 22 and pnpm 10 (via corepack), Go 1.27, Docker for the dev database.
+
+```bash
+corepack enable
 pnpm install
-pnpm dev                 # http://localhost:5173 (juga listen di 0.0.0.0)
+pnpm dev                          # http://localhost:5173, frontend only on an in-browser mock API
 ```
 
-Login demo (mode mock): `rina@tokoku.id` / `password123` (admin). User lain: `dimas@tokoku.id` (editor SHOP), `sari@tokoku.id` (viewer SHOP), password sama. Tombol **Mock** di kiri bawah: ganti user, atur kecepatan simulasi, reset data demo.
+**Mock mode** (default) needs no backend: MSW serves the API from `localStorage`, and a run
+simulator fakes runs. Log in as `rina@tokoku.id` / `password123`. The **Mock** button (bottom
+left) switches user, changes the simulation speed, and resets the demo data.
 
-Akses lewat IP (`http://<ip>:5173`) didukung: karena bukan secure context, mock memakai mode *fetch-patch* alih-alih service worker (otomatis).
+**Real mode** against the Go backend:
 
-## Perintah
-
-| Perintah | Fungsi |
-|----------|--------|
-| `pnpm dev` | Dev server Vite (HMR) |
-| `pnpm build` | Typecheck + build produksi ke `web/dist` |
-| `pnpm lint` | ESLint |
-| `pnpm typecheck` | TypeScript |
-| `pnpm test` | Unit test (Vitest) |
-| `pnpm e2e` | E2E Playwright untuk journey Phase 1 |
-| `pnpm api:types` | Generate `web/src/api/schema.d.ts` dari `api/openapi.yaml` |
-| `scripts/e2e-real.sh` | E2E Playwright yang sama terhadap stack nyata (lihat di bawah) |
-
-## E2E: mode mock dan mode real
-
-`web/e2e` berjalan di dua mode:
-
-- **`E2E_MODE=mock`** (default, `cd web && npx playwright test`): build + preview dengan mock API di browser
-  (riwayat run hasil seed, simulator run).
-- **`E2E_MODE=real`**: `E2E_BASE_URL` wajib — Vite mode real (`VITE_API_MODE=real`) atau `qatlas server`
-  yang menyajikan build mode real, di atas database hasil `qatlas seed demo`. Run dieksekusi sungguhan oleh
-  worker + runner Playwright terhadap demo-target, jadi timeout lebih panjang. Tidak ada dev toolbar
-  (`fastSimulation` no-op), J2 (simulasi Google) di-skip, dan test membuat sendiri data yang dibutuhkan
-  lewat API (run gagal SHOP-T12 untuk J10, run flow SHOP-F3 sampai `awaiting_manual` untuk J12).
-
-`scripts/e2e-real.sh` menjalankan semuanya dan membereskan prosesnya lagi (trap): membuat ulang database
-`qatlas_e2e` (container `qatlas-dev-postgres`, `make dev-db`), `qatlas migrate up`, `qatlas seed demo`,
-build runner, demo-target `:8099` (`DEMO_LANG=en`), `qatlas all` `:8090` (tanpa `QATLAS_WEB_DIR`), Vite
-mode real `:5320`, lalu `E2E_MODE=real playwright test`. Argumen tambahan diteruskan ke Playwright
-(`scripts/e2e-real.sh -g J12`); `KEEP_LOGS=1` menyimpan log; port bisa diganti lewat `API_PORT`,
-`DEMO_PORT`, `WEB_PORT`. Butuh Go, Node 22 + corepack pnpm, dan browser Playwright.
-
-## Struktur
-
+```bash
+make dev-db                                    # Postgres on 127.0.0.1:55432
+cd backend
+cp .env.example .env                           # QATLAS_DATABASE_URL, QATLAS_MASTER_KEY
+set -a; . ./.env; set +a
+go run ./cmd/qatlas migrate up
+go run ./cmd/qatlas seed demo --admin-token adm_stg_8f3a   # or: user create-admin
+corepack pnpm --filter @qatlas/runner build    # the worker starts runner/dist/main.js
+node ../demo-target/server.mjs &               # optional: the demo shop on :8099
+go run ./cmd/qatlas all                        # API + worker on :8090
+# in another shell, from the repository root:
+VITE_API_MODE=real pnpm dev                    # proxies /api to QATLAS_API_URL (default http://127.0.0.1:8090)
 ```
-api/openapi.yaml     kontrak API v0
-docs/                planning, keputusan, desain
-web/                 React + Vite + TS (Phase 1)
-  src/api/           client & hooks TanStack Query (typed dari OpenAPI)
-  src/app/           router, shell, auth/permission hooks
-  src/components/    UI primitives (shadcn-style) & komponen bersama
-  src/features/      halaman per fitur
-  src/lib/           katalog Step DSL, validasi, RBAC, format
-  src/mocks/         MSW handlers, seed, simulator run (Phase 1)
-  e2e/               Playwright journey tests
+
+More in [backend/README.md](backend/README.md).
+
+| Command | Does |
+|---|---|
+| `pnpm dev` | Vite dev server (HMR) |
+| `pnpm build` / `pnpm lint` / `pnpm typecheck` | Production build of `web/`, ESLint, TypeScript |
+| `pnpm test` | Web unit tests (Vitest) |
+| `pnpm e2e` | Playwright journeys against the mock build |
+| `pnpm api:types` | Regenerate `web/src/api/schema.d.ts` from `api/openapi.yaml` |
+| `make test` | `go vet` + `go test`, web unit tests, runner integration tests |
+| `make build` | Real-mode SPA (`dist/web`), runner, and `dist/qatlas` |
+| `scripts/e2e-real.sh` | The same Playwright journeys against the full real stack (own database `qatlas_e2e`, ports 8090/8099/5320; stop the demo server first or set `API_PORT`) |
+
+Backend integration tests need `QATLAS_TEST_DATABASE_URL` and skip without it
+([backend/README.md](backend/README.md#test)).
+
+## MCP quick setup
+
+Create a token under **API tokens & MCP** (scopes `read`, `write`, `run`), then:
+
+```bash
+claude mcp add --transport http qatlas https://qatlas.example.com/mcp \
+  --header "Authorization: Bearer qat_xxxxxxxx_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
 ```
+
+Ask Claude something like *"Create a login test case for project SHOP, run it on staging, and
+summarize the result."* Tools, limits, and the stdio proxy: [docs/07-mcp.md](docs/07-mcp.md) and
+the [manual](docs/manual/README.md#13-api-tokens-and-mcp-for-ai).
+
+## Project status
+
+Phases 1–4 are done: the frontend, the Go backend, the runner and reporting, and MCP with API
+tokens. Phase 5 (hardening and extras such as CI integration, schedules, notifications) is in
+progress. The live checklist is in [docs/10-roadmap.md](docs/10-roadmap.md#checklist-progres).
+Not yet available: S3 artifact storage, scheduled runs, email delivery (invites and password
+resets are links an admin shares), and the `inspect_page` MCP tool.
+
+## Documentation
+
+| Document | For |
+|---|---|
+| [User manual](docs/manual/README.md) ([ID](docs/manual/README.id.md)) | Using QAtlas, with screenshots and videos |
+| [deploy/README.md](deploy/README.md) | Installing and operating (Docker Compose, systemd, LXC, TLS, backups) |
+| [docs/ci/README.md](docs/ci/README.md) | Running QAtlas from CI with JUnit output |
+| [docs/07-mcp.md](docs/07-mcp.md) | MCP tools for AI agents |
+| [docs/04-test-definition.md](docs/04-test-definition.md) | The step format (DSL), selectors, variables, flows |
+| [api/openapi.yaml](api/openapi.yaml) | REST API contract |
+| [backend/README.md](backend/README.md) | Backend layout and conventions |
+| [docs/README.md](docs/README.md) | Design and planning documents (mostly in Bahasa Indonesia) |
+| [docs/design/ui-direction.md](docs/design/ui-direction.md) | UI design direction and tokens |
+
+## License
+
+No license has been chosen yet. Until one is added, the code is not licensed for reuse.

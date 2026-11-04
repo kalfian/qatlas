@@ -704,6 +704,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/runs/{runKey}/junit.xml": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runKey: components["parameters"]["RunKey"];
+            };
+            cookie?: never;
+        };
+        /**
+         * JUnit XML report of a finished run (Phase 5, for CI)
+         * @description Requires `view` on the project; with an API token the `read` scope is enough.
+         *     One `<testsuite>` per run (inside `<testsuites>`; name = target key + title, `id` =
+         *     run key, `timestamp` = start time in UTC without a zone suffix, `time` in seconds,
+         *     `<properties>` `qatlas.*` with run status, environment, trigger, browser) and one
+         *     `<testcase>` per run case (`classname` = project key, `name` = test case key + title;
+         *     a case that appears twice in a flow gets ` [#position]`). Case status mapping:
+         *     `failed` → `<failure type="failed">`, `blocked` → `<failure type="blocked">`,
+         *     `error` → `<error>`, `skipped` (and cases never reached) → `<skipped/>`. The failure
+         *     message is the first failed step (summary — error); the body lists every failed step
+         *     with error and expected/actual. `<system-out>` lists all steps; manual cases include
+         *     the tester and actual results. Secret values are masked (`••••`) as in the stored run.
+         *     Sent as a download (`Content-Disposition: attachment; filename="<runKey>.junit.xml"`).
+         *     Runs that are not final (queued, running, awaiting_manual) → `409 conflict`.
+         */
+        get: operations["getRunJUnit"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/runs/{runKey}/cancel": {
         parameters: {
             query?: never;
@@ -2872,6 +2906,33 @@ export interface operations {
                     "text/event-stream": components["schemas"]["RunEvent"];
                 };
             };
+        };
+    };
+    getRunJUnit: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                runKey: components["parameters"]["RunKey"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description JUnit XML document */
+            200: {
+                headers: {
+                    "Content-Disposition"?: string;
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/xml": string;
+                };
+            };
+            401: components["responses"]["Error"];
+            403: components["responses"]["Error"];
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
         };
     };
     cancelRun: {

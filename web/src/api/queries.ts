@@ -541,6 +541,13 @@ export function useRunProgress(runKey: string) {
   })
 }
 
+/** JUnit XML of a final run (GET /runs/{runKey}/junit.xml); not final yet → ApiError 409. */
+export function useRunJUnit() {
+  return useMutation({
+    mutationFn: (runKey: string) => unwrap(api.GET('/runs/{runKey}/junit.xml', { params: { path: { runKey } }, parseAs: 'text' })),
+  })
+}
+
 export function useCreateRun(key: string) {
   const qc = useQueryClient()
   return useMutation({

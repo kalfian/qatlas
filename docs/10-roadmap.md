@@ -33,8 +33,8 @@ Urutan sengaja **frontend dulu**: Phase 1 membangun seluruh user journey di FE d
 **Phase 5 — Hardening & extras**
 - [x] Deployment: Dockerfile server/worker, docker-compose, systemd + install/rollback script, Makefile & release tarball (belum diuji di LXC Proxmox asli)
 - [x] Demo seed backend (`qatlas seed demo`) terhadap demo target + `scripts/e2e-real.sh`
-- [ ] JUnit export & contoh CI trigger
-- [ ] README + manual pengguna dengan screenshot & video
+- [x] JUnit export & contoh CI trigger: `GET /runs/{runKey}/junit.xml` (+ menu "Download JUnit XML" di halaman run, juga di mock), `scripts/qatlas-ci.sh` (start → poll → JUnit, exit 0/1/2) dan contoh GitHub Actions di [`docs/ci/`](ci/README.md); Bitbucket Pipelines belum ada contoh
+- [x] README + manual pengguna (EN + ID) dengan 39 screenshot, 3 video MP4 & GIF preview (`docs/manual/`)
 
 ```mermaid
 flowchart LR

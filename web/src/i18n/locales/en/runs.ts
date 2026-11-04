@@ -132,6 +132,7 @@ export default {
     copyLink: 'Copy link',
     exported: '{{file}} downloaded',
     exportJson: 'Export JSON',
+    downloadJunit: 'Download JUnit XML',
     cancelTitle: 'Cancel run {{key}}?',
     cancelBodyManual: 'The manual case in progress and the cases after it will be marked Skipped. Existing results are kept.',
     cancelBody: 'The running step is stopped and the remaining steps are marked Skipped. Existing results are kept.',
