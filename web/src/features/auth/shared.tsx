@@ -1,5 +1,6 @@
 import { CircleAlert, CircleCheck, Eye, EyeOff, FlaskConical, Info, TriangleAlert } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ApiError } from '@/api/client'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -112,6 +113,7 @@ export function Banner({
 /** Input password dengan tombol tampilkan/sembunyikan. */
 export const PasswordInput = React.forwardRef<HTMLInputElement, Omit<React.InputHTMLAttributes<HTMLInputElement>, 'type'>>(
   ({ className, ...props }, ref) => {
+    const { t } = useTranslation('auth')
     const [shown, setShown] = React.useState(false)
     return (
       <div className="relative">
@@ -120,7 +122,7 @@ export const PasswordInput = React.forwardRef<HTMLInputElement, Omit<React.Input
           type="button"
           onClick={() => setShown((s) => !s)}
           aria-pressed={shown}
-          aria-label={shown ? 'Sembunyikan password' : 'Tampilkan password'}
+          aria-label={shown ? t('field.hidePassword') : t('field.showPassword')}
           className="absolute inset-y-0 right-0 flex w-9 items-center justify-center rounded-r-md text-muted-foreground transition-colors duration-150 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {shown ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
@@ -135,18 +137,19 @@ export const MIN_PASSWORD = 10
 
 /** Hint live panjang password (dipakai invite & profil). */
 export function PasswordLengthHint({ value }: { value: string }) {
+  const { t } = useTranslation('auth')
   const ok = value.length >= MIN_PASSWORD
   if (ok)
     return (
       <span className="inline-flex items-center gap-1 text-status-passed">
         <CircleCheck className="size-3" aria-hidden />
-        Panjang cukup
+        {t('field.passwordLongEnough')}
       </span>
     )
   return (
     <span>
-      Minimal {MIN_PASSWORD} karakter
-      {value.length > 0 && <span className="tabular"> · {MIN_PASSWORD - value.length} lagi</span>}
+      {t('field.passwordMin', { count: MIN_PASSWORD })}
+      {value.length > 0 && <span className="tabular"> · {t('field.passwordRemaining', { count: MIN_PASSWORD - value.length })}</span>}
     </span>
   )
 }
@@ -187,10 +190,11 @@ export function AuthShell({ children, footer }: { children: React.ReactNode; foo
 
 /** Divider "atau". */
 export function OrDivider() {
+  const { t } = useTranslation('auth')
   return (
-    <div className="flex items-center gap-3 text-xs text-muted-foreground" role="separator" aria-label="atau">
+    <div className="flex items-center gap-3 text-xs text-muted-foreground" role="separator" aria-label={t('field.or')}>
       <span className="h-px flex-1 bg-border" />
-      atau
+      {t('field.or')}
       <span className="h-px flex-1 bg-border" />
     </div>
   )

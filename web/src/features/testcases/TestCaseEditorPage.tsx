@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Link, useParams, useSearch } from '@tanstack/react-router'
 import { ArrowLeft, FileQuestion, Lock } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { api, ApiError, unwrap } from '@/api/client'
 import { qk, useRuns, useTestCase } from '@/api/queries'
 import type { StepStatus } from '@/api/types'
@@ -27,14 +28,15 @@ export function TestCaseEditorPage() {
 function CreateTestCase({ projectKey }: { projectKey: string }) {
   const search = useSearch({ from: FROM })
   const canEdit = useCan('edit_tests', projectKey)
+  const { t } = useTranslation('testcases')
   const [initial] = React.useState(() => emptyDraft(search.execution ?? 'automated', search.folder && search.folder !== 'root' ? search.folder : null))
   if (!canEdit) {
     return (
       <PageContainer>
         <EmptyState
           icon={Lock}
-          title="Kamu tidak punya akses untuk membuat test case"
-          description="Role viewer hanya bisa melihat. Minta maintainer project mengubah role-mu jadi editor."
+          title={t('editorPage.noAccessTitle')}
+          description={t('editorPage.noAccessDescription')}
           action={<BackToList projectKey={projectKey} />}
         />
       </PageContainer>
@@ -45,6 +47,7 @@ function CreateTestCase({ projectKey }: { projectKey: string }) {
 
 function EditTestCase({ projectKey, caseKey }: { projectKey: string; caseKey: string }) {
   const query = useTestCase(caseKey)
+  const { t } = useTranslation('testcases')
   const runStatus = useLastRunStepStatus(projectKey, caseKey)
   const late = useDelayed(query.isPending)
   const [initial, setInitial] = React.useState(() => (query.data ? draftFromCase(query.data) : null))
@@ -57,8 +60,8 @@ function EditTestCase({ projectKey, caseKey }: { projectKey: string; caseKey: st
         {notFound ? (
           <EmptyState
             icon={FileQuestion}
-            title={`Test case ${caseKey} tidak ditemukan`}
-            description="Mungkin sudah dihapus, atau key-nya salah ketik."
+            title={t('editorPage.notFoundTitle', { key: caseKey })}
+            description={t('editorPage.notFoundDescription')}
             action={<BackToList projectKey={projectKey} />}
           />
         ) : (
@@ -98,10 +101,11 @@ function useLastRunStepStatus(projectKey: string, caseKey: string): Map<string, 
 }
 
 function BackToList({ projectKey }: { projectKey: string }) {
+  const { t } = useTranslation('testcases')
   return (
     <Button asChild variant="outline">
       <Link to="/p/$key/tests" params={{ key: projectKey }}>
-        <ArrowLeft /> Kembali ke test cases
+        <ArrowLeft /> {t('editorPage.backToList')}
       </Link>
     </Button>
   )

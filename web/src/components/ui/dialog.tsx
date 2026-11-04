@@ -1,6 +1,7 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { X } from 'lucide-react'
 import * as React from 'react'
+import { i18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 
 export const Dialog = DialogPrimitive.Root
@@ -38,7 +39,7 @@ export const DialogContent = React.forwardRef<
       {!hideClose && (
         <DialogPrimitive.Close className="absolute top-3.5 right-3.5 rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
           <X className="size-4" />
-          <span className="sr-only">Tutup</span>
+          <span className="sr-only">{i18n.t('common:a11y.close')}</span>
         </DialogPrimitive.Close>
       )}
     </DialogPrimitive.Content>
@@ -87,7 +88,7 @@ export const SheetContent = React.forwardRef<
       {children}
       <DialogPrimitive.Close className="absolute top-3 right-3 rounded-sm p-1 text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
         <X className="size-4" />
-        <span className="sr-only">Tutup</span>
+        <span className="sr-only">{i18n.t('common:a11y.close')}</span>
       </DialogPrimitive.Close>
     </DialogPrimitive.Content>
   </DialogPortal>

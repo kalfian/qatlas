@@ -1,5 +1,6 @@
 import { Plus, X } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn, uid } from '@/lib/utils'
@@ -28,11 +29,11 @@ export function KeyValueEditor({
   value,
   onChange,
   idPrefix,
-  keyLabel = 'Key',
-  valueLabel = 'Value',
+  keyLabel,
+  valueLabel,
   keyPlaceholder,
   valuePlaceholder,
-  addLabel = 'Tambah baris',
+  addLabel,
   keyPattern,
   keyPatternMessage,
   autoFocusNew = true,
@@ -49,6 +50,10 @@ export function KeyValueEditor({
   keyPatternMessage?: string
   autoFocusNew?: boolean
 }) {
+  const { t } = useTranslation('testcases')
+  keyLabel ??= t('kv.key')
+  valueLabel ??= t('kv.value')
+  addLabel ??= t('kv.addRow')
   const incoming = stableStringify(value ?? {})
   const [rows, setRows] = React.useState<Row[]>(() => toRows(value))
   const [source, setSource] = React.useState(incoming)
@@ -82,14 +87,14 @@ export function KeyValueEditor({
         const k = r.key.trim()
         const dup = !!k && (counts.get(k) ?? 0) > 1
         const bad = !!k && keyPattern && !keyPattern.test(k)
-        const err = dup ? `Key "${k}" dipakai lebih dari sekali; hanya nilai terakhir yang dipakai.` : bad ? keyPatternMessage : undefined
+        const err = dup ? t('kv.duplicate', { key: k }) : bad ? keyPatternMessage : undefined
         const errId = `${idPrefix}-${r.id}-err`
         return (
           <div key={r.id} className="flex flex-col gap-1">
             <div className="grid grid-cols-[minmax(0,2fr)_minmax(0,3fr)_2rem] items-start gap-x-1.5">
               <Input
                 autoFocus={autoFocusNew && focusId === r.id}
-                aria-label={`${keyLabel} baris ${i + 1}`}
+                aria-label={t('kv.rowLabel', { label: keyLabel, n: String(i + 1) })}
                 aria-invalid={!!err || undefined}
                 aria-describedby={err ? errId : undefined}
                 value={r.key}
@@ -99,7 +104,7 @@ export function KeyValueEditor({
                 onChange={(e) => commit(rows.map((x) => (x.id === r.id ? { ...x, key: e.target.value } : x)))}
               />
               <VarField
-                aria-label={`${valueLabel} baris ${i + 1}`}
+                aria-label={t('kv.rowLabel', { label: valueLabel, n: String(i + 1) })}
                 value={r.value}
                 mono
                 placeholder={valuePlaceholder}
@@ -109,7 +114,7 @@ export function KeyValueEditor({
                 type="button"
                 variant="ghost"
                 size="icon"
-                aria-label={`Hapus baris ${i + 1}${k ? ` (${k})` : ''}`}
+                aria-label={k ? t('kv.removeRowKey', { n: String(i + 1), key: k }) : t('kv.removeRow', { n: String(i + 1) })}
                 onClick={() => commit(rows.filter((x) => x.id !== r.id))}
               >
                 <X />

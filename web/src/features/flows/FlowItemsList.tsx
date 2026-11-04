@@ -13,10 +13,12 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalList
 import { CSS } from '@dnd-kit/utilities'
 import { CircleAlert, GripVertical, TriangleAlert, X } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ManualBadge, TC_STATUS_LABELS } from '@/components/misc'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Tip } from '@/components/ui/tooltip'
+import { i18n } from '@/i18n'
 import { cn } from '@/lib/utils'
 import type { DraftItem } from './flow-draft'
 
@@ -35,27 +37,30 @@ export interface ItemsListProps {
 
 function label(items: DraftItem[], id: UniqueIdentifier) {
   const it = items.find((i) => i.uid === id)
-  return it ? `${it.test_case.key} ${it.test_case.title}` : 'Item'
+  return it ? `${it.test_case.key} ${it.test_case.title}` : i18n.t('flows:items.fallbackLabel')
 }
 
 export function FlowItemsList(props: ItemsListProps) {
   const { items, readOnly, onMove, announce } = props
+  const { t } = useTranslation('flows')
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   )
 
   const pos = (id: UniqueIdentifier) => items.findIndex((i) => i.uid === id) + 1
-  const total = items.length
+  const total = String(items.length)
   const announcements: Announcements = {
-    onDragStart: ({ active }) => `Mengambil ${label(items, active.id)}, posisi ${pos(active.id)} dari ${total}.`,
+    onDragStart: ({ active }) => t('items.dnd.start', { label: label(items, active.id), n: String(pos(active.id)), total }),
     onDragOver: ({ active, over }) =>
-      over ? `${label(items, active.id)} berada di posisi ${pos(over.id)} dari ${total}.` : `${label(items, active.id)} di luar daftar.`,
+      over
+        ? t('items.dnd.over', { label: label(items, active.id), n: String(pos(over.id)), total })
+        : t('items.dnd.outside', { label: label(items, active.id) }),
     onDragEnd: ({ active, over }) =>
       over
-        ? `${label(items, active.id)} diletakkan di posisi ${pos(over.id)} dari ${total}.`
-        : `${label(items, active.id)} diletakkan kembali di posisi ${pos(active.id)}.`,
-    onDragCancel: ({ active }) => `Batal memindah. ${label(items, active.id)} kembali ke posisi ${pos(active.id)}.`,
+        ? t('items.dnd.end', { label: label(items, active.id), n: String(pos(over.id)), total })
+        : t('items.dnd.endInPlace', { label: label(items, active.id), n: String(pos(active.id)) }),
+    onDragCancel: ({ active }) => t('items.dnd.cancel', { label: label(items, active.id), n: String(pos(active.id)) }),
   }
 
   const onDragEnd = ({ active, over }: DragEndEvent) => {
@@ -68,12 +73,12 @@ export function FlowItemsList(props: ItemsListProps) {
     if (to < 0 || to >= items.length) return
     const it = items[index]
     onMove(index, to)
-    announce(`${it.test_case.key} dipindah ke posisi ${to + 1} dari ${items.length}.`)
+    announce(t('items.moved', { key: it.test_case.key, n: String(to + 1), total: String(items.length) }))
     requestAnimationFrame(() => document.querySelector<HTMLElement>(`[data-grip="${it.uid}"]`)?.focus())
   }
 
   const list = (
-    <ol className="@container divide-y divide-border" aria-label="Urutan test case">
+    <ol className="@container divide-y divide-border" aria-label={t('items.label')}>
       {items.map((it, i) => (
         <ItemRow key={it.uid} index={i} item={it} {...props} onMoveBy={(d) => moveBy(i, d)} />
       ))}
@@ -89,8 +94,7 @@ export function FlowItemsList(props: ItemsListProps) {
       accessibility={{
         announcements,
         screenReaderInstructions: {
-          draggable:
-            'Tekan spasi atau Enter untuk mengambil item. Pakai panah atas/bawah untuk memindah, lalu spasi atau Enter untuk meletakkan, atau Escape untuk batal. Alt + panah atas/bawah memindah satu posisi langsung.',
+          draggable: t('items.dnd.instructions'),
         },
       }}
     >
@@ -116,7 +120,9 @@ function ItemRow({
   const error = errors[item.uid]
   const warning = warnings[item.uid]
   const pos = index + 1
-  const sortable = useSortable({ id: item.uid, disabled: readOnly, attributes: { roleDescription: 'item yang bisa dipindah' } })
+  const { t } = useTranslation('flows')
+  const p = String(pos)
+  const sortable = useSortable({ id: item.uid, disabled: readOnly, attributes: { roleDescription: t('items.roleDescription') } })
   const style: React.CSSProperties = readOnly
     ? {}
     : { transform: CSS.Transform.toString(sortable.transform && { ...sortable.transform, x: 0 }), transition: sortable.transition }
@@ -154,7 +160,7 @@ function ItemRow({
               className="-ml-1 flex size-7 shrink-0 cursor-grab touch-none items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring active:cursor-grabbing"
               {...sortable.attributes}
               {...sortable.listeners}
-              aria-label={`Pindahkan posisi ${pos}: ${tc.key} ${tc.title}`}
+              aria-label={t('items.gripLabel', { n: p, key: tc.key, title: tc.title })}
               aria-describedby={[sortable.attributes['aria-describedby'], error && errorId].filter(Boolean).join(' ')}
             >
               <GripVertical className="size-4" aria-hidden />
@@ -164,9 +170,9 @@ function ItemRow({
           <span className="min-w-0 truncate" title={tc.title}>
             {tc.title}
           </span>
-          <span className="sr-only">, posisi {pos}</span>
+          <span className="sr-only">, {t('items.position', { n: p })}</span>
           <ManualBadge execution={tc.execution} className="shrink-0" />
-          {!item.enabled && <span className="shrink-0 text-xs text-muted-foreground">Nonaktif</span>}
+          {!item.enabled && <span className="shrink-0 text-xs text-muted-foreground">{t('items.disabled')}</span>}
         </div>
 
         <div className={cn('flex min-w-0 basis-full flex-wrap items-center gap-x-3 gap-y-1.5 @3xl:shrink-0 @3xl:basis-auto @3xl:pl-0', readOnly ? 'pl-7' : 'pl-15')}>
@@ -187,20 +193,20 @@ function ItemRow({
           ) : (
             <span className="text-xs text-muted-foreground">{TC_STATUS_LABELS[tc.status]}</span>
           )}
-          <span className="w-12 text-right text-xs text-muted-foreground tabular">{tc.step_count} step</span>
+          <span className="w-14 text-right text-xs whitespace-nowrap text-muted-foreground tabular">{t('items.stepCount', { count: tc.step_count })}</span>
 
           {showCof &&
             (readOnly ? (
-              <span className="text-xs text-muted-foreground">Continue on failure</span>
+              <span className="text-xs text-muted-foreground">{t('items.continueOnFailure')}</span>
             ) : (
               <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
                 <Switch
                   checked={item.continue_on_failure}
                   onCheckedChange={(v) => onChange(item.uid, { continue_on_failure: v })}
-                  aria-label={`Continue on failure untuk posisi ${pos}, ${tc.key}`}
+                  aria-label={t('items.cofLabel', { n: p, key: tc.key })}
                 />
                 <span aria-hidden className="whitespace-nowrap">
-                  Continue on failure
+                  {t('items.continueOnFailure')}
                 </span>
               </label>
             ))}
@@ -211,17 +217,17 @@ function ItemRow({
                 <Switch
                   checked={item.enabled}
                   onCheckedChange={(v) => onChange(item.uid, { enabled: v })}
-                  aria-label={`Aktifkan posisi ${pos}, ${tc.key}`}
+                  aria-label={t('items.enableLabel', { n: p, key: tc.key })}
                 />
-                <span aria-hidden>Aktif</span>
+                <span aria-hidden>{t('items.enabled')}</span>
               </label>
-              <Tip label="Hapus dari flow">
+              <Tip label={t('items.remove')}>
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon-sm"
                   onClick={() => onRemove(item.uid)}
-                  aria-label={`Hapus posisi ${pos}, ${tc.key} dari flow`}
+                  aria-label={t('items.removeLabel', { n: p, key: tc.key })}
                   className="text-muted-foreground hover:text-foreground"
                 >
                   <X />

@@ -1,5 +1,7 @@
 packages:
   - web
+  - runner
+  - demo-target
 
 onlyBuiltDependencies:
   - esbuild

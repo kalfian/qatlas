@@ -1,5 +1,6 @@
 import { Plus, TriangleAlert } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { StepAction } from '@/api/types'
 import { Button } from '@/components/ui/button'
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command'
@@ -23,10 +24,10 @@ function rankAction(value: string, search: string, keywords: string[] = []): num
   const words = `${value} ${keywords.join(' ')}`.toLowerCase().split(/[\s_.,()]+/)
   const hay = `${value} ${keywords.join(' ')}`.toLowerCase()
   let score = 1
-  for (const t of terms) {
-    if (action.startsWith(t) || label.startsWith(t) || aliases.some((a) => a.startsWith(t))) score *= 1
-    else if (words.some((w) => w.startsWith(t))) score *= 0.6
-    else if (hay.includes(t)) score *= 0.2
+  for (const term of terms) {
+    if (action.startsWith(term) || label.startsWith(term) || aliases.some((a) => a.startsWith(term))) score *= 1
+    else if (words.some((w) => w.startsWith(term))) score *= 0.6
+    else if (hay.includes(term)) score *= 0.2
     else return 0
   }
   return score
@@ -46,6 +47,7 @@ export function ActionPalette({
 }) {
   const triggerRef = React.useRef<HTMLButtonElement>(null)
   const [query, setQuery] = React.useState('')
+  const { t } = useTranslation('testcases')
   React.useEffect(() => {
     if (open) triggerRef.current?.scrollIntoView({ block: 'nearest' })
   }, [open])
@@ -69,18 +71,18 @@ export function ActionPalette({
     >
       <PopoverTrigger asChild>
         <Button ref={triggerRef} variant="ghost" className="justify-start text-muted-foreground" aria-keyshortcuts="N">
-          <Plus /> Tambah step
+          <Plus /> {t('palette.addStep')}
           <Kbd className="ml-1">N</Kbd>
         </Button>
       </PopoverTrigger>
       <PopoverContent className="w-[min(26rem,calc(100vw-2rem))] p-0" align="start" side="top" collisionPadding={16}>
         <Command shouldFilter={false}>
-          <CommandInput placeholder="Cari action… (klik, isi, tunggu, api)" aria-label="Cari action" value={query} onValueChange={setQuery} />
-          {afterLabel && <p className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">Disisipkan {afterLabel}</p>}
+          <CommandInput placeholder={t('palette.searchPlaceholder')} aria-label={t('palette.searchLabel')} value={query} onValueChange={setQuery} />
+          {afterLabel && <p className="border-b border-border px-3 py-1.5 text-xs text-muted-foreground">{t('palette.insertedAt', { position: afterLabel })}</p>}
           <CommandList className="max-h-[min(24rem,50dvh)]">
-            <CommandEmpty>Action tidak ditemukan.</CommandEmpty>
+            <CommandEmpty>{t('palette.notFound')}</CommandEmpty>
             {query.trim() ? (
-              <CommandGroup heading="Hasil">
+              <CommandGroup heading={t('palette.results')}>
                 {ranked.map((a) => (
                   <ActionItem key={a.action} def={a} onPick={onPick} />
                 ))}
@@ -103,6 +105,7 @@ export function ActionPalette({
 
 function ActionItem({ def: a, onPick }: { def: ActionDef; onPick: (action: StepAction) => void }) {
   const Icon = actionIcon(a.action)
+  const { t } = useTranslation('testcases')
   return (
     <CommandItem value={a.action} onSelect={() => onPick(a.action)} className="items-start py-1.5">
       <Icon className="mt-0.5" aria-hidden />
@@ -112,7 +115,7 @@ function ActionItem({ def: a, onPick }: { def: ActionDef; onPick: (action: StepA
           <span className="font-mono text-xs text-muted-foreground">{a.action}</span>
           {a.action === 'wait' && (
             <span className="inline-flex items-center gap-1 rounded-sm bg-status-blocked-bg px-1 text-xs text-status-blocked">
-              <TriangleAlert className="!size-3 !text-status-blocked" aria-hidden /> lebih baik wait_for
+              <TriangleAlert className="!size-3 !text-status-blocked" aria-hidden /> {t('palette.preferWaitFor')}
             </span>
           )}
         </span>

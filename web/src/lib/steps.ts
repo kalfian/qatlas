@@ -1,9 +1,15 @@
 import type { Execution, FieldError, Step, StepAction } from '@/api/types'
+import type { Language } from '@/i18n'
+import { lazyLabels, tr, translatorFor, type Translate } from '@/lib/i18n-labels'
 
 /**
  * Katalog action Step DSL (docs/04-test-definition.md).
  * Dipakai oleh step editor (form dinamis), validasi, ringkasan human-readable, dan mock runner.
  * Phase 2: katalog ini menjadi sumber `step-dsl.schema.json`.
+ *
+ * i18n: semua copy ada di namespace `steps`. Bentuk API tetap (label/description/help/placeholder = string)
+ * karena dibaca lewat getter yang memanggil i18n.t → selalu bahasa aktif. `summarizeStep` dan
+ * `validateSteps` menerima `{ lng }` opsional untuk memaksa bahasa (mock API = English).
  */
 
 export type ParamType = 'text' | 'selector' | 'url' | 'number' | 'select' | 'textarea' | 'keyvalue' | 'boolean' | 'int-list'
@@ -31,132 +37,160 @@ export interface ActionDef {
   summary: (s: Step) => string
 }
 
-export const GROUP_LABELS: Record<ActionGroup, string> = {
-  navigation: 'Navigasi',
-  interaction: 'Interaksi',
-  wait: 'Tunggu',
-  data: 'Data & variable',
-  assert_ui: 'Assertion UI',
-  http: 'HTTP',
-  assert_http: 'Assertion HTTP',
-  common: 'Umum',
-  manual: 'Manual',
+const GROUPS: readonly ActionGroup[] = ['navigation', 'interaction', 'wait', 'data', 'assert_ui', 'http', 'assert_http', 'common', 'manual']
+
+/** Label grup (diterjemahkan saat dibaca — mengikuti bahasa aktif). */
+export const GROUP_LABELS: Record<ActionGroup, string> = lazyLabels(GROUPS, (g) => `steps:groups.${g}`)
+
+/* ------------------------------------------------------------------ param factory
+ * Label/placeholder/help adalah getter yang memanggil i18n.t, jadi `param.label` tetap string
+ * tetapi selalu dalam bahasa aktif. Kunci label disimpan terpisah agar validasi bisa
+ * menerjemahkan ke bahasa tertentu (mock API = English).
+ */
+
+const PARAM_LABEL_KEY = new WeakMap<ParamDef, string>()
+
+interface ParamExtra {
+  required?: boolean
+  /** Placeholder literal (contoh kode, sama di semua bahasa). */
+  placeholder?: string
+  /** Placeholder yang diterjemahkan: kunci di `steps:placeholders.*`. */
+  placeholderKey?: string
+  /** Kunci di `steps:help.*`. */
+  helpKey?: string
+  options?: { value: string; label: string }[]
 }
 
-const MATCH_OPTIONS = [
-  { value: 'equals', label: 'sama dengan' },
-  { value: 'contains', label: 'mengandung' },
-  { value: 'regex', label: 'cocok regex' },
-]
-
-const sel: ParamDef = {
-  name: 'selector',
-  label: 'Selector',
-  type: 'selector',
-  required: true,
-  placeholder: "role=button[name='Masuk']",
-  help: 'Utamakan role=, label=, testid= daripada CSS.',
+function param(name: ParamDef['name'], labelKey: string, type: ParamType, extra: ParamExtra = {}): ParamDef {
+  const def = {
+    name,
+    type,
+    get label() {
+      return tr(`steps:params.${labelKey}`)
+    },
+  } as ParamDef
+  if (extra.required) def.required = true
+  if (extra.placeholder !== undefined) def.placeholder = extra.placeholder
+  if (extra.placeholderKey) Object.defineProperty(def, 'placeholder', { enumerable: true, get: () => tr(`steps:placeholders.${extra.placeholderKey}`) })
+  if (extra.helpKey) Object.defineProperty(def, 'help', { enumerable: true, get: () => tr(`steps:help.${extra.helpKey}`) })
+  if (extra.options) def.options = extra.options
+  PARAM_LABEL_KEY.set(def, labelKey)
+  return def
 }
-const val = (label = 'Nilai', required = true): ParamDef => ({ name: 'value', label, type: 'text', required })
-const match: ParamDef = { name: 'match', label: 'Cara cocok', type: 'select', options: MATCH_OPTIONS }
+
+/** Opsi select dengan label terjemahan. */
+const translatedOption = (value: string, key: string) => ({
+  value,
+  get label() {
+    return tr(key)
+  },
+})
+const literalOptions = (values: string[]) => values.map((v) => ({ value: v, label: v }))
+
+const MATCH_OPTIONS = (['equals', 'contains', 'regex'] as const).map((m) => translatedOption(m, `steps:match.${m}`))
+
+const sel = (required = true) => param('selector', 'selector', 'selector', { required, placeholderKey: 'selector', helpKey: 'selector' })
+const val = (labelKey = 'value', required = true) => param('value', labelKey, 'text', { required })
+const match = () => param('match', 'operator', 'select', { options: MATCH_OPTIONS })
 
 const q = (s: unknown) => `"${String(s ?? '')}"`
 const matchWord = (m?: string) => (m === 'equals' ? '=' : m === 'regex' ? '~' : '⊃')
+const countOp = (op?: string) => (op === 'gte' ? '≥' : op === 'lte' ? '≤' : '=')
+
+/* ------------------------------------------------------------------ action factory */
+
+type SummaryImpl = (s: Step, t: Translate) => string
+const SUMMARY_IMPL = new Map<StepAction, SummaryImpl>()
+
+function action(a: StepAction, group: ActionGroup, kind: ActionKind, params: ParamDef[], summary: SummaryImpl): ActionDef {
+  SUMMARY_IMPL.set(a, summary)
+  return {
+    action: a,
+    group,
+    kind,
+    params,
+    get label() {
+      return tr(`steps:actions.${a}.label`)
+    },
+    get description() {
+      return tr(`steps:actions.${a}.description`)
+    },
+    summary: (s) => summary(s, tr),
+  }
+}
+
+/** Ringkasan standar `steps:actions.<a>.summary` dengan nilai interpolasi. */
+const sum =
+  (a: StepAction, values: (s: Step) => Record<string, unknown>): SummaryImpl =>
+  (s, t) =>
+    t(`steps:actions.${a}.summary`, values(s))
+const onSel = (s: Step) => ({ selector: s.selector ?? '' })
 
 export const ACTIONS: ActionDef[] = [
   // Navigasi
-  { action: 'goto', label: 'Buka URL', group: 'navigation', kind: 'ui', description: 'Membuka halaman.',
-    params: [{ name: 'url', label: 'URL', type: 'url', required: true, placeholder: '{{env.BASE_URL}}/login' }],
-    summary: (s) => `Buka ${s.url ?? ''}` },
+  action('goto', 'navigation', 'ui', [param('url', 'url', 'url', { required: true, placeholder: '{{env.BASE_URL}}/login' })], sum('goto', (s) => ({ url: s.url ?? '' }))),
   // Interaksi
-  { action: 'click', label: 'Klik', group: 'interaction', kind: 'ui', description: 'Klik elemen.', params: [sel],
-    summary: (s) => `Klik ${s.selector ?? ''}` },
-  { action: 'dblclick', label: 'Klik ganda', group: 'interaction', kind: 'ui', description: 'Double click elemen.', params: [sel],
-    summary: (s) => `Klik ganda ${s.selector ?? ''}` },
-  { action: 'hover', label: 'Hover', group: 'interaction', kind: 'ui', description: 'Arahkan kursor ke elemen.', params: [sel],
-    summary: (s) => `Hover ${s.selector ?? ''}` },
-  { action: 'fill', label: 'Isi input', group: 'interaction', kind: 'ui', description: 'Kosongkan lalu isi input.',
-    params: [sel, val('Nilai')], summary: (s) => `Isi ${s.selector ?? ''} dengan ${q(s.value)}` },
-  { action: 'type', label: 'Ketik', group: 'interaction', kind: 'ui', description: 'Ketik per karakter.',
-    params: [sel, val('Teks'), { name: 'delay_ms', label: 'Jeda antar karakter (ms)', type: 'number' }],
-    summary: (s) => `Ketik ${q(s.value)} di ${s.selector ?? ''}` },
-  { action: 'press', label: 'Tekan tombol', group: 'interaction', kind: 'ui', description: 'Tekan tombol keyboard.',
-    params: [{ name: 'key', label: 'Tombol', type: 'text', required: true, placeholder: 'Enter' }, { ...sel, required: false }],
-    summary: (s) => `Tekan ${s.key ?? ''}${s.selector ? ` di ${s.selector}` : ''}` },
-  { action: 'select_option', label: 'Pilih opsi', group: 'interaction', kind: 'ui', description: 'Pilih opsi pada <select>.',
-    params: [sel, val('Value', false), { name: 'label', label: 'Label opsi', type: 'text' }],
-    summary: (s) => `Pilih ${q(s.label ?? s.value)} di ${s.selector ?? ''}` },
-  { action: 'check', label: 'Centang', group: 'interaction', kind: 'ui', description: 'Centang checkbox/radio.', params: [sel],
-    summary: (s) => `Centang ${s.selector ?? ''}` },
-  { action: 'uncheck', label: 'Hapus centang', group: 'interaction', kind: 'ui', description: 'Hapus centang checkbox.', params: [sel],
-    summary: (s) => `Hapus centang ${s.selector ?? ''}` },
+  action('click', 'interaction', 'ui', [sel()], sum('click', onSel)),
+  action('dblclick', 'interaction', 'ui', [sel()], sum('dblclick', onSel)),
+  action('hover', 'interaction', 'ui', [sel()], sum('hover', onSel)),
+  action('fill', 'interaction', 'ui', [sel(), val('value')], sum('fill', (s) => ({ selector: s.selector ?? '', value: q(s.value) }))),
+  action('type', 'interaction', 'ui', [sel(), val('text'), param('delay_ms', 'delayMs', 'number')],
+    sum('type', (s) => ({ selector: s.selector ?? '', value: q(s.value) }))),
+  action('press', 'interaction', 'ui', [param('key', 'key', 'text', { required: true, placeholderKey: 'key' }), sel(false)],
+    (s, t) => (s.selector ? t('steps:actions.press.summaryOn', { key: s.key ?? '', selector: s.selector }) : t('steps:actions.press.summary', { key: s.key ?? '' }))),
+  action('select_option', 'interaction', 'ui', [sel(), val('value', false), param('label', 'optionLabel', 'text')],
+    sum('select_option', (s) => ({ selector: s.selector ?? '', value: q(s.label ?? s.value) }))),
+  action('check', 'interaction', 'ui', [sel()], sum('check', onSel)),
+  action('uncheck', 'interaction', 'ui', [sel()], sum('uncheck', onSel)),
   // Tunggu
-  { action: 'wait_for', label: 'Tunggu elemen', group: 'wait', kind: 'ui', description: 'Tunggu elemen mencapai state tertentu.',
-    params: [sel, { name: 'state', label: 'State', type: 'select', options: [
-      { value: 'visible', label: 'visible' }, { value: 'hidden', label: 'hidden' }, { value: 'attached', label: 'attached' }] }],
-    summary: (s) => `Tunggu ${s.selector ?? ''} ${s.state ?? 'visible'}` },
-  { action: 'wait', label: 'Jeda (ms)', group: 'wait', kind: 'common', description: 'Jeda tetap. Hindari bila bisa; maks 30000 ms.',
-    params: [{ name: 'ms', label: 'Durasi (ms)', type: 'number', required: true }],
-    summary: (s) => `Jeda ${s.ms ?? 0} ms` },
+  action('wait_for', 'wait', 'ui', [sel(), param('state', 'state', 'select', { options: literalOptions(['visible', 'hidden', 'attached']) })],
+    sum('wait_for', (s) => ({ selector: s.selector ?? '', state: s.state ?? 'visible' }))),
+  action('wait', 'wait', 'common', [param('ms', 'durationMs', 'number', { required: true })], sum('wait', (s) => ({ ms: s.ms ?? 0 }))),
   // Data
-  { action: 'screenshot', label: 'Screenshot', group: 'data', kind: 'ui', description: 'Ambil screenshot eksplisit.',
-    params: [{ name: 'name', label: 'Nama', type: 'text' }, { name: 'full_page', label: 'Satu halaman penuh', type: 'boolean' }],
-    summary: (s) => `Screenshot${s.name ? ` ${q(s.name)}` : ''}` },
-  { action: 'extract_text', label: 'Ambil teks', group: 'data', kind: 'ui', description: 'Simpan teks elemen ke variable.',
-    params: [sel, { name: 'save_as', label: 'Simpan sebagai', type: 'text', required: true, placeholder: 'order_id' }],
-    summary: (s) => `Ambil teks ${s.selector ?? ''} → vars.${s.save_as ?? ''}` },
-  { action: 'set_variable', label: 'Set variable', group: 'data', kind: 'common', description: 'Set nilai variable runtime.',
-    params: [{ name: 'name', label: 'Nama', type: 'text', required: true }, val('Nilai')],
-    summary: (s) => `vars.${s.name ?? ''} = ${q(s.value)}` },
+  action('screenshot', 'data', 'ui', [param('name', 'name', 'text'), param('full_page', 'fullPage', 'boolean')],
+    (s, t) => (s.name ? t('steps:actions.screenshot.summaryNamed', { name: q(s.name) }) : t('steps:actions.screenshot.summary'))),
+  action('extract_text', 'data', 'ui', [sel(), param('save_as', 'saveAs', 'text', { required: true, placeholder: 'order_id' })],
+    sum('extract_text', (s) => ({ selector: s.selector ?? '', saveAs: s.save_as ?? '' }))),
+  action('set_variable', 'data', 'common', [param('name', 'name', 'text', { required: true }), val('value')], (s) => `vars.${s.name ?? ''} = ${q(s.value)}`),
   // Assertion UI
-  { action: 'expect_visible', label: 'Harus terlihat', group: 'assert_ui', kind: 'ui', description: 'Elemen harus terlihat.', params: [sel],
-    summary: (s) => `${s.selector ?? ''} terlihat` },
-  { action: 'expect_hidden', label: 'Harus tersembunyi', group: 'assert_ui', kind: 'ui', description: 'Elemen harus tidak terlihat.', params: [sel],
-    summary: (s) => `${s.selector ?? ''} tersembunyi` },
-  { action: 'expect_text', label: 'Teks elemen', group: 'assert_ui', kind: 'ui', description: 'Cek teks elemen.',
-    params: [sel, val('Teks'), match], summary: (s) => `Teks ${s.selector ?? ''} ${matchWord(s.match)} ${q(s.value)}` },
-  { action: 'expect_value', label: 'Nilai input', group: 'assert_ui', kind: 'ui', description: 'Cek nilai input.',
-    params: [sel, val('Nilai'), match], summary: (s) => `Nilai ${s.selector ?? ''} ${matchWord(s.match)} ${q(s.value)}` },
-  { action: 'expect_url', label: 'URL halaman', group: 'assert_ui', kind: 'ui', description: 'Cek URL halaman.',
-    params: [val('URL'), match], summary: (s) => `URL ${matchWord(s.match)} ${q(s.value)}` },
-  { action: 'expect_title', label: 'Judul halaman', group: 'assert_ui', kind: 'ui', description: 'Cek <title> halaman.',
-    params: [val('Judul'), match], summary: (s) => `Judul ${matchWord(s.match)} ${q(s.value)}` },
-  { action: 'expect_count', label: 'Jumlah elemen', group: 'assert_ui', kind: 'ui', description: 'Cek jumlah elemen.',
-    params: [sel, { name: 'op', label: 'Operator', type: 'select', options: [
-      { value: 'eq', label: '=' }, { value: 'gte', label: '≥' }, { value: 'lte', label: '≤' }] }, { name: 'value', label: 'Jumlah', type: 'number', required: true }],
-    summary: (s) => `Jumlah ${s.selector ?? ''} ${s.op === 'gte' ? '≥' : s.op === 'lte' ? '≤' : '='} ${s.value ?? ''}` },
+  action('expect_visible', 'assert_ui', 'ui', [sel()], sum('expect_visible', onSel)),
+  action('expect_hidden', 'assert_ui', 'ui', [sel()], sum('expect_hidden', onSel)),
+  action('expect_text', 'assert_ui', 'ui', [sel(), val('text'), match()],
+    sum('expect_text', (s) => ({ selector: s.selector ?? '', op: matchWord(s.match), value: q(s.value) }))),
+  action('expect_value', 'assert_ui', 'ui', [sel(), val('value'), match()],
+    sum('expect_value', (s) => ({ selector: s.selector ?? '', op: matchWord(s.match), value: q(s.value) }))),
+  action('expect_url', 'assert_ui', 'ui', [val('url'), match()], sum('expect_url', (s) => ({ op: matchWord(s.match), value: q(s.value) }))),
+  action('expect_title', 'assert_ui', 'ui', [val('title'), match()], sum('expect_title', (s) => ({ op: matchWord(s.match), value: q(s.value) }))),
+  action('expect_count', 'assert_ui', 'ui',
+    [sel(), param('op', 'operator', 'select', { options: [{ value: 'eq', label: '=' }, { value: 'gte', label: '≥' }, { value: 'lte', label: '≤' }] }),
+      param('value', 'count', 'number', { required: true })],
+    sum('expect_count', (s) => ({ selector: s.selector ?? '', op: countOp(s.op), value: s.value ?? '' }))),
   // HTTP
-  { action: 'http_request', label: 'HTTP request', group: 'http', kind: 'http', description: 'Kirim request HTTP (Playwright APIRequestContext).',
-    params: [
-      { name: 'method', label: 'Method', type: 'select', required: true, options: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'].map((m) => ({ value: m, label: m })) },
-      { name: 'url', label: 'URL', type: 'url', required: true, placeholder: '{{env.API_URL}}/products' },
-      { name: 'headers', label: 'Headers', type: 'keyvalue' },
-      { name: 'query', label: 'Query', type: 'keyvalue' },
-      { name: 'body_type', label: 'Tipe body', type: 'select', options: [
-        { value: 'json', label: 'JSON' }, { value: 'text', label: 'Text' }, { value: 'form', label: 'Form' }] },
-      { name: 'body', label: 'Body', type: 'textarea' },
-      { name: 'save', label: 'Simpan ke variable (nama → JSONPath)', type: 'keyvalue', help: 'Contoh: token → $.data.token' },
+  action('http_request', 'http', 'http',
+    [
+      param('method', 'method', 'select', { required: true, options: literalOptions(['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']) }),
+      param('url', 'url', 'url', { required: true, placeholder: '{{env.API_URL}}/products' }),
+      param('headers', 'headers', 'keyvalue'),
+      param('query', 'query', 'keyvalue'),
+      param('body_type', 'bodyType', 'select', { options: (['json', 'text', 'form'] as const).map((b) => translatedOption(b, `steps:bodyTypes.${b}`)) }),
+      param('body', 'body', 'textarea'),
+      param('save', 'saveVars', 'keyvalue', { helpKey: 'saveVars' }),
     ],
-    summary: (s) => `${s.method ?? 'GET'} ${s.url ?? ''}` },
-  { action: 'expect_status', label: 'Status code', group: 'assert_http', kind: 'http', description: 'Cek status response terakhir.',
-    params: [{ name: 'value', label: 'Status', type: 'number', required: true, placeholder: '200' }],
-    summary: (s) => `Status = ${s.value ?? ''}` },
-  { action: 'expect_json', label: 'Isi JSON', group: 'assert_http', kind: 'http', description: 'Cek nilai JSONPath di body response.',
-    params: [
-      { name: 'path', label: 'JSONPath', type: 'text', required: true, placeholder: '$.data.id' },
-      { name: 'op', label: 'Operator', type: 'select', required: true, options: ['eq', 'neq', 'contains', 'exists', 'gt', 'lt', 'matches'].map((o) => ({ value: o, label: o })) },
-      val('Nilai', false),
+    (s) => `${s.method ?? 'GET'} ${s.url ?? ''}`),
+  action('expect_status', 'assert_http', 'http', [param('value', 'status', 'number', { required: true, placeholder: '200' })], (s) => `Status = ${s.value ?? ''}`),
+  action('expect_json', 'assert_http', 'http',
+    [
+      param('path', 'jsonPath', 'text', { required: true, placeholder: '$.data.id' }),
+      param('op', 'operator', 'select', { required: true, options: literalOptions(['eq', 'neq', 'contains', 'exists', 'gt', 'lt', 'matches']) }),
+      val('value', false),
     ],
-    summary: (s) => `${s.path ?? ''} ${s.op ?? 'eq'}${s.op === 'exists' ? '' : ` ${q(s.value)}`}` },
-  { action: 'expect_header', label: 'Header', group: 'assert_http', kind: 'http', description: 'Cek header response.',
-    params: [{ name: 'name', label: 'Nama header', type: 'text', required: true }, val('Nilai'), match],
-    summary: (s) => `Header ${s.name ?? ''} ${matchWord(s.match)} ${q(s.value)}` },
-  { action: 'expect_response_time', label: 'Waktu respons', group: 'assert_http', kind: 'http', description: 'Waktu respons maksimum.',
-    params: [{ name: 'max_ms', label: 'Maks (ms)', type: 'number', required: true }],
-    summary: (s) => `Waktu respons ≤ ${s.max_ms ?? ''} ms` },
+    (s) => `${s.path ?? ''} ${s.op ?? 'eq'}${s.op === 'exists' ? '' : ` ${q(s.value)}`}`),
+  action('expect_header', 'assert_http', 'http', [param('name', 'headerName', 'text', { required: true }), val('value'), match()],
+    (s) => `Header ${s.name ?? ''} ${matchWord(s.match)} ${q(s.value)}`),
+  action('expect_response_time', 'assert_http', 'http', [param('max_ms', 'maxMs', 'number', { required: true })],
+    sum('expect_response_time', (s) => ({ ms: s.max_ms ?? '' }))),
   // Manual
-  { action: 'manual', label: 'Langkah manual', group: 'manual', kind: 'manual', description: 'Instruksi untuk tester. Isi deskripsi & hasil yang diharapkan.',
-    params: [], summary: (s) => s.description || 'Langkah manual' },
+  action('manual', 'manual', 'manual', [], (s, t) => s.description || t('steps:actions.manual.summary')),
 ]
 
 export const ACTION_MAP = Object.fromEntries(ACTIONS.map((a) => [a.action, a])) as Record<StepAction, ActionDef>
@@ -165,9 +199,14 @@ export function getAction(action: StepAction): ActionDef {
   return ACTION_MAP[action]
 }
 
-export function summarizeStep(step: Step): string {
-  const def = ACTION_MAP[step.action]
-  return def ? def.summary(step) : step.action
+export interface I18nOptions {
+  /** Paksa bahasa tertentu; default = bahasa aktif UI. */
+  lng?: Language
+}
+
+export function summarizeStep(step: Step, opts?: I18nOptions): string {
+  const impl = SUMMARY_IMPL.get(step.action)
+  return impl ? impl(step, translatorFor(opts?.lng)) : step.action
 }
 
 export function isUiStep(step: Step): boolean {
@@ -201,59 +240,61 @@ export interface StepValidation {
   warnings: FieldError[]
 }
 
-/** Validasi struktur + semantik (docs/04 §Validasi). Dipakai editor dan mock endpoint /validate. */
-export function validateSteps(steps: Step[], execution: Execution = 'automated'): StepValidation {
+/** Validasi struktur + semantik (docs/04 §Validasi). Dipakai editor (bahasa aktif) dan mock endpoint /validate (`{ lng: 'en' }`). */
+export function validateSteps(steps: Step[], execution: Execution = 'automated', opts?: I18nOptions): StepValidation {
+  const t = translatorFor(opts?.lng)
   const errors: FieldError[] = []
   const warnings: FieldError[] = []
   const seen = new Set<string>()
 
   if (steps.length === 0) {
-    warnings.push({ path: 'steps', message: 'Test case belum punya step' })
+    warnings.push({ path: 'steps', message: t('steps:validation.noSteps') })
   }
 
   steps.forEach((step, i) => {
     const p = `steps[${i}]`
-    if (!step.id) errors.push({ path: `${p}.id`, message: 'ID step wajib diisi' })
-    else if (seen.has(step.id)) errors.push({ path: `${p}.id`, message: `ID step "${step.id}" duplikat` })
+    if (!step.id) errors.push({ path: `${p}.id`, message: t('steps:validation.idRequired') })
+    else if (seen.has(step.id)) errors.push({ path: `${p}.id`, message: t('steps:validation.idDuplicate', { id: step.id }) })
     seen.add(step.id)
 
     const def = ACTION_MAP[step.action]
     if (!def) {
-      errors.push({ path: `${p}.action`, message: `Action "${step.action}" tidak dikenal` })
+      errors.push({ path: `${p}.action`, message: t('steps:validation.unknownAction', { action: step.action }) })
       return
     }
     if (execution === 'manual' && step.action !== 'manual') {
-      errors.push({ path: `${p}.action`, message: 'Test case manual hanya boleh berisi langkah manual' })
+      errors.push({ path: `${p}.action`, message: t('steps:validation.manualOnly') })
     }
     if (execution === 'automated' && step.action === 'manual') {
-      errors.push({ path: `${p}.action`, message: 'Langkah manual tidak boleh ada di test case automated' })
+      errors.push({ path: `${p}.action`, message: t('steps:validation.noManualInAutomated') })
     }
     if (step.action === 'manual' && isEmpty(step.description)) {
-      errors.push({ path: `${p}.description`, message: 'Instruksi langkah manual wajib diisi' })
+      errors.push({ path: `${p}.description`, message: t('steps:validation.manualInstructionRequired') })
     }
     for (const param of def.params) {
       if (param.required && isEmpty(step[param.name])) {
-        errors.push({ path: `${p}.${param.name}`, message: `${param.label} wajib diisi` })
+        const label = t(`steps:params.${PARAM_LABEL_KEY.get(param) ?? param.name}`)
+        errors.push({ path: `${p}.${param.name}`, message: t('steps:validation.paramRequired', { label }) })
       }
     }
     if (step.action === 'wait') {
       const ms = Number(step.ms ?? 0)
-      if (ms > 30000) errors.push({ path: `${p}.ms`, message: 'Jeda maksimum 30000 ms' })
-      else warnings.push({ path: `${p}.action`, message: 'Jeda tetap membuat test lambat & rapuh; pertimbangkan "Tunggu elemen"' })
+      if (ms > 30000) errors.push({ path: `${p}.ms`, message: t('steps:validation.waitMax') })
+      else warnings.push({ path: `${p}.action`, message: t('steps:validation.waitWarning', { waitFor: t('steps:actions.wait_for.label') }) })
     }
     if (step.action === 'expect_text' && step.match === 'regex' && typeof step.value === 'string') {
       try {
         new RegExp(step.value)
       } catch {
-        errors.push({ path: `${p}.value`, message: 'Regex tidak valid' })
+        errors.push({ path: `${p}.value`, message: t('steps:validation.invalidRegex') })
       }
     }
     const httpAssert = def.group === 'assert_http'
     if (httpAssert && !steps.slice(0, i).some((s) => s.action === 'http_request')) {
-      errors.push({ path: `${p}.action`, message: 'Assertion HTTP butuh step "HTTP request" sebelumnya' })
+      errors.push({ path: `${p}.action`, message: t('steps:validation.httpAssertNeedsRequest', { httpRequest: t('steps:actions.http_request.label') }) })
     }
     if (typeof step.selector === 'string' && /^\s*\/\//.test(step.selector)) {
-      warnings.push({ path: `${p}.selector`, message: 'XPath rapuh; gunakan role=, label= atau testid=' })
+      warnings.push({ path: `${p}.selector`, message: t('steps:validation.xpath') })
     }
   })
 

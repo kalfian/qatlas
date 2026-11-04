@@ -1,5 +1,6 @@
 import { Check, Copy } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { errorMessage } from '@/api/client'
 import { useCreateToken } from '@/api/queries'
 import type { TokenScope } from '@/api/types'
@@ -31,7 +32,8 @@ export function mcpCommand(secret: string): string {
 export const CopyBlock = React.forwardRef<
   HTMLButtonElement,
   { value: string; label?: string; onCopied?: () => void; className?: string; id?: string }
->(({ value, label = 'Salin', onCopied, className, id }, ref) => {
+>(({ value, label, onCopied, className, id }, ref) => {
+  const { t } = useTranslation()
   const { copied, copy } = useCopy()
   return (
     <div className={cn('flex flex-col gap-2 rounded-md border border-border bg-muted p-3', className)}>
@@ -50,7 +52,7 @@ export const CopyBlock = React.forwardRef<
           }}
         >
           {copied ? <Check /> : <Copy />}
-          {copied ? 'Tersalin' : label}
+          {copied ? t('actions.copied') : (label ?? t('actions.copy'))}
         </Button>
       </div>
     </div>
@@ -58,11 +60,8 @@ export const CopyBlock = React.forwardRef<
 })
 CopyBlock.displayName = 'CopyBlock'
 
-const SCOPES: { value: TokenScope; description: string }[] = [
-  { value: 'read', description: 'Lihat project, test case, flow, run, dan report.' },
-  { value: 'write', description: 'Buat dan ubah test case, folder, dan flow.' },
-  { value: 'run', description: 'Jalankan test case dan flow, lalu ambil hasilnya.' },
-]
+/** Urutan scope konsisten read → write → run; deskripsi di `account:create.scopes.*`. */
+const SCOPES: readonly TokenScope[] = ['read', 'write', 'run']
 
 type Expiry = '30' | '90' | 'none'
 type ProjectMode = 'all' | 'some'
@@ -73,6 +72,7 @@ interface Created {
 }
 
 export function CreateTokenDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { t } = useTranslation('account')
   const [created, setCreated] = React.useState<Created | null>(null)
   const [copiedOnce, setCopiedOnce] = React.useState(false)
   const [confirmClose, setConfirmClose] = React.useState(false)
@@ -109,13 +109,11 @@ export function CreateTokenDialog({ open, onOpenChange }: { open: boolean; onOpe
       <AlertDialog open={confirmClose} onOpenChange={setConfirmClose}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Tutup tanpa menyalin token?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Token &ldquo;{created?.name}&rdquo; tidak akan ditampilkan lagi. Kalau belum tersimpan, kamu harus mencabutnya dan membuat token baru.
-            </AlertDialogDescription>
+            <AlertDialogTitle>{t('create.closeConfirmTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('create.closeConfirmDescription', { name: created?.name ?? '' })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Kembali</AlertDialogCancel>
+            <AlertDialogCancel>{t('create.closeConfirmBack')}</AlertDialogCancel>
             <Button
               variant="destructive"
               onClick={() => {
@@ -123,7 +121,7 @@ export function CreateTokenDialog({ open, onOpenChange }: { open: boolean; onOpe
                 close()
               }}
             >
-              Tutup tanpa menyalin
+              {t('create.closeConfirm')}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -133,6 +131,7 @@ export function CreateTokenDialog({ open, onOpenChange }: { open: boolean; onOpe
 }
 
 function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (c: Created) => void }) {
+  const { t } = useTranslation(['account', 'common'])
   const { projects } = useAuth()
   const create = useCreateToken()
   const [name, setName] = React.useState('')
@@ -154,9 +153,9 @@ function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     const v: FieldErrors = {
-      name: name.trim() ? undefined : 'Isi nama token',
-      scopes: scopes.length ? undefined : 'Pilih minimal satu scope',
-      project_keys: projectMode === 'some' && !projectKeys.length ? 'Pilih minimal satu project' : undefined,
+      name: name.trim() ? undefined : t('create.nameRequired'),
+      scopes: scopes.length ? undefined : t('create.scopeRequired'),
+      project_keys: projectMode === 'some' && !projectKeys.length ? t('create.projectRequired') : undefined,
     }
     setErrors(v)
     setBanner(null)
@@ -165,7 +164,7 @@ function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (
       {
         name: name.trim(),
         // urutan scope konsisten read → write → run
-        scopes: SCOPES.map((s) => s.value).filter((s) => scopes.includes(s)),
+        scopes: SCOPES.filter((s) => scopes.includes(s)),
         project_keys: projectMode === 'some' ? projectKeys : null,
         expires_in_days: expiry === 'none' ? null : Number(expiry),
       },
@@ -185,13 +184,13 @@ function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-5">
       <DialogHeader>
-        <DialogTitle>Buat token</DialogTitle>
-        <DialogDescription>Token ditampilkan sekali setelah dibuat. Hak efektifnya = scope token ∩ role kamu di tiap project.</DialogDescription>
+        <DialogTitle>{t('create.title')}</DialogTitle>
+        <DialogDescription>{t('create.description')}</DialogDescription>
       </DialogHeader>
 
       {banner && <Banner>{banner}</Banner>}
 
-      <Field id="token-name" label="Nama" error={errors.name} hint="Mis. “Claude Code laptop” atau “CI GitHub Actions”.">
+      <Field id="token-name" label={t('create.name')} error={errors.name} hint={t('create.nameHint')}>
         <Input
           id="token-name"
           autoFocus
@@ -207,25 +206,25 @@ function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (
       </Field>
 
       <fieldset className="flex flex-col gap-2" aria-describedby={errors.scopes ? 'token-scopes-error' : undefined}>
-        <legend className="mb-2 text-sm font-medium">Scope</legend>
+        <legend className="mb-2 text-sm font-medium">{t('create.scope')}</legend>
         {SCOPES.map((s) => (
-          <div key={s.value} className="flex items-start gap-2.5">
+          <div key={s} className="flex items-start gap-2.5">
             <Checkbox
-              id={`token-scope-${s.value}`}
+              id={`token-scope-${s}`}
               className="mt-0.5"
-              checked={scopes.includes(s.value)}
+              checked={scopes.includes(s)}
               onCheckedChange={(c) => {
-                setScopes((x) => toggle(x, s.value, c === true))
+                setScopes((x) => toggle(x, s, c === true))
                 if (errors.scopes) setErrors((x) => ({ ...x, scopes: undefined }))
               }}
-              aria-describedby={`token-scope-${s.value}-desc`}
+              aria-describedby={`token-scope-${s}-desc`}
             />
             <div className="flex flex-col gap-0.5">
-              <Label htmlFor={`token-scope-${s.value}`} className="font-mono text-xs leading-5">
-                {s.value}
+              <Label htmlFor={`token-scope-${s}`} className="font-mono text-xs leading-5">
+                {s}
               </Label>
-              <span id={`token-scope-${s.value}-desc`} className="text-xs text-muted-foreground">
-                {s.description}
+              <span id={`token-scope-${s}-desc`} className="text-xs text-muted-foreground">
+                {t(`create.scopes.${s}`)}
               </span>
             </div>
           </div>
@@ -239,18 +238,18 @@ function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (
 
       <div className="flex flex-col gap-2">
         <span id="token-projects-label" className="text-sm font-medium">
-          Batas project
+          {t('create.projectLimit')}
         </span>
         <Segmented<ProjectMode>
-          ariaLabel="Batas project"
+          ariaLabel={t('create.projectLimit')}
           value={projectMode}
           onChange={(v) => {
             setProjectMode(v)
             if (errors.project_keys) setErrors((x) => ({ ...x, project_keys: undefined }))
           }}
           options={[
-            { value: 'all', label: 'Semua project saya' },
-            { value: 'some', label: 'Project tertentu' },
+            { value: 'all', label: t('create.allMine') },
+            { value: 'some', label: t('create.specific') },
           ]}
           className="self-start"
         />
@@ -279,7 +278,7 @@ function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (
               ))}
             </fieldset>
           ) : (
-            <p className="text-xs text-muted-foreground">Kamu belum jadi member project mana pun.</p>
+            <p className="text-xs text-muted-foreground">{t('create.noProjects')}</p>
           ))}
         {errors.project_keys && (
           <p id="token-projects-error" className="text-xs text-status-failed">
@@ -289,27 +288,27 @@ function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (
       </div>
 
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">Kedaluwarsa</span>
+        <span className="text-sm font-medium">{t('create.expiry')}</span>
         <Segmented<Expiry>
-          ariaLabel="Kedaluwarsa"
+          ariaLabel={t('create.expiry')}
           value={expiry}
           onChange={setExpiry}
           options={[
-            { value: '30', label: '30 hari' },
-            { value: '90', label: '90 hari' },
-            { value: 'none', label: 'Tanpa kedaluwarsa' },
+            { value: '30', label: t('create.days30') },
+            { value: '90', label: t('create.days90') },
+            { value: 'none', label: t('create.never') },
           ]}
           className="self-start"
         />
-        {expiry === 'none' && <p className="text-xs text-muted-foreground">Token berlaku sampai kamu mencabutnya. Cocok untuk CI, tapi rotasi tetap disarankan.</p>}
+        {expiry === 'none' && <p className="text-xs text-muted-foreground">{t('create.neverHint')}</p>}
       </div>
 
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel} disabled={create.isPending}>
-          Batal
+          {t('common:actions.cancel')}
         </Button>
         <Button type="submit" loading={create.isPending}>
-          Buat token
+          {t('create.submit')}
         </Button>
       </DialogFooter>
     </form>
@@ -317,6 +316,7 @@ function TokenForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (
 }
 
 function SecretView({ created, onCopied, onDone }: { created: Created; onCopied: () => void; onDone: () => void }) {
+  const { t } = useTranslation(['account', 'common'])
   const copyRef = React.useRef<HTMLButtonElement>(null)
   const { copied, copy } = useCopy()
 
@@ -328,16 +328,16 @@ function SecretView({ created, onCopied, onDone }: { created: Created; onCopied:
   return (
     <div className="flex flex-col gap-5">
       <DialogHeader>
-        <DialogTitle>Token &ldquo;{created.name}&rdquo; dibuat</DialogTitle>
-        <DialogDescription>Simpan di password manager atau langsung pasang ke Claude Code.</DialogDescription>
+        <DialogTitle>{t('create.createdTitle', { name: created.name })}</DialogTitle>
+        <DialogDescription>{t('create.createdDescription')}</DialogDescription>
       </DialogHeader>
 
       <Banner tone="warning" role="status">
-        <span className="font-medium">Salin sekarang</span> — token tidak akan ditampilkan lagi.
+        <Trans t={t} i18nKey="create.copyWarning" components={{ strong: <span className="font-medium" /> }} />
       </Banner>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="token-secret">Token</Label>
+        <Label htmlFor="token-secret">{t('create.secretLabel')}</Label>
         <div className="flex gap-2">
           <Input
             id="token-secret"
@@ -352,26 +352,26 @@ function SecretView({ created, onCopied, onDone }: { created: Created; onCopied:
             variant="outline"
             className="w-26"
             onClick={async () => {
-              await copy(created.secret, 'Token disalin')
+              await copy(created.secret, t('create.secretCopied'))
               onCopied()
             }}
           >
             {copied ? <Check /> : <Copy />}
-            {copied ? 'Tersalin' : 'Salin'}
+            {copied ? t('common:actions.copied') : t('common:actions.copy')}
           </Button>
         </div>
       </div>
 
       <div className="flex flex-col gap-1.5">
         <span className="text-sm font-medium" id="token-mcp-label">
-          Setup MCP di Claude Code
+          {t('create.mcpSetup')}
         </span>
-        <CopyBlock value={mcpCommand(created.secret)} label="Salin perintah" onCopied={onCopied} id="token-mcp" />
+        <CopyBlock value={mcpCommand(created.secret)} label={t('common:actions.copyCommand')} onCopied={onCopied} id="token-mcp" />
       </div>
 
       <DialogFooter>
         <Button type="button" onClick={onDone}>
-          Saya sudah menyalin
+          {t('create.done')}
         </Button>
       </DialogFooter>
     </div>

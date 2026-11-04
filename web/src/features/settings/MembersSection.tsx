@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { ArrowRight, Check, ChevronsUpDown, Trash2, UserPlus, Users } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useAssignableUsers, useMemberMutations, useMembers } from '@/api/queries'
@@ -26,7 +27,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Tip } from '@/components/ui/tooltip'
 import { formatDate, formatRelative } from '@/lib/format'
-import { ROLE_DESCRIPTIONS, ROLE_LABELS } from '@/lib/permissions'
+import { ROLE_LABELS } from '@/lib/permissions'
 import { cn } from '@/lib/utils'
 import { SettingsCard } from './SettingsCard'
 import { relativeTime, useDelayedFlag } from './shared'
@@ -37,6 +38,7 @@ const ROLE_ORDER: Record<ProjectRole, number> = { maintainer: 0, editor: 1, view
 type Pending = { kind: 'remove'; member: Member } | { kind: 'self-demote'; member: Member; role: ProjectRole } | null
 
 export function MembersSection({ projectKey }: { projectKey: string }) {
+  const { t } = useTranslation(['settings', 'common'])
   const me = useAuth()
   const isAdmin = useIsAdmin()
   const members = useMembers(projectKey)
@@ -54,8 +56,8 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
     update.mutate(
       { userId: m.user.id, role },
       {
-        onSuccess: () => toast.success(`Role ${m.user.name} jadi ${ROLE_LABELS[role]}`),
-        onError: (err) => toast.error(`Gagal mengubah role: ${errorMessage(err)}`),
+        onSuccess: () => toast.success(t('members.roleChanged', { name: m.user.name, role: ROLE_LABELS[role] })),
+        onError: (err) => toast.error(t('members.roleFailed', { message: errorMessage(err) })),
       },
     )
 
@@ -69,8 +71,8 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
   return (
     <SettingsCard
       id="settings-members"
-      title="Member"
-      description="Siapa yang bisa membuka project ini dan apa yang boleh mereka lakukan."
+      title={t('members.title')}
+      description={t('members.description')}
       bodyClassName="flex flex-col px-0 pt-4 pb-0"
     >
       <AddMemberForm projectKey={projectKey} isAdmin={isAdmin} />
@@ -79,7 +81,7 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
         <ErrorState error={members.error} onRetry={() => members.refetch()} className="mx-4 mb-4" />
       ) : members.isPending ? (
         <div aria-busy="true" className="border-t border-border">
-          <span className="sr-only">Memuat member…</span>
+          <span className="sr-only">{t('members.loading')}</span>
           {Array.from({ length: 3 }, (_, i) => (
             <div key={i} className="flex h-12 items-center gap-3 border-b border-border px-4">
               {showSkeleton && (
@@ -95,16 +97,16 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
       ) : (
         <div className="border-t border-border">
           <Table>
-            <caption className="sr-only">Member project {projectKey}</caption>
+            <caption className="sr-only">{t('members.caption', { key: projectKey })}</caption>
             <TableHeader>
               <TableRow>
                 <TableHead className="pl-4">
-                  Member <span className="tabular font-normal">({list.length})</span>
+                  {t('members.colMember')} <span className="tabular font-normal">({list.length})</span>
                 </TableHead>
-                <TableHead>Role</TableHead>
-                <TableHead className="hidden sm:table-cell">Ditambahkan</TableHead>
+                <TableHead>{t('members.colRole')}</TableHead>
+                <TableHead className="hidden sm:table-cell">{t('members.colAdded')}</TableHead>
                 <TableHead className="w-10 pr-4">
-                  <span className="sr-only">Aksi</span>
+                  <span className="sr-only">{t('members.colActions')}</span>
                 </TableHead>
               </TableRow>
             </TableHeader>
@@ -122,7 +124,7 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
                         <div className="min-w-0">
                           <p className="truncate font-medium">
                             {m.user.name}
-                            {isSelf && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(kamu)</span>}
+                            {isSelf && <span className="ml-1.5 text-xs font-normal text-muted-foreground">{t('members.you')}</span>}
                           </p>
                           <p className="truncate text-xs text-muted-foreground">{m.user.email}</p>
                         </div>
@@ -131,12 +133,12 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
                     <TableCell>
                       {soleMaintainer ? (
                         <span className="text-sm">
-                          Maintainer
-                          <span className="block text-xs text-muted-foreground">satu-satunya maintainer</span>
+                          {ROLE_LABELS.maintainer}
+                          <span className="block text-xs text-muted-foreground">{t('members.soleMaintainer')}</span>
                         </span>
                       ) : (
                         <Select value={m.role} onValueChange={(v) => changeRole(m, v as ProjectRole)} disabled={rowPending}>
-                          <SelectTrigger className="h-7 w-[6.75rem] sm:w-[7.5rem]" aria-label={`Role ${m.user.name}`} aria-busy={rowPending || undefined}>
+                          <SelectTrigger className="h-7 w-[6.75rem] sm:w-[7.5rem]" aria-label={t('members.roleAria', { name: m.user.name })} aria-busy={rowPending || undefined}>
                             <SelectValue />
                           </SelectTrigger>
                           <SelectContent>
@@ -156,12 +158,12 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
                     </TableCell>
                     <TableCell className="py-0 pr-4 text-right">
                       {soleMaintainer ? (
-                        <Tip label="Project harus punya minimal satu maintainer">
+                        <Tip label={t('members.soleTip')}>
                           <Button
                             variant="ghost"
                             size="icon-sm"
                             aria-disabled="true"
-                            aria-label={`Hapus ${m.user.name} dari project (tidak tersedia: project harus punya minimal satu maintainer)`}
+                            aria-label={t('members.removeUnavailableAria', { name: m.user.name })}
                             onClick={(e) => e.preventDefault()}
                             className="text-muted-foreground"
                           >
@@ -169,11 +171,11 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
                           </Button>
                         </Tip>
                       ) : (
-                        <Tip label="Hapus dari project">
+                        <Tip label={t('members.removeTip')}>
                           <Button
                             variant="ghost"
                             size="icon-sm"
-                            aria-label={`Hapus ${m.user.name} dari project`}
+                            aria-label={t('members.removeAria', { name: m.user.name })}
                             onClick={() => setPending({ kind: 'remove', member: m })}
                             className="text-muted-foreground hover:text-destructive"
                           >
@@ -194,7 +196,7 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
         {ROLES.map((r) => (
           <React.Fragment key={r}>
             <dt className="font-medium">{ROLE_LABELS[r]}</dt>
-            <dd className="-mt-1.5 text-muted-foreground sm:mt-0">{ROLE_DESCRIPTIONS[r]}</dd>
+            <dd className="-mt-1.5 text-muted-foreground sm:mt-0">{t(`common:roles.${r}.description`)}</dd>
           </React.Fragment>
         ))}
       </dl>
@@ -204,18 +206,16 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
           {pending?.kind === 'remove' && (
             <>
               <AlertDialogHeader>
-                <AlertDialogTitle>
-                  Hapus {pending.member.user.name} dari {projectKey}?
-                </AlertDialogTitle>
+                <AlertDialogTitle>{t('members.removeTitle', { name: pending.member.user.name, key: projectKey })}</AlertDialogTitle>
                 <AlertDialogDescription>
                   {pending.member.user.id === me.user.id
-                    ? 'Kamu tidak akan bisa membuka project ini lagi kecuali ditambahkan kembali.'
-                    : `${pending.member.user.name} tidak bisa lagi membuka project ini.`}{' '}
-                  Test case, flow, dan run yang pernah dibuat tetap tersimpan.
+                    ? t('members.removeSelf')
+                    : t('members.removeOther', { name: pending.member.user.name })}{' '}
+                  {t('members.removeKeep')}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel disabled={remove.isPending}>Batal</AlertDialogCancel>
+                <AlertDialogCancel disabled={remove.isPending}>{t('common:actions.cancel')}</AlertDialogCancel>
                 <Button
                   variant="destructive"
                   loading={remove.isPending}
@@ -223,14 +223,14 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
                     const m = pending.member
                     remove.mutate(m.user.id, {
                       onSuccess: () => {
-                        toast.success(`${m.user.name} dihapus dari ${projectKey}`)
+                        toast.success(t('members.removed', { name: m.user.name, key: projectKey }))
                         setPending(null)
                       },
-                      onError: (err) => toast.error(`Gagal menghapus member: ${errorMessage(err)}`),
+                      onError: (err) => toast.error(t('members.removeFailed', { message: errorMessage(err) })),
                     })
                   }}
                 >
-                  Hapus member
+                  {t('members.removeConfirm')}
                 </Button>
               </AlertDialogFooter>
             </>
@@ -238,13 +238,11 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
           {pending?.kind === 'self-demote' && (
             <>
               <AlertDialogHeader>
-                <AlertDialogTitle>Turunkan role kamu jadi {ROLE_LABELS[pending.role]}?</AlertDialogTitle>
-                <AlertDialogDescription>
-                  Kamu akan kehilangan akses ke pengaturan, member, dan environment project ini. Maintainer lain perlu mengembalikannya.
-                </AlertDialogDescription>
+                <AlertDialogTitle>{t('members.demoteTitle', { role: ROLE_LABELS[pending.role] })}</AlertDialogTitle>
+                <AlertDialogDescription>{t('members.demoteDescription')}</AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>Batal</AlertDialogCancel>
+                <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
                 <Button
                   variant="destructive"
                   onClick={() => {
@@ -252,7 +250,7 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
                     setPending(null)
                   }}
                 >
-                  Turunkan role
+                  {t('members.demoteConfirm')}
                 </Button>
               </AlertDialogFooter>
             </>
@@ -266,6 +264,7 @@ export function MembersSection({ projectKey }: { projectKey: string }) {
 /* ------------------------------------------------------------------ add member */
 
 function AddMemberForm({ projectKey, isAdmin }: { projectKey: string; isAdmin: boolean }) {
+  const { t } = useTranslation(['settings', 'common'])
   const assignable = useAssignableUsers(projectKey)
   const { add } = useMemberMutations(projectKey)
   const [open, setOpen] = React.useState(false)
@@ -278,7 +277,7 @@ function AddMemberForm({ projectKey, isAdmin }: { projectKey: string; isAdmin: b
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!user) {
-      setError('Pilih user yang akan ditambahkan')
+      setError(t('members.pickRequired'))
       triggerRef.current?.focus()
       return
     }
@@ -286,7 +285,7 @@ function AddMemberForm({ projectKey, isAdmin }: { projectKey: string; isAdmin: b
       { user_id: user.id, role },
       {
         onSuccess: () => {
-          toast.success(`${user.name} ditambahkan sebagai ${ROLE_LABELS[role]}`)
+          toast.success(t('members.added', { name: user.name, role: ROLE_LABELS[role] }))
           setUser(null)
           setError(null)
           triggerRef.current?.focus()
@@ -298,12 +297,12 @@ function AddMemberForm({ projectKey, isAdmin }: { projectKey: string; isAdmin: b
   return (
     <form onSubmit={submit} noValidate className="grid gap-2 px-4 pb-5" aria-labelledby="add-member-title">
       <h3 id="add-member-title" className="text-sm font-medium">
-        Tambah member
+        {t('members.addTitle')}
       </h3>
       <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_9rem_auto] sm:items-start">
         <div className="grid gap-1">
           <Label htmlFor="add-member-user" className="sr-only">
-            User
+            {t('members.user')}
           </Label>
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
@@ -318,23 +317,23 @@ function AddMemberForm({ projectKey, isAdmin }: { projectKey: string; isAdmin: b
                 aria-describedby={error ? 'add-member-error' : undefined}
                 className={cn('w-full justify-between px-2.5 font-normal', !user && 'text-muted-foreground', error && 'border-destructive')}
               >
-                <span className="truncate">{user ? `${user.name} · ${user.email}` : 'Pilih user terdaftar…'}</span>
+                <span className="truncate">{user ? `${user.name} · ${user.email}` : t('members.pickUser')}</span>
                 <ChevronsUpDown className="opacity-60" aria-hidden />
               </Button>
             </PopoverTrigger>
             <PopoverContent className="w-[var(--radix-popover-trigger-width)] min-w-72 p-0">
               <Command>
-                <CommandInput placeholder="Cari nama atau email…" aria-label="Cari user" />
+                <CommandInput placeholder={t('members.searchPlaceholder')} aria-label={t('members.searchLabel')} />
                 <CommandList>
                   {assignable.isPending ? (
-                    <p className="px-3 py-4 text-sm text-muted-foreground">Memuat user…</p>
+                    <p className="px-3 py-4 text-sm text-muted-foreground">{t('members.loadingUsers')}</p>
                   ) : assignable.isError ? (
                     <p className="px-3 py-4 text-sm text-destructive">{errorMessage(assignable.error)}</p>
                   ) : users.length === 0 ? (
-                    <p className="px-3 py-4 text-sm text-muted-foreground">Semua user aktif sudah jadi member project ini.</p>
+                    <p className="px-3 py-4 text-sm text-muted-foreground">{t('members.allMembers')}</p>
                   ) : (
                     <>
-                      <CommandEmpty>Tidak ada user yang cocok.</CommandEmpty>
+                      <CommandEmpty>{t('members.noMatch')}</CommandEmpty>
                       <CommandGroup>
                         {users.map((u) => (
                           <CommandItem
@@ -364,7 +363,7 @@ function AddMemberForm({ projectKey, isAdmin }: { projectKey: string; isAdmin: b
         </div>
         <div>
           <Label htmlFor="add-member-role" className="sr-only">
-            Role
+            {t('members.role')}
           </Label>
           <Select value={role} onValueChange={(v) => setRole(v as ProjectRole)}>
             <SelectTrigger id="add-member-role" aria-describedby="add-member-role-desc">
@@ -380,7 +379,7 @@ function AddMemberForm({ projectKey, isAdmin }: { projectKey: string; isAdmin: b
           </Select>
         </div>
         <Button type="submit" loading={add.isPending}>
-          <UserPlus /> Tambah
+          <UserPlus /> {t('members.add')}
         </Button>
       </div>
       {error ? (
@@ -393,18 +392,18 @@ function AddMemberForm({ projectKey, isAdmin }: { projectKey: string; isAdmin: b
         </p>
       ) : (
         <p id="add-member-role-desc" className="text-xs text-muted-foreground">
-          <span className="font-medium text-foreground">{ROLE_LABELS[role]}</span> · {ROLE_DESCRIPTIONS[role]}
+          <span className="font-medium text-foreground">{ROLE_LABELS[role]}</span> · {t(`common:roles.${role}.description`)}
         </p>
       )}
       <p className="text-xs text-muted-foreground">
         <Users className="mr-1 inline size-3.5 align-[-3px]" aria-hidden />
-        Hanya user yang sudah terdaftar dan aktif yang bisa dipilih.{' '}
+        {t('members.onlyRegistered')}{' '}
         {isAdmin ? (
           <Link to="/admin/users" className="inline-flex items-center gap-0.5 rounded-sm text-link underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
-            Undang orang baru di Admin · Users <ArrowRight className="size-3" aria-hidden />
+            {t('members.inviteAdmin')} <ArrowRight className="size-3" aria-hidden />
           </Link>
         ) : (
-          <span>Minta admin mengundang orang baru.</span>
+          <span>{t('members.askAdmin')}</span>
         )}
       </p>
     </form>

@@ -1,5 +1,6 @@
 import { Ban, KeyRound, Link2, MailPlus, MoreHorizontal, Plus, Search, ShieldCheck, UserCheck, UserRound, UsersRound, UserX } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useAdminInviteLink, useAdminUpdateUser, useAdminUsers } from '@/api/queries'
@@ -58,6 +59,7 @@ function UserStatusBadge({ status }: { status: UserStatus }) {
 }
 
 export function AdminUsersPage() {
+  const { t } = useTranslation(['admin', 'common'])
   const users = useAdminUsers()
   const [q, setQ] = React.useState('')
   const [createOpen, setCreateOpen] = React.useState(false)
@@ -75,19 +77,19 @@ export function AdminUsersPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="Users"
-        description="Hanya user yang dibuat di sini yang bisa masuk. Tidak ada pendaftaran mandiri."
+        title={t('users.title')}
+        description={t('users.description')}
         meta={
           users.data ? (
             <>
-              <span className="tabular">{counts.active} active</span>
-              <span className="tabular">{counts.invited} menunggu undangan</span>
+              <span className="tabular">{t('users.activeCount', { count: counts.active })}</span>
+              <span className="tabular">{t('users.invitedCount', { count: counts.invited })}</span>
             </>
           ) : undefined
         }
         actions={
           <Button onClick={() => setCreateOpen(true)}>
-            <Plus /> Buat user
+            <Plus /> {t('users.create')}
           </Button>
         }
       />
@@ -102,8 +104,8 @@ export function AdminUsersPage() {
             <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
             <Input
               type="search"
-              placeholder="Cari nama atau email…"
-              aria-label="Cari user"
+              placeholder={t('users.searchPlaceholder')}
+              aria-label={t('users.searchLabel')}
               className="pl-8"
               value={q}
               onChange={(e) => setQ(e.target.value)}
@@ -112,10 +114,10 @@ export function AdminUsersPage() {
           {filtered.length === 0 ? (
             <EmptyState
               icon={UsersRound}
-              title={`Tidak ada user yang cocok dengan “${q.trim()}”`}
+              title={t('users.noMatch', { query: q.trim() })}
               action={
                 <Button variant="outline" size="sm" onClick={() => setQ('')}>
-                  Reset pencarian
+                  {t('users.resetSearch')}
                 </Button>
               }
             />
@@ -124,13 +126,13 @@ export function AdminUsersPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Nama</TableHead>
-                    <TableHead className="hidden md:table-cell">Email</TableHead>
-                    <TableHead className="hidden sm:table-cell">System role</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="hidden lg:table-cell">Login terakhir</TableHead>
+                    <TableHead>{t('users.col.name')}</TableHead>
+                    <TableHead className="hidden md:table-cell">{t('users.col.email')}</TableHead>
+                    <TableHead className="hidden sm:table-cell">{t('users.col.systemRole')}</TableHead>
+                    <TableHead>{t('users.col.status')}</TableHead>
+                    <TableHead className="hidden lg:table-cell">{t('users.col.lastLogin')}</TableHead>
                     <TableHead>
-                      <span className="sr-only">Aksi</span>
+                      <span className="sr-only">{t('users.col.actions')}</span>
                     </TableHead>
                   </TableRow>
                 </TableHeader>
@@ -153,6 +155,7 @@ export function AdminUsersPage() {
 }
 
 function UserRow({ user: u, onLink, onDisable }: { user: User; onLink: (s: LinkDialogState) => void; onDisable: () => void }) {
+  const { t } = useTranslation(['admin', 'common'])
   const me = useAuth()
   const isSelf = u.id === me.user.id
   const update = useAdminUpdateUser()
@@ -175,8 +178,8 @@ function UserRow({ user: u, onLink, onDisable }: { user: User; onLink: (s: LinkD
     update.mutate(
       { id: u.id, system_role: role },
       {
-        onSuccess: () => toast.success(`${u.name} sekarang ${ROLE_LABEL[role]}`),
-        onError: (err) => toast.error(`Gagal mengubah role: ${errorMessage(err)}`),
+        onSuccess: () => toast.success(t('users.roleChanged', { name: u.name, role: ROLE_LABEL[role] })),
+        onError: (err) => toast.error(t('users.roleFailed', { message: errorMessage(err) })),
       },
     )
   }
@@ -185,8 +188,8 @@ function UserRow({ user: u, onLink, onDisable }: { user: User; onLink: (s: LinkD
     update.mutate(
       { id: u.id, status: 'active' },
       {
-        onSuccess: () => toast.success(`${u.name} diaktifkan lagi`),
-        onError: (err) => toast.error(`Gagal mengaktifkan: ${errorMessage(err)}`),
+        onSuccess: () => toast.success(t('users.enabled', { name: u.name })),
+        onError: (err) => toast.error(t('users.enableFailed', { message: errorMessage(err) })),
       },
     )
 
@@ -198,7 +201,7 @@ function UserRow({ user: u, onLink, onDisable }: { user: User; onLink: (s: LinkD
           <div className="flex min-w-0 flex-col">
             <span className={cn('truncate font-medium', disabled ? 'text-muted-foreground' : 'text-foreground')}>
               {u.name}
-              {isSelf && <span className="ml-1.5 text-xs font-normal text-muted-foreground">(kamu)</span>}
+              {isSelf && <span className="ml-1.5 text-xs font-normal text-muted-foreground">{t('users.you')}</span>}
             </span>
             <span className="truncate font-mono text-xs text-muted-foreground md:hidden">{u.email}</span>
             <span className="text-xs text-muted-foreground sm:hidden">{ROLE_LABEL[u.system_role]}</span>
@@ -220,42 +223,42 @@ function UserRow({ user: u, onLink, onDisable }: { user: User; onLink: (s: LinkD
         <UserStatusBadge status={u.status} />
       </TableCell>
       <TableCell className="hidden whitespace-nowrap lg:table-cell">
-        {u.last_login_at ? <time dateTime={u.last_login_at}>{formatRelative(u.last_login_at)}</time> : <span className="text-muted-foreground">Belum pernah</span>}
+        {u.last_login_at ? <time dateTime={u.last_login_at}>{formatRelative(u.last_login_at)}</time> : <span className="text-muted-foreground">{t('common:states.never')}</span>}
       </TableCell>
       <TableCell className="w-px text-right">
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label={`Aksi untuk ${u.name}`}>
+            <Button variant="ghost" size="icon-sm" aria-label={t('users.actionsFor', { name: u.name })}>
               <MoreHorizontal />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-60">
             {u.status === 'invited' && (
               <DropdownMenuItem onSelect={makeLink}>
-                <Link2 /> Buat ulang link undangan
+                <Link2 /> {t('users.regenerateInvite')}
               </DropdownMenuItem>
             )}
             {u.status === 'active' && (
               <DropdownMenuItem onSelect={makeLink}>
-                <KeyRound /> Buat link reset password
+                <KeyRound /> {t('users.createResetLink')}
               </DropdownMenuItem>
             )}
             <DropdownMenuSub>
               <DropdownMenuSubTrigger disabled={isSelf}>
-                <ShieldCheck /> Ubah role
+                <ShieldCheck /> {t('users.changeRole')}
               </DropdownMenuSubTrigger>
               <DropdownMenuSubContent>
                 <DropdownMenuRadioGroup value={u.system_role} onValueChange={(v) => setRole(v as SystemRole)}>
                   <DropdownMenuRadioItem value="member">
                     <span className="flex flex-col">
-                      Member
-                      <span className="text-xs text-muted-foreground">Akses per project</span>
+                      {ROLE_LABEL.member}
+                      <span className="text-xs text-muted-foreground">{t('users.memberHint')}</span>
                     </span>
                   </DropdownMenuRadioItem>
                   <DropdownMenuRadioItem value="admin">
                     <span className="flex flex-col">
-                      Admin
-                      <span className="text-xs text-muted-foreground">Kelola user & semua project</span>
+                      {ROLE_LABEL.admin}
+                      <span className="text-xs text-muted-foreground">{t('users.adminHint')}</span>
                     </span>
                   </DropdownMenuRadioItem>
                 </DropdownMenuRadioGroup>
@@ -264,15 +267,15 @@ function UserRow({ user: u, onLink, onDisable }: { user: User; onLink: (s: LinkD
             <DropdownMenuSeparator />
             {disabled ? (
               <DropdownMenuItem onSelect={enable}>
-                <UserCheck /> Aktifkan lagi
+                <UserCheck /> {t('users.enable')}
               </DropdownMenuItem>
             ) : (
               <DropdownMenuItem destructive disabled={isSelf} onSelect={onDisable}>
-                <Ban /> Nonaktifkan
+                <Ban /> {t('users.disable')}
               </DropdownMenuItem>
             )}
             {isSelf && (
-              <DropdownMenuLabel className="font-normal">Role dan status akunmu sendiri tidak bisa kamu ubah.</DropdownMenuLabel>
+              <DropdownMenuLabel className="font-normal">{t('users.selfLocked')}</DropdownMenuLabel>
             )}
           </DropdownMenuContent>
         </DropdownMenu>
@@ -282,6 +285,7 @@ function UserRow({ user: u, onLink, onDisable }: { user: User; onLink: (s: LinkD
 }
 
 function DisableDialog({ user, onClose }: { user: User | null; onClose: () => void }) {
+  const { t } = useTranslation(['admin', 'common'])
   const update = useAdminUpdateUser()
   const [last, setLast] = React.useState<User | null>(user)
   if (user && user !== last) setLast(user)
@@ -294,7 +298,7 @@ function DisableDialog({ user, onClose }: { user: User | null; onClose: () => vo
       { id: u.id, status: 'disabled' },
       {
         onSuccess: () => {
-          toast.success(`${u.name} dinonaktifkan`)
+          toast.success(t('users.disabled', { name: u.name }))
           onClose()
         },
       },
@@ -313,16 +317,14 @@ function DisableDialog({ user, onClose }: { user: User | null; onClose: () => vo
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Nonaktifkan {u?.name}?</AlertDialogTitle>
-          <AlertDialogDescription>
-            Semua session dan API token {first} akan dicabut. {first} tidak bisa masuk sampai diaktifkan lagi; data test case dan run tetap tersimpan.
-          </AlertDialogDescription>
+          <AlertDialogTitle>{t('disableDialog.title', { name: u?.name ?? '' })}</AlertDialogTitle>
+          <AlertDialogDescription>{t('disableDialog.description', { first })}</AlertDialogDescription>
         </AlertDialogHeader>
         {update.isError && <Banner>{errorMessage(update.error)}</Banner>}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={update.isPending}>Batal</AlertDialogCancel>
+          <AlertDialogCancel disabled={update.isPending}>{t('common:actions.cancel')}</AlertDialogCancel>
           <Button variant="destructive" onClick={confirm} loading={update.isPending}>
-            Nonaktifkan
+            {t('disableDialog.confirm')}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

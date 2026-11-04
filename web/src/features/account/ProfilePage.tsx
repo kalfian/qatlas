@@ -1,12 +1,15 @@
 import { CircleCheck, CircleDashed } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useUpdateMe } from '@/api/queries'
 import { useAuth } from '@/app/auth'
+import { useChangeLanguage } from '@/app/language'
 import { PageContainer, PageHeader, Panel } from '@/components/page'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Segmented } from '@/components/ui/segmented'
 import {
   apiFieldErrors,
   Banner,
@@ -19,14 +22,17 @@ import {
   PasswordLengthHint,
   type FieldErrors,
 } from '@/features/auth/shared'
+import { LANGUAGES, type Language } from '@/i18n'
 import { formatDateTime } from '@/lib/format'
 
 export function ProfilePage() {
+  const { t } = useTranslation('account')
   const me = useAuth()
   return (
     <PageContainer narrow>
-      <PageHeader title="Akun" description="Nama, password, dan login Google untuk akun kamu." />
+      <PageHeader title={t('profile.title')} description={t('profile.description')} />
       <NameSection key={me.user.name} />
+      <LanguageSection />
       <PasswordSection />
       <GoogleSection />
     </PageContainer>
@@ -34,6 +40,7 @@ export function ProfilePage() {
 }
 
 function NameSection() {
+  const { t } = useTranslation(['account', 'common'])
   const { user } = useAuth()
   const update = useUpdateMe()
   const [name, setName] = React.useState(user.name)
@@ -43,7 +50,7 @@ function NameSection() {
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) {
-      setError('Nama wajib diisi')
+      setError(t('profile.nameRequired'))
       document.getElementById('profile-name')?.focus()
       return
     }
@@ -51,32 +58,32 @@ function NameSection() {
     update.mutate(
       { name: name.trim() },
       {
-        onSuccess: () => toast.success('Nama disimpan'),
+        onSuccess: () => toast.success(t('profile.nameSaved')),
         onError: (err) => {
           const fe = apiFieldErrors(err)
           if (fe.name) setError(fe.name)
-          else toast.error(`Gagal menyimpan: ${errorMessage(err)}`)
+          else toast.error(t('common:errors.saveFailed', { message: errorMessage(err) }))
         },
       },
     )
   }
 
   return (
-    <Panel title="Profil">
+    <Panel title={t('profile.section')}>
       <form onSubmit={submit} noValidate className="flex flex-col gap-4">
         <dl className="grid grid-cols-1 gap-x-6 gap-y-3 text-sm sm:grid-cols-[8rem_minmax(0,1fr)]">
-          <dt className="text-muted-foreground">Email</dt>
+          <dt className="text-muted-foreground">{t('profile.email')}</dt>
           <dd className="min-w-0">
             <span className="font-mono text-xs break-all">{user.email}</span>
-            <span className="mt-0.5 block text-xs text-muted-foreground">Email hanya bisa diubah oleh admin.</span>
+            <span className="mt-0.5 block text-xs text-muted-foreground">{t('profile.emailHint')}</span>
           </dd>
-          <dt className="text-muted-foreground">System role</dt>
-          <dd>{user.system_role === 'admin' ? 'Admin' : 'Member'}</dd>
-          <dt className="text-muted-foreground">Login terakhir</dt>
+          <dt className="text-muted-foreground">{t('profile.systemRole')}</dt>
+          <dd>{user.system_role === 'admin' ? t('profile.roleAdmin') : t('profile.roleMember')}</dd>
+          <dt className="text-muted-foreground">{t('profile.lastLogin')}</dt>
           <dd className="tabular">{formatDateTime(user.last_login_at)}</dd>
         </dl>
         <div className="h-px bg-border" />
-        <Field id="profile-name" label="Nama" error={error} className="max-w-sm">
+        <Field id="profile-name" label={t('profile.name')} error={error} className="max-w-sm">
           <Input
             id="profile-name"
             autoComplete="name"
@@ -91,11 +98,11 @@ function NameSection() {
         </Field>
         <div className="flex items-center gap-3">
           <Button type="submit" loading={update.isPending} aria-disabled={!dirty || undefined} aria-describedby={!dirty ? 'profile-name-state' : undefined}>
-            Simpan nama
+            {t('profile.saveName')}
           </Button>
           {!dirty && (
             <span id="profile-name-state" className="text-xs text-muted-foreground">
-              Belum ada perubahan
+              {t('common:states.noChanges')}
             </span>
           )}
         </div>
@@ -104,7 +111,32 @@ function NameSection() {
   )
 }
 
+function LanguageSection() {
+  const { t } = useTranslation(['account', 'common'])
+  const { language, change, isPending, isSaved } = useChangeLanguage()
+  return (
+    <Panel title={t('language.title')}>
+      <div className="flex flex-col gap-3">
+        <p className="text-sm text-muted-foreground">{t('language.description')}</p>
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+          <Segmented<Language>
+            ariaLabel={t('language.label')}
+            value={language}
+            onChange={(v) => void change(v)}
+            options={LANGUAGES}
+          />
+          <span role="status" className="text-xs text-muted-foreground">
+            {isPending ? t('common:states.saving') : isSaved ? t('language.saved') : null}
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground">{t('language.statusNote')}</p>
+      </div>
+    </Panel>
+  )
+}
+
 function PasswordSection() {
+  const { t } = useTranslation(['account', 'common'])
   const { user } = useAuth()
   const update = useUpdateMe()
   const needsCurrent = user.has_password
@@ -124,9 +156,9 @@ function PasswordSection() {
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     const v: FieldErrors = {
-      current_password: needsCurrent && !current ? 'Isi password saat ini' : undefined,
-      new_password: next.length < MIN_PASSWORD ? `Minimal ${MIN_PASSWORD} karakter` : undefined,
-      confirm: !confirm ? 'Ulangi password baru' : confirm !== next ? 'Password tidak sama' : undefined,
+      current_password: needsCurrent && !current ? t('password.currentRequired') : undefined,
+      new_password: next.length < MIN_PASSWORD ? t('common:validation.minChars', { count: MIN_PASSWORD }) : undefined,
+      confirm: !confirm ? t('password.confirmRequired') : confirm !== next ? t('password.mismatch') : undefined,
     }
     setErrors(v)
     setBanner(null)
@@ -138,7 +170,7 @@ function PasswordSection() {
           setCurrent('')
           setNext('')
           setConfirm('')
-          toast.success(needsCurrent ? 'Password diganti' : 'Password dibuat. Sekarang kamu juga bisa login dengan email.')
+          toast.success(needsCurrent ? t('password.changed') : t('password.created'))
         },
         onError: (err) => {
           const fe = apiFieldErrors(err)
@@ -152,15 +184,15 @@ function PasswordSection() {
   }
 
   return (
-    <Panel title={needsCurrent ? 'Ganti password' : 'Buat password'}>
+    <Panel title={needsCurrent ? t('password.changeTitle') : t('password.createTitle')}>
       <form onSubmit={submit} noValidate className="flex max-w-sm flex-col gap-4">
         {!needsCurrent && (
-          <p className="text-sm text-muted-foreground">Akun kamu belum punya password dan selama ini masuk lewat Google. Buat password agar bisa login dengan email juga.</p>
+          <p className="text-sm text-muted-foreground">{t('password.noPasswordIntro')}</p>
         )}
         {banner && <Banner>{banner}</Banner>}
         <input type="email" name="username" autoComplete="username" value={user.email} readOnly hidden />
         {needsCurrent && (
-          <Field id="pw-current" label="Password saat ini" error={errors.current_password}>
+          <Field id="pw-current" label={t('password.current')} error={errors.current_password}>
             <PasswordInput
               id="pw-current"
               autoComplete="current-password"
@@ -174,7 +206,7 @@ function PasswordSection() {
             />
           </Field>
         )}
-        <Field id="pw-new" label="Password baru" error={errors.new_password} hint={<PasswordLengthHint value={next} />}>
+        <Field id="pw-new" label={t('password.new')} error={errors.new_password} hint={<PasswordLengthHint value={next} />}>
           <PasswordInput
             id="pw-new"
             autoComplete="new-password"
@@ -187,7 +219,7 @@ function PasswordSection() {
             aria-describedby={describedBy('pw-new', { error: errors.new_password, hint: true })}
           />
         </Field>
-        <Field id="pw-confirm" label="Ulangi password baru" error={errors.confirm}>
+        <Field id="pw-confirm" label={t('password.confirm')} error={errors.confirm}>
           <PasswordInput
             id="pw-confirm"
             autoComplete="new-password"
@@ -202,7 +234,7 @@ function PasswordSection() {
         </Field>
         <div>
           <Button type="submit" loading={update.isPending}>
-            {needsCurrent ? 'Ganti password' : 'Buat password'}
+            {needsCurrent ? t('password.changeTitle') : t('password.createTitle')}
           </Button>
         </div>
       </form>
@@ -211,9 +243,11 @@ function PasswordSection() {
 }
 
 function GoogleSection() {
+  const { t } = useTranslation('account')
   const { user } = useAuth()
+  const mono = <span className="font-mono text-xs break-all text-foreground" />
   return (
-    <Panel title="Login Google">
+    <Panel title={t('google.title')}>
       <div className="flex items-start gap-3">
         <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-md border border-border">
           <GoogleIcon className="size-4" />
@@ -222,24 +256,19 @@ function GoogleSection() {
           {user.google_linked ? (
             <p className="inline-flex items-center gap-1.5 text-sm font-medium">
               <CircleCheck className="size-4 text-status-passed" aria-hidden />
-              Terhubung
+              {t('google.linked')}
             </p>
           ) : (
             <p className="inline-flex items-center gap-1.5 text-sm font-medium">
               <CircleDashed className="size-4 text-muted-foreground" aria-hidden />
-              Belum terhubung
+              {t('google.notLinked')}
             </p>
           )}
           <p className="text-sm text-muted-foreground">
             {user.google_linked ? (
-              <>
-                Kamu bisa masuk dengan akun Google <span className="font-mono text-xs break-all text-foreground">{user.email}</span>.
-              </>
+              <Trans t={t} i18nKey="google.linkedBody" values={{ email: user.email }} components={{ mono }} />
             ) : (
-              <>
-                Pilih <span className="text-foreground">Lanjut dengan Google</span> di halaman login memakai{' '}
-                <span className="font-mono text-xs break-all text-foreground">{user.email}</span>. Akun langsung terhubung saat pertama kali dipakai.
-              </>
+              <Trans t={t} i18nKey="google.notLinkedBody" values={{ email: user.email }} components={{ mono, em: <span className="text-foreground" /> }} />
             )}
           </p>
         </div>

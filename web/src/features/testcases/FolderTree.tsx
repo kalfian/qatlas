@@ -1,5 +1,6 @@
 import { ChevronRight, Ellipsis, Folder as FolderIcon, FolderOpen, FolderPlus, Inbox, Layers, Pencil, Plus, Trash2 } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useFolderMutations } from '@/api/queries'
@@ -61,6 +62,7 @@ export function FolderTree({
 }) {
   const { roots, byId } = React.useMemo(() => buildFolderTree(folders ?? []), [folders])
   const mutations = useFolderMutations(projectKey)
+  const { t } = useTranslation('testcases')
 
   // Folder dari path terpilih selalu terbuka; sisanya mengikuti toggle user.
   const [toggled, setToggled] = React.useState<Record<string, boolean>>({})
@@ -226,10 +228,10 @@ export function FolderTree({
     <div className="flex flex-col gap-1">
       <div className="flex h-7 items-center justify-between">
         <h2 className="text-xs font-medium text-muted-foreground" id="folder-tree-label">
-          Folder
+          {t('folders.heading')}
         </h2>
         {canEdit && (
-          <Button variant="ghost" size="icon-sm" aria-label="Folder baru" title="Folder baru" onClick={() => startCreate(null)}>
+          <Button variant="ghost" size="icon-sm" aria-label={t('folders.new')} title={t('folders.new')} onClick={() => startCreate(null)}>
             <FolderPlus />
           </Button>
         )}
@@ -240,7 +242,7 @@ export function FolderTree({
             return (
               <li key="__new" role="none" style={{ paddingLeft: 8 + row.depth * 12 }} className="py-0.5 pr-1">
                 <FolderNameInput
-                  label={row.parentId ? `Nama subfolder baru di ${byId.get(row.parentId)?.folder.name}` : 'Nama folder baru'}
+                  label={row.parentId ? t('folders.newSubfolderName', { parent: byId.get(row.parentId)?.folder.name ?? '' }) : t('folders.newFolderName')}
                   initial=""
                   pending={mutations.create.isPending}
                   onCancel={() => setCreating(null)}
@@ -250,7 +252,7 @@ export function FolderTree({
                       {
                         onSuccess: (f) => {
                           setCreating(null)
-                          toast.success(`Folder "${f.name}" dibuat`)
+                          toast.success(t('folders.created', { name: f.name }))
                         },
                         onError: (err) => toast.error(errorMessage(err)),
                       },
@@ -263,7 +265,7 @@ export function FolderTree({
           const isSelected = row.id === selectedId
           const node = row.kind === 'folder' ? row.node : undefined
           const depth = node ? node.depth : 0
-          const label = row.kind === 'all' ? 'Semua test case' : row.kind === 'root' ? 'Tanpa folder' : node!.folder.name
+          const label = row.kind === 'all' ? t('folders.allCases') : row.kind === 'root' ? t('list.noFolder') : node!.folder.name
           const count = row.kind === 'all' ? totalCount : row.kind === 'root' ? rootCount : node!.total
           const hasChildren = !!node?.children.length
           const isOpen = node ? expanded.has(node.folder.id) : undefined
@@ -273,7 +275,7 @@ export function FolderTree({
             return (
               <li key={row.id} role="none" style={{ paddingLeft: 8 + depth * 12 }} className="py-0.5 pr-1">
                 <FolderNameInput
-                  label={`Ganti nama folder ${node.folder.name}`}
+                  label={t('folders.renameLabel', { name: node.folder.name })}
                   initial={node.folder.name}
                   pending={mutations.update.isPending}
                   onCancel={() => {
@@ -309,7 +311,7 @@ export function FolderTree({
               aria-level={row.kind === 'folder' ? depth + 1 : 1}
               aria-selected={isSelected}
               aria-expanded={hasChildren ? isOpen : undefined}
-              aria-label={`${row.kind === 'all' ? 'Semua' : label}, ${count ?? 0} test case`}
+              aria-label={t('folders.itemLabel', { label: row.kind === 'all' ? t('list.allFolders') : label, count: count ?? 0 })}
               tabIndex={row.id === activeFocus ? 0 : -1}
               ref={(el) => {
                 if (el) itemRefs.current.set(row.id, el)
@@ -356,7 +358,7 @@ export function FolderTree({
                 )}
               </span>
               <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-              <span className="min-w-0 flex-1 truncate">{row.kind === 'all' ? 'Semua' : label}</span>
+              <span className="min-w-0 flex-1 truncate">{row.kind === 'all' ? t('list.allFolders') : label}</span>
               <span className={cn('text-xs tabular text-muted-foreground', canEdit && node && 'group-hover:hidden group-focus-within:hidden', menuFor === row.id && 'hidden')}>
                 {count ?? '–'}
               </span>
@@ -385,14 +387,14 @@ export function FolderTree({
                     }}
                   >
                     <DropdownMenuItem onSelect={() => startCreate(node.folder.id)}>
-                      <Plus /> Subfolder baru
+                      <Plus /> {t('folders.newSubfolder')}
                     </DropdownMenuItem>
                     <DropdownMenuItem onSelect={() => setRenaming(node.folder.id)}>
-                      <Pencil /> Ganti nama <DropdownMenuShortcut>F2</DropdownMenuShortcut>
+                      <Pencil /> {t('folders.rename')} <DropdownMenuShortcut>F2</DropdownMenuShortcut>
                     </DropdownMenuItem>
                     <DropdownMenuSeparator />
                     <DropdownMenuItem destructive onSelect={() => setDeleting(node)}>
-                      <Trash2 /> Hapus folder… <DropdownMenuShortcut>Del</DropdownMenuShortcut>
+                      <Trash2 /> {t('folders.deleteEllipsis')} <DropdownMenuShortcut>Del</DropdownMenuShortcut>
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -403,11 +405,11 @@ export function FolderTree({
       </ul>
       {canEdit && !creating && (
         <Button variant="ghost" size="sm" className="mt-1 justify-start px-2 text-muted-foreground" onClick={() => startCreate(null)}>
-          <Plus /> Folder
+          <Plus /> {t('folders.add')}
         </Button>
       )}
       {roots.length === 0 && !creating && (
-        <p className="px-2 py-1 text-xs text-muted-foreground">Belum ada folder. {canEdit ? 'Buat folder untuk mengelompokkan test case.' : ''}</p>
+        <p className="px-2 py-1 text-xs text-muted-foreground">{canEdit ? t('folders.emptyEditable') : t('folders.empty')}</p>
       )}
 
       <AlertDialog open={!!deleting} onOpenChange={(o) => !o && setDeleting(null)}>
@@ -420,7 +422,7 @@ export function FolderTree({
               onConfirm={() =>
                 mutations.remove.mutate(deleting.folder.id, {
                   onSuccess: () => {
-                    toast.success(`Folder "${deleting.folder.name}" dihapus`)
+                    toast.success(t('folders.deleted', { name: deleting.folder.name }))
                     if (selected && (selected === deleting.folder.id || isDescendant(byId, selected, deleting.folder.id))) {
                       onSelect(deleting.folder.parent_id ?? undefined)
                     }
@@ -440,21 +442,23 @@ export function FolderTree({
 function DeleteFolderBody({ node, target, pending, onConfirm }: { node: FolderNode; target: string | null; pending: boolean; onConfirm: () => void }) {
   const direct = node.folder.test_case_count
   const subs = node.children.length
-  const where = target ? `folder ${target}` : 'tanpa folder'
+  const { t } = useTranslation(['testcases', 'common'])
+  const where = target ? t('folders.deleteTargetFolder', { folder: target }) : t('folders.deleteTargetRoot')
+  const contents = subs
+    ? t('folders.deleteContentsWithSubs', { count: direct, subs: t('folders.subfolderCount', { count: subs }) })
+    : t('folders.deleteContents', { count: direct })
   return (
     <>
       <AlertDialogHeader>
-        <AlertDialogTitle>Hapus folder "{node.folder.name}"?</AlertDialogTitle>
+        <AlertDialogTitle>{t('folders.deleteTitle', { name: node.folder.name })}</AlertDialogTitle>
         <AlertDialogDescription>
-          {direct === 0 && subs === 0
-            ? 'Folder ini kosong.'
-            : `Folder ini berisi ${direct} test case${subs ? ` dan ${subs} subfolder` : ''}. Isinya dipindah ke ${where}; tidak ada test case yang ikut terhapus.`}
+          {direct === 0 && subs === 0 ? t('folders.deleteEmpty') : t('folders.deleteBody', { contents, target: where })}
         </AlertDialogDescription>
       </AlertDialogHeader>
       <AlertDialogFooter>
-        <AlertDialogCancel autoFocus>Batal</AlertDialogCancel>
+        <AlertDialogCancel autoFocus>{t('common:actions.cancel')}</AlertDialogCancel>
         <Button variant="destructive" loading={pending} onClick={onConfirm}>
-          Hapus folder
+          {t('folders.delete')}
         </Button>
       </AlertDialogFooter>
     </>
@@ -475,6 +479,7 @@ function FolderNameInput({
   onCancel: () => void
 }) {
   const [value, setValue] = React.useState(initial)
+  const { t } = useTranslation('testcases')
   const done = React.useRef(false)
   const submit = () => {
     if (done.current || pending) return
@@ -506,7 +511,7 @@ function FolderNameInput({
         }
       }}
       onBlur={submit}
-      placeholder="Nama folder"
+      placeholder={t('folders.namePlaceholder')}
       className="h-7"
     />
   )

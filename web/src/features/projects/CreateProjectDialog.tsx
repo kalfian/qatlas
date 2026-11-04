@@ -1,5 +1,7 @@
 import { useNavigate } from '@tanstack/react-router'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useCreateProject } from '@/api/queries'
@@ -25,11 +27,11 @@ function suggestKey(name: string): string {
   return normalizeKey(raw.replace(/^[0-9]+/, ''))
 }
 
-function keyProblem(key: string, strict: boolean): string | undefined {
-  if (!key) return strict ? 'Isi key project' : undefined
-  if (!/^[A-Z]/.test(key)) return 'Key harus diawali huruf'
-  if (key.length < 2) return strict ? 'Minimal 2 karakter' : undefined
-  return KEY_RE.test(key) ? undefined : 'Hanya huruf besar dan angka, 2–10 karakter'
+function keyProblem(key: string, strict: boolean, t: TFunction<'projects'>): string | undefined {
+  if (!key) return strict ? t('dialog.keyRequired') : undefined
+  if (!/^[A-Z]/.test(key)) return t('dialog.keyStartLetter')
+  if (key.length < 2) return strict ? t('dialog.keyMin') : undefined
+  return KEY_RE.test(key) ? undefined : t('dialog.keyFormat')
 }
 
 export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
@@ -48,6 +50,7 @@ export function CreateProjectDialog({ open, onOpenChange }: { open: boolean; onO
 }
 
 function CreateProjectForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: () => void }) {
+  const { t } = useTranslation(['projects', 'common'])
   const navigate = useNavigate()
   const create = useCreateProject()
   const [name, setName] = React.useState('')
@@ -64,14 +67,14 @@ function CreateProjectForm({ onCancel, onCreated }: { onCancel: () => void; onCr
     ['description', 'project-description'],
   ]
   // Validasi key live; pesan "terlalu pendek/kosong" baru muncul setelah field ditinggalkan.
-  const keyError = errors.key ?? keyProblem(key, keyBlurred)
+  const keyError = errors.key ?? keyProblem(key, keyBlurred, t)
   const keyOk = KEY_RE.test(key)
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     const v: FieldErrors = {
-      name: name.trim() ? undefined : 'Isi nama project',
-      key: keyProblem(key, true),
+      name: name.trim() ? undefined : t('dialog.nameRequired'),
+      key: keyProblem(key, true, t),
     }
     setErrors(v)
     setKeyBlurred(true)
@@ -81,7 +84,7 @@ function CreateProjectForm({ onCancel, onCreated }: { onCancel: () => void; onCr
       { name: name.trim(), key, description: description.trim() || undefined },
       {
         onSuccess: (p) => {
-          toast.success(`Project ${p.key} dibuat`)
+          toast.success(t('dialog.created', { key: p.key }))
           onCreated()
           navigate({ to: '/p/$key', params: { key: p.key } })
         },
@@ -99,12 +102,12 @@ function CreateProjectForm({ onCancel, onCreated }: { onCancel: () => void; onCr
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-5">
       <DialogHeader>
-        <DialogTitle>Buat project</DialogTitle>
-        <DialogDescription>Kamu otomatis jadi maintainer. Environment &ldquo;staging&rdquo; dibuat sebagai default.</DialogDescription>
+        <DialogTitle>{t('dialog.title')}</DialogTitle>
+        <DialogDescription>{t('dialog.description')}</DialogDescription>
       </DialogHeader>
       {banner && <Banner>{banner}</Banner>}
 
-      <Field id="project-name" label="Nama" error={errors.name}>
+      <Field id="project-name" label={t('dialog.name')} error={errors.name}>
         <Input
           id="project-name"
           autoFocus
@@ -124,16 +127,18 @@ function CreateProjectForm({ onCancel, onCreated }: { onCancel: () => void; onCr
 
       <Field
         id="project-key"
-        label="Key"
+        label={t('dialog.key')}
         error={keyError}
         hint={
           keyOk ? (
-            <>
-              Jadi awalan semua ID, mis. <span className="font-mono text-foreground">{key}-T1</span> dan{' '}
-              <span className="font-mono text-foreground">{key}-R1</span>. Tidak bisa diubah setelah dibuat.
-            </>
+            <Trans
+              t={t}
+              i18nKey="dialog.keyHint"
+              values={{ key }}
+              components={{ code: <span className="font-mono text-foreground" /> }}
+            />
           ) : (
-            '2–10 karakter huruf besar atau angka, diawali huruf.'
+            t('dialog.keyRule')
           )
         }
       >
@@ -156,7 +161,7 @@ function CreateProjectForm({ onCancel, onCreated }: { onCancel: () => void; onCr
         />
       </Field>
 
-      <Field id="project-description" label="Deskripsi" aside={<span className="text-xs text-muted-foreground">Opsional</span>} error={errors.description}>
+      <Field id="project-description" label={t('dialog.descriptionLabel')} aside={<span className="text-xs text-muted-foreground">{t('common:states.optional')}</span>} error={errors.description}>
         <Textarea
           id="project-description"
           rows={2}
@@ -170,10 +175,10 @@ function CreateProjectForm({ onCancel, onCreated }: { onCancel: () => void; onCr
 
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel} disabled={create.isPending}>
-          Batal
+          {t('common:actions.cancel')}
         </Button>
         <Button type="submit" loading={create.isPending}>
-          Buat project
+          {t('dialog.submit')}
         </Button>
       </DialogFooter>
     </form>

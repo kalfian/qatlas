@@ -1,8 +1,11 @@
 import { Check, Copy, SignalHigh, SignalLow, SignalMedium, TriangleAlert, Hand } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { Execution, Priority, TestCaseStatus } from '@/api/types'
 import { Button } from '@/components/ui/button'
+import { i18n } from '@/i18n'
+import { lazyLabels } from '@/lib/i18n-labels'
 import { cn } from '@/lib/utils'
 
 export function KeyBadge({ children, className }: { children: React.ReactNode; className?: string }) {
@@ -14,11 +17,12 @@ export function KeyBadge({ children, className }: { children: React.ReactNode; c
 }
 
 export function TagChip({ tag, onRemove }: { tag: string; onRemove?: () => void }) {
+  const { t } = useTranslation()
   return (
     <span className="inline-flex h-5 items-center gap-1 rounded-sm bg-secondary px-1.5 text-xs text-secondary-foreground">
       {tag}
       {onRemove && (
-        <button type="button" onClick={onRemove} className="text-muted-foreground hover:text-foreground" aria-label={`Hapus tag ${tag}`}>
+        <button type="button" onClick={onRemove} className="text-muted-foreground hover:text-foreground" aria-label={t('a11y.removeTag', { tag })}>
           ×
         </button>
       )}
@@ -26,9 +30,11 @@ export function TagChip({ tag, onRemove }: { tag: string; onRemove?: () => void 
   )
 }
 
-export const PRIORITY_LABELS: Record<Priority, string> = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low' }
+/** Label priority (`common:priority.*`, tetap Inggris di kedua bahasa). */
+export const PRIORITY_LABELS: Record<Priority, string> = lazyLabels(['critical', 'high', 'medium', 'low'] as const, (p) => `common:priority.${p}`)
 
 export function PriorityLabel({ priority }: { priority: Priority }) {
+  useTranslation()
   const Icon = priority === 'critical' ? TriangleAlert : priority === 'high' ? SignalHigh : priority === 'medium' ? SignalMedium : SignalLow
   const strong = priority === 'critical' || priority === 'high'
   return (
@@ -39,9 +45,11 @@ export function PriorityLabel({ priority }: { priority: Priority }) {
   )
 }
 
-export const TC_STATUS_LABELS: Record<TestCaseStatus, string> = { draft: 'Draft', ready: 'Ready', deprecated: 'Deprecated' }
+/** Label status test case (`common:testCaseStatus.*`). */
+export const TC_STATUS_LABELS: Record<TestCaseStatus, string> = lazyLabels(['draft', 'ready', 'deprecated'] as const, (s) => `common:testCaseStatus.${s}`)
 
 export function TestCaseStatusLabel({ status }: { status: TestCaseStatus }) {
+  useTranslation()
   return (
     <span className={cn('text-xs', status === 'ready' ? 'text-foreground' : 'text-muted-foreground', status === 'deprecated' && 'line-through')}>
       {TC_STATUS_LABELS[status]}
@@ -50,10 +58,11 @@ export function TestCaseStatusLabel({ status }: { status: TestCaseStatus }) {
 }
 
 export function ManualBadge({ execution, className }: { execution: Execution; className?: string }) {
+  const { t } = useTranslation()
   if (execution !== 'manual') return null
   return (
     <span className={cn('inline-flex h-5 items-center gap-1 rounded-sm bg-status-awaiting-manual-bg px-1.5 text-xs font-medium text-status-awaiting-manual', className)}>
-      <Hand className="size-3" aria-hidden /> Manual
+      <Hand className="size-3" aria-hidden /> {t('execution.manual')}
     </span>
   )
 }
@@ -61,7 +70,7 @@ export function ManualBadge({ execution, className }: { execution: Execution; cl
 export function useCopy(timeout = 2000) {
   const [copied, setCopied] = React.useState(false)
   const copy = React.useCallback(
-    async (text: string, message = 'Disalin ke clipboard') => {
+    async (text: string, message: string = i18n.t('common:toast.copied')) => {
       try {
         await navigator.clipboard.writeText(text)
       } catch {
@@ -84,18 +93,19 @@ export function useCopy(timeout = 2000) {
   return { copied, copy }
 }
 
-export function CopyButton({ value, label = 'Salin', className, size = 'sm', variant = 'outline' }: {
+export function CopyButton({ value, label, className, size = 'sm', variant = 'outline' }: {
   value: string
   label?: string
   className?: string
   size?: 'sm' | 'default'
   variant?: 'outline' | 'ghost' | 'default'
 }) {
+  const { t } = useTranslation()
   const { copied, copy } = useCopy()
   return (
     <Button type="button" size={size} variant={variant} className={className} onClick={() => copy(value)}>
       {copied ? <Check /> : <Copy />}
-      {copied ? 'Tersalin' : label}
+      {copied ? t('actions.copied') : (label ?? t('actions.copy'))}
     </Button>
   )
 }

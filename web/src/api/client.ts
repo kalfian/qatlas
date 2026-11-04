@@ -16,7 +16,7 @@ export class ApiError extends Error {
   readonly details: FieldError[]
 
   constructor(status: number, body: Partial<ApiErrorBody> | undefined) {
-    super(body?.error?.message ?? `Request gagal (${status})`)
+    super(body?.error?.message ?? `Request failed (${status})`)
     this.name = 'ApiError'
     this.status = status
     this.code = body?.error?.code ?? 'unknown'
@@ -42,5 +42,5 @@ export async function unwrap<T>(promise: Promise<FetchResult<T>>): Promise<T> {
 export function errorMessage(err: unknown): string {
   if (err instanceof ApiError) return err.message
   if (err instanceof Error) return err.message
-  return 'Terjadi kesalahan yang tidak diketahui'
+  return 'Unknown error'
 }

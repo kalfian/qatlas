@@ -63,7 +63,7 @@ describe('mock run simulator', () => {
     expect(run.status).toBe('awaiting_manual')
     const manual = run.cases.find((c) => c.position === run.resume_position)!
     expect(manual.execution).toBe('manual')
-    expect(completeManualCase(run, manual.id, 'u_rina')).toMatch(/belum ditandai/)
+    expect(completeManualCase(run, manual.id, 'u_rina')).toMatch(/not marked yet/)
     manual.steps.forEach((s) => (s.status = 'passed'))
     expect(completeManualCase(run, manual.id, 'u_rina')).toBeNull()
     expect(run.status).toBe('running')

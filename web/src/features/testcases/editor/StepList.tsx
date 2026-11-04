@@ -15,6 +15,7 @@ import { SortableContext, sortableKeyboardCoordinates, useSortable, verticalList
 import { CSS } from '@dnd-kit/utilities'
 import { ArrowDown, ArrowUp, CircleAlert, Copy, Ellipsis, GripVertical, Plus, Power, PowerOff, Trash2, TriangleAlert } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { Execution, FieldError, Step, StepAction, StepStatus } from '@/api/types'
 import { StepSummaryText } from '@/components/misc'
 import { STATUS_META, StatusIcon } from '@/components/status'
@@ -28,6 +29,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Kbd } from '@/components/ui/kbd'
+import { i18n } from '@/i18n'
 import { summarizeStep } from '@/lib/steps'
 import { cn } from '@/lib/utils'
 import { actionIcon } from '../lib'
@@ -45,22 +47,17 @@ export interface StepListHandlers {
   onAdd: (action: StepAction) => void
 }
 
-const RUN_WORD: Partial<Record<StepStatus, string>> = {
-  passed: 'lolos di run terakhir',
-  failed: 'gagal di run terakhir',
-  error: 'error di run terakhir',
-  skipped: 'di-skip di run terakhir',
-  blocked: 'blocked di run terakhir',
-  running: 'sedang berjalan',
-}
+const RUN_WORD_STATUSES = ['passed', 'failed', 'error', 'skipped', 'blocked', 'running'] as const
+type RunWordStatus = (typeof RUN_WORD_STATUSES)[number]
 
 export function stepAccessibleName(step: Step, index: number, runStatus?: StepStatus, errorCount = 0): string {
-  const parts = [`Step ${index + 1}`]
+  const t = i18n.getFixedT(null, 'testcases')
+  const parts: string[] = [t('stepList.stepN', { n: String(index + 1) })]
   if (step.action !== 'manual') parts.push(step.action)
   parts.push(summarizeStep(step))
-  if (step.enabled === false) parts.push('nonaktif')
-  if (errorCount) parts.push(`${errorCount} error`)
-  if (runStatus && RUN_WORD[runStatus]) parts.push(RUN_WORD[runStatus]!)
+  if (step.enabled === false) parts.push(t('stepList.a11y.disabled'))
+  if (errorCount) parts.push(t('stepList.a11y.errors', { count: errorCount }))
+  if (runStatus && (RUN_WORD_STATUSES as readonly string[]).includes(runStatus)) parts.push(t(`stepList.a11y.run.${runStatus as RunWordStatus}`))
   return parts.join(', ')
 }
 
@@ -90,6 +87,7 @@ export function StepList({
   rowRefs: React.MutableRefObject<Map<string, HTMLElement>>
 }) {
   const manual = execution === 'manual'
+  const { t } = useTranslation('testcases')
   const [dragging, setDragging] = React.useState<UniqueIdentifier | null>(null)
   const [menuFor, setMenuFor] = React.useState<string | null>(null)
   const [announce, setAnnounce] = React.useState('')
@@ -105,11 +103,12 @@ export function StepList({
   )
 
   const announcements: Announcements = {
-    onDragStart: ({ active }) => `Step ${posOf(active.id)} diangkat. Pakai panah atas/bawah untuk memindah, spasi untuk melepas, Escape untuk batal.`,
-    onDragOver: ({ active, over }) => (over ? `Step ${posOf(active.id)} sekarang di posisi ${posOf(over.id)}.` : `Step ${posOf(active.id)} di luar daftar.`),
+    onDragStart: ({ active }) => t('stepList.dnd.start', { n: String(posOf(active.id)) }),
+    onDragOver: ({ active, over }) =>
+      over ? t('stepList.dnd.over', { n: String(posOf(active.id)), to: String(posOf(over.id)) }) : t('stepList.dnd.outside', { n: String(posOf(active.id)) }),
     onDragEnd: ({ active, over }) =>
-      over ? `Step ${posOf(active.id)} dipindah ke posisi ${posOf(over.id)}.` : `Step ${posOf(active.id)} dilepas di posisi semula.`,
-    onDragCancel: ({ active }) => `Pemindahan dibatalkan. Step ${posOf(active.id)} kembali ke posisi semula.`,
+      over ? t('stepList.dnd.end', { n: String(posOf(active.id)), to: String(posOf(over.id)) }) : t('stepList.dnd.endInPlace', { n: String(posOf(active.id)) }),
+    onDragCancel: ({ active }) => t('stepList.dnd.cancel', { n: String(posOf(active.id)) }),
   }
 
   const focusId = (id: string | undefined) => {
@@ -121,7 +120,7 @@ export function StepList({
     const to = index + dir
     if (to < 0 || to >= steps.length) return
     handlers.onReorder(index, to)
-    setAnnounce(`Step ${index + 1} dipindah ke posisi ${to + 1}`)
+    setAnnounce(t('stepList.dnd.moved', { n: String(index + 1), to: String(to + 1) }))
     focusId(steps[index].id)
   }
 
@@ -169,7 +168,7 @@ export function StepList({
       case 'e':
         e.preventDefault()
         handlers.onToggle(step.id)
-        setAnnounce(step.enabled === false ? `Step ${index + 1} diaktifkan` : `Step ${index + 1} dinonaktifkan`)
+        setAnnounce(step.enabled === false ? t('stepList.enabledAnnounce', { n: String(index + 1) }) : t('stepList.disabledAnnounce', { n: String(index + 1) }))
         return
       case 'delete':
       case 'backspace': {
@@ -210,7 +209,7 @@ export function StepList({
   const list = (
     <div
       role="listbox"
-      aria-label={manual ? 'Langkah manual' : 'Daftar step'}
+      aria-label={manual ? t('stepList.labelManual') : t('stepList.label')}
       aria-describedby="step-list-help"
       className="flex flex-col divide-y divide-border overflow-hidden rounded-md border border-border"
     >
@@ -249,8 +248,8 @@ export function StepList({
   return (
     <div className="flex min-w-0 flex-col gap-2">
       <p id="step-list-help" className="sr-only">
-        Panah atas/bawah memilih step, Enter membuka detail.
-        {readOnly ? '' : ' Alt+panah memindah step, spasi untuk mulai drag, N tambah, D duplikat, E aktif/nonaktif, Delete hapus.'}
+        {t('stepList.help')}
+        {readOnly ? '' : ` ${t('stepList.helpEdit')}`}
       </p>
       <div aria-live="polite" className="sr-only">
         {announce}
@@ -268,7 +267,7 @@ export function StepList({
             accessibility={{
               announcements,
               screenReaderInstructions: {
-                draggable: 'Tekan spasi untuk mengangkat step. Pakai panah atas/bawah untuk memindah, spasi untuk melepas, Escape untuk batal.',
+                draggable: t('stepList.dnd.instructions'),
               },
             }}
           >
@@ -281,7 +280,7 @@ export function StepList({
         <div className="flex items-center gap-2">
           {manual ? (
             <Button variant="ghost" className="justify-start text-muted-foreground" onClick={() => handlers.onAdd('manual')} aria-keyshortcuts="N">
-              <Plus /> Tambah langkah
+              <Plus /> {t('stepList.addManual')}
               <Kbd className="ml-1">N</Kbd>
             </Button>
           ) : (
@@ -294,7 +293,7 @@ export function StepList({
               }}
               afterLabel={(() => {
                 const idx = selectedId ? ids.indexOf(selectedId) : -1
-                return idx >= 0 ? `setelah step ${idx + 1}` : steps.length ? 'di akhir' : undefined
+                return idx >= 0 ? t('stepList.afterStep', { n: String(idx + 1) }) : steps.length ? t('stepList.atEnd') : undefined
               })()}
             />
           )}
@@ -381,6 +380,7 @@ function StepRow({
   const hasError = errors.length > 0
   const summary = summarizeStep(step)
   const showStatus = runStatus && runStatus !== 'pending'
+  const { t } = useTranslation('testcases')
 
   return (
     <div
@@ -432,11 +432,11 @@ function StepRow({
       {manual ? (
         <div className={cn('flex min-w-0 flex-1 flex-col gap-0.5', disabled && 'opacity-60')}>
           <p className={cn('line-clamp-2 text-sm', !step.description && 'text-muted-foreground')}>
-            {step.description ? <StepSummaryText text={step.description} /> : 'Instruksi belum diisi'}
+            {step.description ? <StepSummaryText text={step.description} /> : t('stepList.noInstruction')}
           </p>
           {step.expected && (
             <p className="line-clamp-1 text-xs text-muted-foreground">
-              <span className="font-medium">Expected:</span> {step.expected}
+              <span className="font-medium">{t('stepList.expected')}</span> {step.expected}
             </p>
           )}
         </div>
@@ -448,7 +448,7 @@ function StepRow({
         </div>
       )}
 
-      {disabled && <span className="shrink-0 rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground">Nonaktif</span>}
+      {disabled && <span className="shrink-0 rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground">{t('stepList.disabledBadge')}</span>}
       {hasError ? (
         <span className="inline-flex shrink-0 items-center gap-0.5 text-xs text-destructive" title={errors.map((e) => e.message).join('\n')}>
           <CircleAlert className="size-3.5" aria-hidden />
@@ -461,7 +461,7 @@ function StepRow({
       ) : null}
       <span className="flex w-4 shrink-0 justify-center">
         {showStatus && (
-          <span title={`Run terakhir: ${STATUS_META[runStatus].label}`}>
+          <span title={t('stepList.lastRunTitle', { status: STATUS_META[runStatus].label })}>
             <StatusIcon status={runStatus} className="[&_svg]:size-3.5" />
           </span>
         )}
@@ -521,24 +521,25 @@ export function StepMenuContent({
   onCloseAutoFocus?: (e: Event) => void
 }) {
   const disabled = step.enabled === false
+  const { t } = useTranslation(['testcases', 'common'])
   return (
     <DropdownMenuContent align="end" className="w-56" onClick={(e) => e.stopPropagation()} onCloseAutoFocus={onCloseAutoFocus}>
       <DropdownMenuItem onSelect={onDuplicate}>
-        <Copy /> Duplikat <DropdownMenuShortcut>D</DropdownMenuShortcut>
+        <Copy /> {t('common:actions.duplicate')} <DropdownMenuShortcut>D</DropdownMenuShortcut>
       </DropdownMenuItem>
       <DropdownMenuItem onSelect={onToggle}>
-        {disabled ? <Power /> : <PowerOff />} {disabled ? 'Aktifkan' : 'Nonaktifkan'} <DropdownMenuShortcut>E</DropdownMenuShortcut>
+        {disabled ? <Power /> : <PowerOff />} {disabled ? t('stepList.menu.enable') : t('stepList.menu.disable')} <DropdownMenuShortcut>E</DropdownMenuShortcut>
       </DropdownMenuItem>
       <DropdownMenuSeparator />
       <DropdownMenuItem disabled={isFirst} onSelect={() => onMove(-1)}>
-        <ArrowUp /> Pindah ke atas <DropdownMenuShortcut>Alt ↑</DropdownMenuShortcut>
+        <ArrowUp /> {t('stepList.menu.moveUp')} <DropdownMenuShortcut>Alt ↑</DropdownMenuShortcut>
       </DropdownMenuItem>
       <DropdownMenuItem disabled={isLast} onSelect={() => onMove(1)}>
-        <ArrowDown /> Pindah ke bawah <DropdownMenuShortcut>Alt ↓</DropdownMenuShortcut>
+        <ArrowDown /> {t('stepList.menu.moveDown')} <DropdownMenuShortcut>Alt ↓</DropdownMenuShortcut>
       </DropdownMenuItem>
       <DropdownMenuSeparator />
       <DropdownMenuItem destructive onSelect={onDelete}>
-        <Trash2 /> Hapus <DropdownMenuShortcut>Del</DropdownMenuShortcut>
+        <Trash2 /> {t('common:actions.delete')} <DropdownMenuShortcut>Del</DropdownMenuShortcut>
       </DropdownMenuItem>
     </DropdownMenuContent>
   )

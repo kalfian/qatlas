@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams, useSearch } from '@tanstack/react-router'
 import { Bot, ChevronDown, FilterX, Hand, ListChecks, Plus } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useBulkTestCases, useFolders, useTags, useTestCases } from '@/api/queries'
@@ -15,12 +16,12 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogDescription, DialogTitle, SheetContent } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
-import { formatDateTime, formatRelative } from '@/lib/format'
+import { formatDateTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { BulkBar } from './BulkBar'
 import { CASE_DRAG_TYPE, FolderTree, type FolderValue } from './FolderTree'
 import { ActiveFilters, ListToolbar } from './ListToolbar'
-import { buildFolderTree, folderPath } from './lib'
+import { buildFolderTree, folderPath, shortRelative } from './lib'
 import { useDelayed } from './useDelayed'
 
 const FROM = '/_app/p/$key/tests' as const
@@ -30,6 +31,7 @@ export function TestCasesPage() {
   const search = useSearch({ from: FROM })
   const navigate = useNavigate({ from: '/p/$key/tests' })
   const canEdit = useCan('edit_tests', key)
+  const { t } = useTranslation('testcases')
 
   const folders = useFolders(key)
   const tags = useTags(key)
@@ -46,7 +48,7 @@ export function TestCasesPage() {
 
   const { byId } = React.useMemo(() => buildFolderTree(folders.data?.data ?? []), [folders.data])
   const folderLabel =
-    search.folder === undefined ? 'Semua' : search.folder === 'root' ? 'Tanpa folder' : folderPath(byId, search.folder) || 'Folder'
+    search.folder === undefined ? t('list.allFolders') : search.folder === 'root' ? t('list.noFolder') : folderPath(byId, search.folder) || t('list.folderFallback')
   const rootCount = allCases.data?.data.filter((t) => !t.folder_id).length ?? 0
   const totalCount = allCases.data?.data.length
 
@@ -105,7 +107,7 @@ export function TestCasesPage() {
     bulk.mutate(
       { ids, action: 'move', folder_id: folderId },
       {
-        onSuccess: (res) => toast.success(`${res.updated} test case dipindah ke ${folderId ? folderPath(byId, folderId) : 'Tanpa folder'}`),
+        onSuccess: (res) => toast.success(t('bulk.moved', { count: res.updated, folder: folderId ? folderPath(byId, folderId) : t('list.noFolder') })),
         onError: (err) => toast.error(errorMessage(err)),
       },
     )
@@ -132,11 +134,16 @@ export function TestCasesPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="Test cases"
+        title={t('list.title')}
         description={
           list.data ? (
             <span>
-              {folderLabel} · <span className="tabular">{resultCount}</span> test case{hasFilters ? ' cocok dengan filter' : ''}
+              <Trans
+                t={t}
+                i18nKey={hasFilters ? 'list.summaryFiltered' : 'list.summary'}
+                values={{ folder: folderLabel, count: resultCount }}
+                components={{ num: <span className="tabular" /> }}
+              />
             </span>
           ) : (
             ' '
@@ -145,7 +152,7 @@ export function TestCasesPage() {
         actions={canEdit ? <NewTestCaseButton projectKey={key} folder={newFolder} /> : undefined}
       />
       <div className="flex items-start gap-5">
-        <aside className="sticky top-16 hidden max-h-[calc(100dvh-5rem)] w-60 shrink-0 overflow-y-auto border-r border-border pr-3 xl:block" aria-label="Folder test case">
+        <aside className="sticky top-16 hidden max-h-[calc(100dvh-5rem)] w-60 shrink-0 overflow-y-auto border-r border-border pr-3 xl:block" aria-label={t('list.foldersLabel')}>
           {folders.isError ? <ErrorState error={folders.error} onRetry={() => folders.refetch()} /> : tree}
         </aside>
         <Dialog open={folderSheet} onOpenChange={setFolderSheet}>
@@ -157,13 +164,13 @@ export function TestCasesPage() {
               folderButtonRef.current?.focus()
             }}
           >
-            <DialogTitle className="sr-only">Folder test case</DialogTitle>
-            <DialogDescription className="sr-only">Pilih folder untuk memfilter daftar test case.</DialogDescription>
+            <DialogTitle className="sr-only">{t('list.foldersLabel')}</DialogTitle>
+            <DialogDescription className="sr-only">{t('list.foldersDescription')}</DialogDescription>
             {tree}
           </SheetContent>
         </Dialog>
 
-        <section className={cn('flex min-w-0 flex-1 flex-col gap-3', visibleSelected.length > 0 && 'pb-2')} aria-label="Daftar test case">
+        <section className={cn('flex min-w-0 flex-1 flex-col gap-3', visibleSelected.length > 0 && 'pb-2')} aria-label={t('list.listLabel')}>
           <ListToolbar
             search={search}
             setSearch={setSearch}
@@ -182,24 +189,24 @@ export function TestCasesPage() {
             hasFilters ? (
               <EmptyState
                 icon={FilterX}
-                title="Tidak ada test case yang cocok dengan filter"
-                description="Coba kata kunci lain atau hapus sebagian filter."
+                title={t('list.emptyFilteredTitle')}
+                description={t('list.emptyFilteredDescription')}
                 action={
                   <Button variant="outline" onClick={resetFilters}>
-                    Reset filter
+                    {t('filters.reset')}
                   </Button>
                 }
               />
             ) : (
               <EmptyState
                 icon={ListChecks}
-                title={search.folder === undefined ? 'Belum ada test case di project ini' : 'Belum ada test case di folder ini'}
-                description={canEdit ? 'Mulai dengan test case automated, atau manual untuk skenario yang dikerjakan tester.' : undefined}
+                title={search.folder === undefined ? t('list.emptyProjectTitle') : t('list.emptyFolderTitle')}
+                description={canEdit ? t('list.emptyDescription') : undefined}
                 action={
                   canEdit ? (
                     <Button asChild>
                       <Link to="/p/$key/tests/$caseKey" params={{ key, caseKey: 'new' }} search={{ execution: 'automated', folder: newFolder }}>
-                        <Plus /> Buat test case
+                        <Plus /> {t('list.create')}
                       </Link>
                     </Button>
                   ) : undefined
@@ -250,12 +257,13 @@ function CaseTable({
   onToggleRow: (index: number, shift: boolean) => void
   fetching: boolean
 }) {
+  const { t } = useTranslation('testcases')
   const navigate = useNavigate()
   const open = (caseKey: string) => navigate({ to: '/p/$key/tests/$caseKey', params: { key: projectKey, caseKey } })
   return (
     <div className={cn('relative w-full overflow-x-auto rounded-md border border-border transition-opacity duration-150', fetching && 'opacity-70')} aria-busy={fetching || undefined}>
       <table className="w-full min-w-[40rem] table-fixed border-collapse text-sm">
-        <caption className="sr-only">Test case. Klik baris untuk membuka editor. Shift+klik checkbox untuk memilih rentang.</caption>
+        <caption className="sr-only">{t('list.tableCaption')}</caption>
         <thead>
           <tr className="h-8 border-b border-border">
             {canEdit && (
@@ -263,17 +271,17 @@ function CaseTable({
                 <Checkbox
                   checked={allChecked ? true : someChecked ? 'indeterminate' : false}
                   onCheckedChange={onToggleAll}
-                  aria-label="Pilih semua test case yang tampil"
+                  aria-label={t('list.selectAll')}
                 />
               </th>
             )}
-            <Th className={cn('w-[5.5rem]', !canEdit && 'pl-3')}>Key</Th>
-            <Th>Judul</Th>
-            <Th className="w-[5.5rem]">Prioritas</Th>
-            <Th className="w-[5.5rem]">Status</Th>
-            <Th className="hidden w-28 xl:table-cell">Tag</Th>
-            <Th className="w-40">Last run</Th>
-            <Th className="hidden w-24 xl:table-cell">Diubah</Th>
+            <Th className={cn('w-[5.5rem]', !canEdit && 'pl-3')}>{t('list.columns.key')}</Th>
+            <Th>{t('list.columns.title')}</Th>
+            <Th className="w-[5.5rem]">{t('list.columns.priority')}</Th>
+            <Th className="w-[5.5rem]">{t('list.columns.status')}</Th>
+            <Th className="hidden w-28 xl:table-cell">{t('list.columns.tags')}</Th>
+            <Th className="w-40">{t('list.columns.lastRun')}</Th>
+            <Th className="hidden w-24 xl:table-cell">{t('list.columns.updated')}</Th>
           </tr>
         </thead>
         <tbody>
@@ -301,7 +309,7 @@ function CaseTable({
                         e.preventDefault()
                         onToggleRow(i, e.shiftKey)
                       }}
-                      aria-label={`Pilih ${tc.key}`}
+                      aria-label={t('list.selectRow', { key: tc.key })}
                     />
                   </td>
                 )}
@@ -337,7 +345,7 @@ function CaseTable({
                       </span>
                     )}
                     {tc.tags.length > 1 && (
-                      <span className="shrink-0 text-xs text-muted-foreground" aria-label={`dan ${tc.tags.length - 1} tag lain: ${tc.tags.slice(1).join(', ')}`}>
+                      <span className="shrink-0 text-xs text-muted-foreground" aria-label={t('list.moreTags', { count: tc.tags.length - 1, tags: tc.tags.slice(1).join(', ') })}>
                         +{tc.tags.length - 1}
                       </span>
                     )}
@@ -352,11 +360,11 @@ function CaseTable({
                       </time>
                     </span>
                   ) : (
-                    <span className="text-xs text-muted-foreground">Belum pernah</span>
+                    <span className="text-xs text-muted-foreground">{t('list.neverRun')}</span>
                   )}
                 </td>
                 <td className="hidden px-3 xl:table-cell">
-                  <span className="block truncate text-xs" title={`Diubah ${tc.updated_by.name} · ${formatDateTime(tc.updated_at)}`}>
+                  <span className="block truncate text-xs" title={t('list.updatedBy', { name: tc.updated_by.name, time: formatDateTime(tc.updated_at) })}>
                     {tc.updated_by.name.split(' ')[0]}{' '}
                     <time dateTime={tc.updated_at} className="text-muted-foreground">
                       {shortRelative(tc.updated_at)}
@@ -381,8 +389,9 @@ function Th({ className, children }: { className?: string; children: React.React
 }
 
 function TableSkeleton() {
+  const { t } = useTranslation('testcases')
   return (
-    <div className="rounded-md border border-border" aria-busy aria-label="Memuat test case">
+    <div className="rounded-md border border-border" aria-busy aria-label={t('list.loading')}>
       <div className="h-8 border-b border-border" />
       {Array.from({ length: 8 }, (_, i) => (
         <div key={i} className="flex h-9 items-center gap-4 border-b border-border px-3 last:border-0">
@@ -399,16 +408,17 @@ function TableSkeleton() {
 }
 
 function NewTestCaseButton({ projectKey, folder }: { projectKey: string; folder?: string }) {
+  const { t } = useTranslation(['testcases', 'common'])
   return (
     <div className="inline-flex">
       <Button asChild className="rounded-r-none">
         <Link to="/p/$key/tests/$caseKey" params={{ key: projectKey, caseKey: 'new' }} search={{ execution: 'automated', folder }}>
-          <Plus /> Test case
+          <Plus /> {t('list.newButton')}
         </Link>
       </Button>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button className="rounded-l-none border-l border-primary-foreground/25 px-2" aria-label="Pilih jenis test case baru">
+          <Button className="rounded-l-none border-l border-primary-foreground/25 px-2" aria-label={t('list.newTypeLabel')}>
             <ChevronDown />
           </Button>
         </DropdownMenuTrigger>
@@ -417,8 +427,8 @@ function NewTestCaseButton({ projectKey, folder }: { projectKey: string; folder?
             <Link to="/p/$key/tests/$caseKey" params={{ key: projectKey, caseKey: 'new' }} search={{ execution: 'automated', folder }}>
               <Bot className="mt-0.5" />
               <span className="flex flex-col">
-                <span className="font-medium">Automated</span>
-                <span className="text-xs text-muted-foreground">Dijalankan runner Playwright dari step DSL.</span>
+                <span className="font-medium">{t('common:execution.automated')}</span>
+                <span className="text-xs text-muted-foreground">{t('list.newAutomatedHint')}</span>
               </span>
             </Link>
           </DropdownMenuItem>
@@ -426,8 +436,8 @@ function NewTestCaseButton({ projectKey, folder }: { projectKey: string; folder?
             <Link to="/p/$key/tests/$caseKey" params={{ key: projectKey, caseKey: 'new' }} search={{ execution: 'manual', folder }}>
               <Hand className="mt-0.5" />
               <span className="flex flex-col">
-                <span className="font-medium">Manual</span>
-                <span className="text-xs text-muted-foreground">Dikerjakan tester langkah demi langkah.</span>
+                <span className="font-medium">{t('common:execution.manual')}</span>
+                <span className="text-xs text-muted-foreground">{t('list.newManualHint')}</span>
               </span>
             </Link>
           </DropdownMenuItem>
@@ -435,16 +445,4 @@ function NewTestCaseButton({ projectKey, folder }: { projectKey: string; folder?
       </DropdownMenu>
     </div>
   )
-}
-
-/** "7 jam lalu" → "7j" (kolom tabel padat; waktu lengkap ada di title). */
-function shortRelative(iso: string | null): string {
-  return formatRelative(iso)
-    .replace(' lalu', '')
-    .replace(/ detik$/, 'd')
-    .replace(/ menit$/, 'm')
-    .replace(/ jam$/, 'j')
-    .replace(/ hari$/, 'h')
-    .replace(/ bulan$/, 'bln')
-    .replace(/ tahun$/, 'th')
 }

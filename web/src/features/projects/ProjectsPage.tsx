@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { FolderKanban, Plus } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useProjects, useProjectStats } from '@/api/queries'
 import type { ProjectSummary } from '@/api/types'
 import { useIsAdmin } from '@/app/auth'
@@ -18,6 +19,7 @@ import { CreateProjectDialog } from './CreateProjectDialog'
 const GRID = 'md:grid-cols-[5.5rem_minmax(0,1fr)_7rem_14rem_9.5rem]'
 
 export function ProjectsPage() {
+  const { t } = useTranslation('projects')
   const projects = useProjects()
   const isAdmin = useIsAdmin()
   const [createOpen, setCreateOpen] = React.useState(false)
@@ -25,15 +27,15 @@ export function ProjectsPage() {
 
   const createButton = isAdmin ? (
     <Button onClick={() => setCreateOpen(true)}>
-      <Plus /> Buat project
+      <Plus /> {t('create')}
     </Button>
   ) : undefined
 
   return (
     <PageContainer>
       <PageHeader
-        title="Project"
-        description={projects.data && list.length > 0 ? `${list.length} project yang bisa kamu akses.` : 'Project yang bisa kamu akses.'}
+        title={t('title')}
+        description={projects.data && list.length > 0 ? t('descriptionCount', { count: list.length }) : t('description')}
         actions={list.length > 0 ? createButton : undefined}
       />
 
@@ -43,20 +45,20 @@ export function ProjectsPage() {
         <ErrorState error={projects.error} onRetry={() => projects.refetch()} />
       ) : list.length === 0 ? (
         isAdmin ? (
-          <EmptyState icon={FolderKanban} title="Belum ada project" description="Buat project pertama untuk mulai menyusun test case dan flow." action={createButton} />
+          <EmptyState icon={FolderKanban} title={t('emptyAdminTitle')} description={t('emptyAdminDescription')} action={createButton} />
         ) : (
-          <EmptyState icon={FolderKanban} title="Kamu belum jadi member project mana pun." description="Minta maintainer project menambahkanmu." />
+          <EmptyState icon={FolderKanban} title={t('emptyMemberTitle')} description={t('emptyMemberDescription')} />
         )
       ) : (
         <div className="rounded-md border border-border">
           <div className={`hidden h-8 items-center gap-x-4 border-b border-border px-4 text-xs font-medium text-muted-foreground md:grid ${GRID}`} aria-hidden>
-            <span>Key</span>
-            <span>Project</span>
-            <span className="text-right">Test case</span>
-            <span>Run terakhir</span>
-            <span>Pass rate 7 hari</span>
+            <span>{t('col.key')}</span>
+            <span>{t('col.project')}</span>
+            <span className="text-right">{t('col.testCases')}</span>
+            <span>{t('col.lastRun')}</span>
+            <span>{t('col.passRate')}</span>
           </div>
-          <ul aria-label="Daftar project">
+          <ul aria-label={t('listLabel')}>
             {list.map((p) => (
               <ProjectRow key={p.id} project={p} />
             ))}
@@ -70,6 +72,7 @@ export function ProjectsPage() {
 }
 
 function ProjectRow({ project: p }: { project: ProjectSummary }) {
+  const { t } = useTranslation('projects')
   const run = p.last_run
   const runAt = run ? (run.finished_at ?? run.started_at ?? run.queued_at) : null
   return (
@@ -89,14 +92,14 @@ function ProjectRow({ project: p }: { project: ProjectSummary }) {
               <span className="truncate font-medium">{p.name}</span>
               <span className="shrink-0 text-xs text-muted-foreground">{ROLE_LABELS[p.my_role]}</span>
             </span>
-            <span className="truncate text-xs text-muted-foreground">{p.description || 'Tanpa deskripsi'}</span>
+            <span className="truncate text-xs text-muted-foreground">{p.description || t('noDescription')}</span>
           </span>
         </span>
 
         {/* Mobile: meta jadi satu baris di bawah nama. Desktop: `contents` → tiap item jadi kolom grid. */}
         <span className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs md:contents md:text-sm">
           <span className="tabular md:text-right">
-            {p.test_case_count} <span className="text-muted-foreground">test case</span>
+            {p.test_case_count} <span className="text-muted-foreground">{t('testCase', { count: p.test_case_count })}</span>
           </span>
           <span className="flex min-w-0 items-center gap-2">
             {run ? (
@@ -107,7 +110,7 @@ function ProjectRow({ project: p }: { project: ProjectSummary }) {
                 </time>
               </>
             ) : (
-              <span className="text-muted-foreground">Belum ada run</span>
+              <span className="text-muted-foreground">{t('noRuns')}</span>
             )}
           </span>
           <PassRate projectKey={p.key} value={p.pass_rate_7d} />
@@ -118,9 +121,10 @@ function ProjectRow({ project: p }: { project: ProjectSummary }) {
 }
 
 function PassRate({ projectKey, value }: { projectKey: string; value: number | null }) {
+  const { t } = useTranslation('projects')
   return (
     <span className="flex items-center gap-2.5">
-      <span className="sr-only">Pass rate 7 hari:</span>
+      <span className="sr-only">{t('passRateSr')}</span>
       <span className={value == null ? 'tabular w-9 text-muted-foreground' : 'tabular w-9 font-medium'}>{formatPercent(value)}</span>
       {value != null && <Sparkline projectKey={projectKey} />}
     </span>

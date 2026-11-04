@@ -20,7 +20,7 @@ Binding conventions for everyone implementing the backend, runner, MCP and deplo
 
 ## Repository layout
 ```
-backend/                       Go module `github.com/kalfian/qatlas` (go 1.27)
+backend/                       Go module `github.com/kalfian/qatlas/backend` (go 1.27)
   cmd/qatlas/main.go           subcommands: server | worker | all | migrate up|down|status | user create-admin | seed demo | mcp-stdio
   internal/config              env config (QATLAS_*), validated at start
   internal/db                  pgx pool, goose migrations (embedded), tx helper, testutil (truncate)
@@ -97,6 +97,13 @@ NDJSON over stdin/stdout (one JSON object per line; runner logs go to stderr):
 {"type":"runner.error","run_id":"…|null","message":"…"}
 ```
 Runner semantics: interpolation `{{env.X}}`, `{{secret.X}}`, `{{vars.x}}`, `{{fn.uuid|now|random_email|random_int}}`; `vars` precedence env < run vars < case vars < runtime (`save`, `extract_text`, `set_variable`), runtime vars carry across cases only when `shared_session`. Selector mapping per docs/04. Failed step → rest `skipped` unless `continue_on_failure`. Flow-level: a failed case with `stop_on_failure` and not `continue_on_failure` → remaining cases emitted as `case.finished` `skipped`. Retries re-run a failed case (fresh context unless shared). Screenshot `every_step` / `on_failure` / per-step `screenshot:true`; HTTP steps never screenshot. Video `always` / `on_failure` (record, delete if passed); shared session ⇒ one video for the segment (attached to the first case). `details` for assertions = `{expected, actual}`, for `http_request` = `{request:{method,url}, response:{status,time_ms,body}}` (body truncated to 8 KB).
+
+### Runner behaviour the worker must handle (from `runner/README.md`)
+- `case.finished` may arrive **twice** for the first case of a shared-session segment (second one carries the video path) → treat as idempotent upsert.
+- Skipped steps get only `step.finished` (no `step.started`); cases skipped by stop_on_failure/cancel get only `case.finished`.
+- Retries repeat `case.started` and the step events for the same `step_id`s; only the final `case.finished` counts.
+- Unknown `{{env|secret|vars.X}}` fails the step. Secrets are already masked `••••` in runner events (worker still masks as a second layer).
+- The runner does not enforce the overall run timeout — the worker does.
 
 ## Events / SSE
 `GET /api/v1/runs/{runKey}/events` (text/event-stream). Server LISTENs on `qatlas_run_events`, fans out per run key; each event `data: {"type":…,"run_key":…}`; heartbeat comment every 15 s. Clients re-fetch `GET /runs/{key}` on each event (the web keeps polling as fallback).

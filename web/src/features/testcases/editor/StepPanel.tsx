@@ -1,5 +1,6 @@
 import { ChevronRight, CircleAlert, Ellipsis, MousePointerClick, TriangleAlert } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { FieldError, Step, StepStatus } from '@/api/types'
 import { StatusBadge } from '@/components/status'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -7,6 +8,7 @@ import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { i18n } from '@/i18n'
 import { getAction, type ParamDef } from '@/lib/steps'
 import { cn } from '@/lib/utils'
 import { actionIcon, setStepField } from '../lib'
@@ -51,8 +53,9 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
 
   const advancedSet = step.timeout_ms !== undefined || step.continue_on_failure || step.screenshot
   const [advOpen, setAdvOpen] = React.useState(!!advancedSet)
+  const { t } = useTranslation('testcases')
 
-  const title = manual ? `Langkah ${index + 1}` : `Step ${index + 1}`
+  const title = manual ? t('panel.manualStepN', { n: String(index + 1) }) : t('stepList.stepN', { n: String(index + 1) })
 
   return (
     <section
@@ -81,7 +84,7 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
             </>
           )}
         </h2>
-        {step.enabled === false && <span className="rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground">Nonaktif</span>}
+        {step.enabled === false && <span className="rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground">{t('stepList.disabledBadge')}</span>}
         <span className="ml-auto flex items-center gap-2">
           {runStatus && runStatus !== 'pending' && <StatusBadge status={runStatus} className="hidden sm:inline-flex" />}
           {!readOnly && (
@@ -89,7 +92,7 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
               <DropdownMenuTrigger asChild>
                 <button
                   type="button"
-                  aria-label={`Aksi ${title}`}
+                  aria-label={t('panel.actionsFor', { title })}
                   className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 >
                   <Ellipsis className="size-4" />
@@ -126,11 +129,11 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
           <ReadOnlyStep step={step} />
         ) : manual ? (
           <>
-            <Field id={fid('description')} label="Instruksi" errors={fieldErr('description')} help="Tulis apa yang harus dilakukan tester. Variable seperti {{env.BASE_URL}} diganti nilainya saat run.">
-              {(a) => <VarField {...a} multiline rows={4} value={step.description ?? ''} onValueChange={(v) => set('description', v)} placeholder="Buka halaman login dan masukkan nomor HP" />}
+            <Field id={fid('description')} label={t('panel.instruction')} errors={fieldErr('description')} help={t('panel.instructionHelp', { example: '{{env.BASE_URL}}' })}>
+              {(a) => <VarField {...a} multiline rows={4} value={step.description ?? ''} onValueChange={(v) => set('description', v)} placeholder={t('panel.instructionPlaceholder')} />}
             </Field>
-            <Field id={fid('expected')} label="Expected" optional errors={[]}>
-              {(a) => <VarField {...a} multiline rows={3} value={step.expected ?? ''} onValueChange={(v) => set('expected', v)} placeholder="Form OTP muncul dan SMS diterima" />}
+            <Field id={fid('expected')} label={t('panel.expected')} optional errors={[]}>
+              {(a) => <VarField {...a} multiline rows={3} value={step.expected ?? ''} onValueChange={(v) => set('expected', v)} placeholder={t('panel.expectedPlaceholder')} />}
             </Field>
           </>
         ) : (
@@ -139,10 +142,10 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
               <ParamField key={p.name} param={p} step={step} id={fid(p.name)} errors={fieldErr(p.name)} onSet={set} />
             ))}
             <div className="flex flex-col gap-4 border-t border-border pt-4">
-              <Field id={fid('description')} label="Deskripsi" optional errors={[]} help="Kalimat untuk report, mis. &quot;Klik tombol Masuk&quot;.">
+              <Field id={fid('description')} label={t('panel.description')} optional errors={[]} help={t('panel.descriptionHelp')}>
                 {(a) => <VarField {...a} value={step.description ?? ''} onValueChange={(v) => set('description', v)} />}
               </Field>
-              <Field id={fid('expected')} label="Expected" optional errors={[]}>
+              <Field id={fid('expected')} label={t('panel.expected')} optional errors={[]}>
                 {(a) => <VarField {...a} value={step.expected ?? ''} onValueChange={(v) => set('expected', v)} />}
               </Field>
             </div>
@@ -155,12 +158,12 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
                 className="-ml-1 flex h-7 items-center gap-1 self-start rounded-md px-1 text-sm font-medium text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               >
                 <ChevronRight className={cn('size-4 transition-transform duration-150', advOpen && 'rotate-90')} aria-hidden />
-                Lanjutan
-                {!advOpen && advancedSet && <span className="text-xs font-normal">· ada pengaturan</span>}
+                {t('panel.advanced')}
+                {!advOpen && advancedSet && <span className="text-xs font-normal">· {t('panel.advancedSet')}</span>}
               </button>
               {advOpen && (
                 <div id={fid('advanced')} className="flex flex-col gap-3 pl-5">
-                  <Field id={fid('timeout_ms')} label="Timeout (ms)" optional errors={fieldErr('timeout_ms')} help="Default 10000 ms.">
+                  <Field id={fid('timeout_ms')} label={t('panel.timeout')} optional errors={fieldErr('timeout_ms')} help={t('panel.timeoutHelp')}>
                     {(a) => (
                       <Input
                         {...a}
@@ -174,8 +177,8 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
                       />
                     )}
                   </Field>
-                  <CheckField id={fid('continue_on_failure')} label="Lanjut walau step ini gagal" help="Step berikutnya tetap dijalankan." checked={!!step.continue_on_failure} onChange={(v) => set('continue_on_failure', v || undefined)} />
-                  <CheckField id={fid('screenshot')} label="Selalu screenshot setelah step ini" help="Berlaku apa pun opsi screenshot run." checked={!!step.screenshot} onChange={(v) => set('screenshot', v || undefined)} />
+                  <CheckField id={fid('continue_on_failure')} label={t('panel.continueOnFailure')} help={t('panel.continueOnFailureHelp')} checked={!!step.continue_on_failure} onChange={(v) => set('continue_on_failure', v || undefined)} />
+                  <CheckField id={fid('screenshot')} label={t('panel.alwaysScreenshot')} help={t('panel.alwaysScreenshotHelp')} checked={!!step.screenshot} onChange={(v) => set('screenshot', v || undefined)} />
                 </div>
               )}
             </div>
@@ -204,11 +207,12 @@ function Field({
   children: (a: FieldA11y) => React.ReactNode
 }) {
   const describedBy = [errors.length ? `${id}-err` : null, help ? `${id}-help` : null].filter(Boolean).join(' ') || undefined
+  const { t } = useTranslation('testcases')
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={id} className="flex items-baseline gap-1.5">
         {label}
-        {optional && <span className="text-xs font-normal text-muted-foreground">opsional</span>}
+        {optional && <span className="text-xs font-normal text-muted-foreground">{t('panel.optional')}</span>}
       </Label>
       {children({ id, 'aria-invalid': errors.length ? true : undefined, 'aria-describedby': describedBy })}
       {errors.length > 0 && (
@@ -246,7 +250,8 @@ function CheckField({ id, label, help, checked, onChange }: { id: string; label:
 function ParamField({ param, step, id, errors, onSet }: { param: ParamDef; step: Step; id: string; errors: FieldError[]; onSet: (name: string, v: unknown) => void }) {
   const raw = (step as unknown as Record<string, unknown>)[param.name]
   const mono = MONO_TYPES.has(param.type)
-  const help = param.type === 'selector' ? param.help ?? 'Utamakan role=, label=, testid= daripada CSS.' : param.help
+  const { t } = useTranslation('testcases')
+  const help = param.type === 'selector' ? param.help ?? t('panel.selectorHelp') : param.help
   switch (param.type) {
     case 'boolean':
       return <CheckField id={id} label={param.label} help={help} checked={raw === true} onChange={(v) => onSet(param.name, v || undefined)} />
@@ -256,7 +261,7 @@ function ParamField({ param, step, id, errors, onSet }: { param: ParamDef; step:
           {(a) => (
             <Select value={raw === undefined ? undefined : String(raw)} onValueChange={(v) => onSet(param.name, v)}>
               <SelectTrigger {...a} className="w-full">
-                <SelectValue placeholder="Pilih…" />
+                <SelectValue placeholder={t('panel.selectPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
                 {param.options?.map((o) => (
@@ -274,17 +279,17 @@ function ParamField({ param, step, id, errors, onSet }: { param: ParamDef; step:
         <fieldset className="flex flex-col gap-1.5">
           <legend className="mb-1.5 flex items-baseline gap-1.5 text-sm font-medium">
             {param.label}
-            {!param.required && <span className="text-xs font-normal text-muted-foreground">opsional</span>}
+            {!param.required && <span className="text-xs font-normal text-muted-foreground">{t('panel.optional')}</span>}
           </legend>
           <KeyValueEditor
             idPrefix={id}
             value={raw as Record<string, string> | undefined}
             onChange={(v) => onSet(param.name, v)}
-            keyLabel={param.name === 'save' ? 'Nama variable' : 'Nama'}
-            valueLabel={param.name === 'save' ? 'JSONPath' : 'Nilai'}
+            keyLabel={param.name === 'save' ? t('panel.kv.variableName') : t('panel.kv.name')}
+            valueLabel={param.name === 'save' ? 'JSONPath' : t('panel.kv.value')}
             keyPlaceholder={param.name === 'save' ? 'token' : param.name === 'headers' ? 'Authorization' : 'page'}
             valuePlaceholder={param.name === 'save' ? '$.data.token' : param.name === 'headers' ? 'Bearer {{vars.token}}' : '1'}
-            addLabel={param.name === 'headers' ? 'Tambah header' : param.name === 'query' ? 'Tambah parameter' : 'Tambah variable'}
+            addLabel={param.name === 'headers' ? t('panel.kv.addHeader') : param.name === 'query' ? t('panel.kv.addParam') : t('panel.kv.addVariable')}
           />
           {help && <p className="text-xs text-muted-foreground">{help}</p>}
         </fieldset>
@@ -307,7 +312,7 @@ function ParamField({ param, step, id, errors, onSet }: { param: ParamDef; step:
       )
     case 'int-list':
       return (
-        <Field id={id} label={param.label} optional={!param.required} errors={errors} help={help ?? 'Pisahkan dengan koma, mis. 200, 201'}>
+        <Field id={id} label={param.label} optional={!param.required} errors={errors} help={help ?? t('panel.intListHelp')}>
           {(a) => (
             <Input
               {...a}
@@ -345,10 +350,11 @@ function ParamField({ param, step, id, errors, onSet }: { param: ParamDef; step:
 
 function ReadOnlyStep({ step }: { step: Step }) {
   const def = getAction(step.action)
+  const { t } = useTranslation('testcases')
   const rows: { label: string; value: React.ReactNode; mono?: boolean }[] = []
   if (step.action === 'manual') {
-    rows.push({ label: 'Instruksi', value: step.description || '—' })
-    rows.push({ label: 'Expected', value: step.expected || '—' })
+    rows.push({ label: t('panel.instruction'), value: step.description || '—' })
+    rows.push({ label: t('panel.expected'), value: step.expected || '—' })
   } else {
     for (const p of def?.params ?? []) {
       const v = (step as unknown as Record<string, unknown>)[p.name]
@@ -366,17 +372,17 @@ function ReadOnlyStep({ step }: { step: Step }) {
               ))}
             </span>
           ) : typeof v === 'boolean' ? (
-            v ? 'Ya' : 'Tidak'
+            v ? t('panel.yes') : t('panel.no')
           ) : (
             String(v)
           ),
       })
     }
-    if (step.description) rows.push({ label: 'Deskripsi', value: step.description })
-    if (step.expected) rows.push({ label: 'Expected', value: step.expected })
-    if (step.timeout_ms !== undefined) rows.push({ label: 'Timeout', value: `${step.timeout_ms} ms`, mono: true })
-    if (step.continue_on_failure) rows.push({ label: 'Continue on failure', value: 'Ya' })
-    if (step.screenshot) rows.push({ label: 'Screenshot', value: 'Selalu' })
+    if (step.description) rows.push({ label: t('panel.description'), value: step.description })
+    if (step.expected) rows.push({ label: t('panel.expected'), value: step.expected })
+    if (step.timeout_ms !== undefined) rows.push({ label: t('panel.timeoutShort'), value: `${step.timeout_ms} ms`, mono: true })
+    if (step.continue_on_failure) rows.push({ label: t('panel.continueOnFailureShort'), value: t('panel.yes') })
+    if (step.screenshot) rows.push({ label: t('panel.screenshot'), value: t('panel.always') })
   }
   return (
     <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
@@ -391,12 +397,13 @@ function ReadOnlyStep({ step }: { step: Step }) {
 }
 
 export function EmptyPanel({ hasSteps, readOnly }: { hasSteps: boolean; readOnly: boolean }) {
+  const { t } = useTranslation('testcases')
   return (
     <div className="flex flex-col items-start gap-2 rounded-md border border-dashed border-border px-4 py-6">
       <MousePointerClick className="size-5 text-muted-foreground" aria-hidden />
-      <p className="text-sm font-medium">{hasSteps ? 'Pilih step untuk melihat detailnya' : readOnly ? 'Belum ada step' : 'Tambah step pertama'}</p>
+      <p className="text-sm font-medium">{hasSteps ? t('panel.empty.pickTitle') : readOnly ? t('editor.empty.title') : t('panel.empty.addTitle')}</p>
       <p className="text-sm text-muted-foreground">
-        {hasSteps ? 'Klik baris, atau pakai panah lalu Enter.' : readOnly ? 'Test case ini belum punya step.' : 'Tekan N atau tombol "Tambah step" di bawah daftar.'}
+        {hasSteps ? t('panel.empty.pickHint') : readOnly ? t('panel.empty.readOnlyHint') : t('panel.empty.addHint')}
       </p>
     </div>
   )
@@ -405,5 +412,5 @@ export function EmptyPanel({ hasSteps, readOnly }: { hasSteps: boolean; readOnly
 
 /** Placeholder katalog ditandai sebagai contoh agar tidak terbaca seperti nilai yang sudah terisi. */
 function example(p: string | undefined) {
-  return p ? `mis. ${p}` : undefined
+  return p ? i18n.t('testcases:panel.example', { value: p }) : undefined
 }

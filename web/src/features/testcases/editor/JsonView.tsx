@@ -2,6 +2,7 @@ import { json } from '@codemirror/lang-json'
 import CodeMirror, { EditorView, gutter, GutterMarker, type ReactCodeMirrorRef } from '@uiw/react-codemirror'
 import { CircleAlert, CircleCheck, TriangleAlert } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import type { JsonIssue } from '../lib'
 
@@ -64,6 +65,8 @@ export function JsonView({
   readOnly: boolean
 }) {
   const dark = useIsDark()
+  const { t } = useTranslation('testcases')
+  const editorLabel = t('jsonView.editorLabel')
   const cmRef = React.useRef<ReactCodeMirrorRef>(null)
   const errors = [...blocking, ...semantic]
 
@@ -74,7 +77,7 @@ export function JsonView({
       json(),
       EditorView.lineWrapping,
       surfaceTheme,
-      EditorView.contentAttributes.of({ 'aria-label': 'JSON test case' }),
+      EditorView.contentAttributes.of({ 'aria-label': editorLabel }),
       gutter({
         class: 'cm-issue-gutter',
         lineMarker(view, line) {
@@ -86,7 +89,7 @@ export function JsonView({
     ]
     // errors/warnings dibandingkan per isi agar editor tidak dikonfigurasi ulang tiap render
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [JSON.stringify(errors.map((e) => e.line)), JSON.stringify(warnings.map((e) => e.line))])
+  }, [JSON.stringify(errors.map((e) => e.line)), JSON.stringify(warnings.map((e) => e.line)), editorLabel])
 
   const jump = (offset: number) => {
     const view = cmRef.current?.view
@@ -115,13 +118,14 @@ export function JsonView({
       <div aria-live="polite">
         {errors.length === 0 && warnings.length === 0 ? (
           <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-            <CircleCheck className="size-3.5 text-status-passed" aria-hidden /> JSON valid sesuai skema step.
+            <CircleCheck className="size-3.5 text-status-passed" aria-hidden /> {t('jsonView.valid')}
           </p>
         ) : (
-          <section aria-label="Masalah JSON" className="flex flex-col gap-1.5">
+          <section aria-label={t('jsonView.issuesLabel')} className="flex flex-col gap-1.5">
             <h3 className="text-xs font-medium text-muted-foreground">
-              {errors.length} error{warnings.length ? ` · ${warnings.length} warning` : ''}
-              {blocking.length > 0 && ' · perbaiki sintaks/struktur dulu untuk kembali ke Form'}
+              {errors.length} {t('editor.errorWord', { count: errors.length })}
+              {warnings.length ? ` · ${warnings.length} ${t('editor.warningWord', { count: warnings.length })}` : ''}
+              {blocking.length > 0 && ` · ${t('jsonView.fixToReturn')}`}
             </h3>
             <ul className="flex flex-col divide-y divide-border rounded-md border border-border">
               {[...errors.map((e) => ({ ...e, sev: 'error' as const })), ...warnings.map((e) => ({ ...e, sev: 'warning' as const }))].map((e, i) => (
@@ -132,11 +136,11 @@ export function JsonView({
                     className="flex min-h-8 w-full items-start gap-2 px-3 py-1.5 text-left text-sm hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none focus-visible:ring-inset"
                   >
                     {e.sev === 'error' ? (
-                      <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" aria-label="Error" />
+                      <CircleAlert className="mt-0.5 size-3.5 shrink-0 text-destructive" aria-label={t('jsonView.error')} />
                     ) : (
-                      <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-status-blocked" aria-label="Warning" />
+                      <TriangleAlert className="mt-0.5 size-3.5 shrink-0 text-status-blocked" aria-label={t('jsonView.warning')} />
                     )}
-                    <span className="w-14 shrink-0 font-mono text-xs leading-5 text-muted-foreground">baris {e.line}</span>
+                    <span className="w-14 shrink-0 font-mono text-xs leading-5 text-muted-foreground">{t('jsonView.line', { n: String(e.line) })}</span>
                     <span className="w-40 shrink-0 truncate font-mono text-xs leading-5">{e.path || '(root)'}</span>
                     <span className="min-w-0 flex-1">{e.message}</span>
                   </button>

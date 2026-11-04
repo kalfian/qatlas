@@ -1,4 +1,5 @@
 import type { ProjectRole, SystemRole } from '@/api/types'
+import { lazyLabels } from '@/lib/i18n-labels'
 
 /**
  * Matriks RBAC (docs/05-auth-and-access.md). Dipakai UI (sembunyikan aksi) dan mock API (403).
@@ -34,14 +35,9 @@ export function can(role: ProjectRole | null | undefined, action: ProjectAction,
   return MATRIX[action].includes(role)
 }
 
-export const ROLE_LABELS: Record<ProjectRole, string> = {
-  maintainer: 'Maintainer',
-  editor: 'Editor',
-  viewer: 'Viewer',
-}
+const ROLES: readonly ProjectRole[] = ['maintainer', 'editor', 'viewer']
 
-export const ROLE_DESCRIPTIONS: Record<ProjectRole, string> = {
-  maintainer: 'Kelola member, environment, dan setting project; plus semua hak editor.',
-  editor: 'Buat & ubah test case/flow, jalankan run, kerjakan run manual.',
-  viewer: 'Hanya melihat test case, flow, run, dan report.',
-}
+/** Label & deskripsi role (namespace `common:roles.*`, dibaca lewat i18n → mengikuti bahasa aktif). */
+export const ROLE_LABELS: Record<ProjectRole, string> = lazyLabels(ROLES, (r) => `common:roles.${r}.label`)
+
+export const ROLE_DESCRIPTIONS: Record<ProjectRole, string> = lazyLabels(ROLES, (r) => `common:roles.${r}.description`)

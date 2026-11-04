@@ -2,6 +2,40 @@
 
 Urutan sengaja **frontend dulu**: Phase 1 membangun seluruh user journey di FE dengan backend palsu (MSW) supaya flow & UX bisa divalidasi end-to-end sebelum investasi di backend. Kontrak API (`openapi.yaml`) yang lahir di Phase 1 menjadi spesifikasi Phase 2.
 
+## Checklist progres
+
+> Ditandai oleh koordinator setelah verifikasi (build/test). `[x]` = selesai & terverifikasi, `[~]` = sedang dikerjakan, `[ ]` = belum.
+
+**Phase 1 — Frontend end-to-end (mock)**
+- [x] Kontrak API v0 (`api/openapi.yaml`) + types FE
+- [x] Mock API (MSW) + seed + simulator run, jalan juga via `http://<ip>`
+- [x] Semua halaman & journey J1–J12 (e2e 10 tes lolos)
+- [~] i18n: default English, bisa ganti Bahasa Indonesia di pengaturan akun
+
+**Phase 2 — Backend core**
+- [~] Fondasi Go: config, DB + migrasi skema lengkap, httpx, authz, audit
+- [~] Auth: email/password, session + CSRF, rate limit, invite, Google OIDC, API token
+- [~] User & admin (`/me`, `/admin/users`, token)
+- [ ] Project, member, stats, environment + secret terenkripsi
+- [ ] Folder, test case (validasi DSL, revisi, bulk), flow
+- [ ] FE mode `real` (proxy `/api`, CSRF header, `/auth/config`)
+- [ ] Run manual end-to-end di backend
+
+**Phase 3 — Runner & reporting**
+- [x] Runner Node + Playwright resmi (protokol NDJSON) + demo target app (19 tes integrasi)
+- [ ] Worker Go (River), supervisor runner, enqueue transaksional, cancel, crash recovery
+- [ ] Artifact store (local/S3) + retention, SSE live progress
+- [ ] Flow run (shared/isolated, stop on failure, campuran manual), retries, re-run failed
+
+**Phase 4 — MCP & API token**
+- [ ] MCP server (tools konteks, test case, flow, run, report + screenshot), rate limit per token
+
+**Phase 5 — Hardening & extras**
+- [ ] Deployment: Dockerfile server/worker, docker-compose, systemd + install script (Proxmox LXC)
+- [ ] Demo seed backend (`qatlas seed demo`) terhadap demo target
+- [ ] JUnit export & contoh CI trigger
+- [ ] README + manual pengguna dengan screenshot & video
+
 ```mermaid
 flowchart LR
     P1[Phase 1<br/>FE end-to-end<br/>mock] --> P2[Phase 2<br/>Backend core]

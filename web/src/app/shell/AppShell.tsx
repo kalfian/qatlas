@@ -6,6 +6,7 @@ import {
   FolderKanban,
   Hand,
   KeyRound,
+  Languages,
   LayoutDashboard,
   ListChecks,
   LogOut,
@@ -22,6 +23,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Toaster } from 'sonner'
 import { useLogout, useMyManualRuns, useProject } from '@/api/queries'
 import { ErrorState } from '@/components/page'
@@ -42,9 +44,11 @@ import {
 import { Kbd } from '@/components/ui/kbd'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { LANGUAGES, type Language } from '@/i18n'
 import { cn } from '@/lib/utils'
 import { useAuth, useCan, useIsAdmin } from '../auth'
 import { IS_MOCK, rememberProject } from '../config'
+import { useChangeLanguage } from '../language'
 import { useTheme } from '../theme'
 import { CommandPalette, useCommandPalette } from './CommandPalette'
 import { DevToolbar } from './DevToolbar'
@@ -64,13 +68,14 @@ export function RootLayout() {
 }
 
 export function NotFoundPage() {
+  const { t } = useTranslation('nav')
   return (
     <div className="flex min-h-dvh flex-col items-start justify-center gap-2 px-6 md:px-16">
       <p className="font-mono text-xs text-muted-foreground">404</p>
-      <h1 className="text-xl font-semibold">Halaman tidak ditemukan</h1>
-      <p className="text-sm text-muted-foreground">Alamat yang kamu buka tidak ada atau sudah dipindah.</p>
+      <h1 className="text-xl font-semibold">{t('notFound.title')}</h1>
+      <p className="text-sm text-muted-foreground">{t('notFound.description')}</p>
       <Button asChild variant="outline" className="mt-2">
-        <Link to="/">Kembali ke beranda</Link>
+        <Link to="/">{t('notFound.home')}</Link>
       </Button>
     </div>
   )
@@ -79,6 +84,7 @@ export function NotFoundPage() {
 /* ------------------------------------------------------------------ shell */
 
 export function AppShell() {
+  const { t } = useTranslation('nav')
   const [mobileNav, setMobileNav] = React.useState(false)
   const palette = useCommandPalette()
   const pathname = useRouterState({ select: (s) => s.location.pathname })
@@ -87,7 +93,7 @@ export function AppShell() {
   return (
     <div className="flex min-h-dvh">
       <a href="#main" className="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:rounded-md focus:bg-background focus:px-3 focus:py-2 focus:ring-2 focus:ring-ring">
-        Lompat ke konten
+        {t('skipToContent')}
       </a>
       <aside className="sticky top-0 hidden h-dvh w-60 shrink-0 border-r border-sidebar-border bg-sidebar lg:block">
         <Sidebar />
@@ -95,7 +101,7 @@ export function AppShell() {
       <Dialog open={mobileNav} onOpenChange={setMobileNav}>
         <SheetContent side="left" className="w-64 bg-sidebar p-0" aria-describedby={undefined}>
           <span className="sr-only" id="mobile-nav-title">
-            Navigasi
+            {t('navigation')}
           </span>
           <Sidebar />
         </SheetContent>
@@ -162,6 +168,7 @@ function NavLink({ item }: { item: NavItem }) {
 }
 
 function Sidebar() {
+  const { t } = useTranslation('nav')
   const params = useParams({ strict: false }) as { key?: string }
   const key = params.key
   const isAdmin = useIsAdmin()
@@ -171,12 +178,12 @@ function Sidebar() {
 
   const projectNav: NavItem[] = key
     ? [
-        { to: `/p/${key}`, label: 'Dashboard', icon: LayoutDashboard, exact: true },
-        { to: `/p/${key}/tests`, label: 'Test cases', icon: ListChecks },
-        { to: `/p/${key}/flows`, label: 'Flows', icon: Workflow },
-        { to: `/p/${key}/runs`, label: 'Runs', icon: Play },
-        { to: `/p/${key}/environments`, label: 'Environments', icon: Layers },
-        { to: `/p/${key}/settings`, label: 'Pengaturan', icon: Settings, show: canSettings },
+        { to: `/p/${key}`, label: t('items.dashboard'), icon: LayoutDashboard, exact: true },
+        { to: `/p/${key}/tests`, label: t('items.testCases'), icon: ListChecks },
+        { to: `/p/${key}/flows`, label: t('items.flows'), icon: Workflow },
+        { to: `/p/${key}/runs`, label: t('items.runs'), icon: Play },
+        { to: `/p/${key}/environments`, label: t('items.environments'), icon: Layers },
+        { to: `/p/${key}/settings`, label: t('items.settings'), icon: Settings, show: canSettings },
       ]
     : []
 
@@ -191,26 +198,29 @@ function Sidebar() {
       <div className="p-2">
         <ProjectSwitcher currentKey={key} />
       </div>
-      <nav aria-label="Navigasi project" className="flex flex-col gap-0.5 px-2">
+      <nav aria-label={t('projectNav')} className="flex flex-col gap-0.5 px-2">
         {projectNav.filter((i) => i.show !== false).map((i) => (
           <NavLink key={i.to} item={i} />
         ))}
       </nav>
       <div className="mx-3 my-3 h-px bg-sidebar-border" />
-      <nav aria-label="Navigasi global" className="flex flex-col gap-0.5 px-2">
-        <NavLink item={{ to: '/projects', label: 'Semua project', icon: FolderKanban, exact: true }} />
-        <NavLink item={{ to: '/my-tasks', label: 'Tugas saya', icon: Hand, badge: taskCount, ariaLabel: taskCount ? `Tugas saya, ${taskCount} menunggu` : undefined }} />
-        {isAdmin && <NavLink item={{ to: '/admin/users', label: 'Admin · Users', icon: Users }} />}
+      <nav aria-label={t('globalNav')} className="flex flex-col gap-0.5 px-2">
+        <NavLink item={{ to: '/projects', label: t('items.allProjects'), icon: FolderKanban, exact: true }} />
+        <NavLink
+          item={{ to: '/my-tasks', label: t('items.myTasks'), icon: Hand, badge: taskCount, ariaLabel: taskCount ? t('myTasksPending', { count: taskCount }) : undefined }}
+        />
+        {isAdmin && <NavLink item={{ to: '/admin/users', label: t('items.adminUsers'), icon: Users }} />}
       </nav>
       <div className="mt-auto flex flex-col gap-0.5 border-t border-sidebar-border p-2">
-        <NavLink item={{ to: '/settings/profile', label: 'Akun', icon: CircleUser }} />
-        <NavLink item={{ to: '/settings/tokens', label: 'API token & MCP', icon: KeyRound }} />
+        <NavLink item={{ to: '/settings/profile', label: t('items.account'), icon: CircleUser }} />
+        <NavLink item={{ to: '/settings/tokens', label: t('items.tokensMcp'), icon: KeyRound }} />
       </div>
     </div>
   )
 }
 
 function ProjectSwitcher({ currentKey }: { currentKey?: string }) {
+  const { t } = useTranslation('nav')
   const me = useAuth()
   const navigate = useNavigate()
   const [open, setOpen] = React.useState(false)
@@ -221,7 +231,7 @@ function ProjectSwitcher({ currentKey }: { currentKey?: string }) {
         <button
           type="button"
           className="flex h-10 w-full items-center gap-2 rounded-md border border-sidebar-border bg-background px-2 text-left text-sm hover:bg-sidebar-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sidebar-ring"
-          aria-label="Pilih project"
+          aria-label={t('projectSwitcher.label')}
         >
           {current ? (
             <>
@@ -229,16 +239,16 @@ function ProjectSwitcher({ currentKey }: { currentKey?: string }) {
               <span className="min-w-0 flex-1 truncate">{current.name}</span>
             </>
           ) : (
-            <span className="flex-1 text-muted-foreground">Pilih project…</span>
+            <span className="flex-1 text-muted-foreground">{t('projectSwitcher.placeholder')}</span>
           )}
           <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         </button>
       </PopoverTrigger>
       <PopoverContent className="w-64 p-0" align="start">
         <Command>
-          <CommandInput placeholder="Cari project…" />
+          <CommandInput placeholder={t('projectSwitcher.search')} />
           <CommandList>
-            <CommandEmpty>Tidak ada project</CommandEmpty>
+            <CommandEmpty>{t('projectSwitcher.empty')}</CommandEmpty>
             <CommandGroup>
               {me.projects.map((p) => (
                 <CommandItem
@@ -263,36 +273,39 @@ function ProjectSwitcher({ currentKey }: { currentKey?: string }) {
 
 /* ------------------------------------------------------------------ topbar */
 
-const SECTION_LABELS: Record<string, string> = {
-  tests: 'Test cases',
-  flows: 'Flows',
-  runs: 'Runs',
-  environments: 'Environments',
-  settings: 'Pengaturan',
-  projects: 'Project',
-  'my-tasks': 'Tugas saya',
-  admin: 'Admin',
-  users: 'Users',
-  profile: 'Akun',
-  tokens: 'API token',
-}
+/** Segmen URL → kunci `nav:breadcrumbs.sections.*`. */
+const SECTION_KEYS = {
+  tests: 'tests',
+  flows: 'flows',
+  runs: 'runs',
+  environments: 'environments',
+  settings: 'settings',
+  projects: 'projects',
+  'my-tasks': 'myTasks',
+  admin: 'admin',
+  users: 'users',
+  profile: 'profile',
+  tokens: 'tokens',
+} as const
 
 function Breadcrumbs() {
+  const { t } = useTranslation('nav')
   const pathname = useRouterState({ select: (s) => s.location.pathname })
   const segs = pathname.split('/').filter(Boolean)
+  const section = (seg: string) => (seg in SECTION_KEYS ? t(`breadcrumbs.sections.${SECTION_KEYS[seg as keyof typeof SECTION_KEYS]}`) : seg)
   const crumbs: { label: string; to?: string; mono?: boolean }[] = []
   if (segs[0] === 'p' && segs[1]) {
     crumbs.push({ label: segs[1], to: `/p/${segs[1]}`, mono: true })
-    if (segs[2]) crumbs.push({ label: SECTION_LABELS[segs[2]] ?? segs[2], to: `/p/${segs[1]}/${segs[2]}` })
-    if (segs[3]) crumbs.push({ label: segs[3] === 'new' ? 'Baru' : segs[3], mono: segs[3] !== 'new' })
+    if (segs[2]) crumbs.push({ label: section(segs[2]), to: `/p/${segs[1]}/${segs[2]}` })
+    if (segs[3]) crumbs.push({ label: segs[3] === 'new' ? t('breadcrumbs.new') : segs[3], mono: segs[3] !== 'new' })
   } else if (segs[0] === 'settings') {
-    crumbs.push({ label: 'Akun' })
-    if (segs[1]) crumbs.push({ label: SECTION_LABELS[segs[1]] ?? segs[1] })
+    crumbs.push({ label: t('breadcrumbs.sections.account') })
+    if (segs[1]) crumbs.push({ label: section(segs[1]) })
   } else {
-    for (const s of segs) crumbs.push({ label: SECTION_LABELS[s] ?? s })
+    for (const s of segs) crumbs.push({ label: section(s) })
   }
   return (
-    <nav aria-label="Breadcrumb" className="min-w-0">
+    <nav aria-label={t('breadcrumbs.label')} className="min-w-0">
       <ol className="flex min-w-0 items-center gap-1.5 text-sm">
         {crumbs.map((c, i) => {
           const last = i === crumbs.length - 1
@@ -319,13 +332,15 @@ function Breadcrumbs() {
 const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 
 function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void }) {
+  const { t } = useTranslation('nav')
   const me = useAuth()
+  const { language, change: changeLanguage } = useChangeLanguage()
   const { theme, setTheme } = useTheme()
   const logout = useLogout()
   const navigate = useNavigate()
   return (
     <header className="sticky top-0 z-30 flex h-12 items-center gap-2 border-b border-border bg-background/100 px-3 md:px-4">
-      <Button variant="ghost" size="icon-sm" className="lg:hidden" onClick={onMenu} aria-label="Buka navigasi">
+      <Button variant="ghost" size="icon-sm" className="lg:hidden" onClick={onMenu} aria-label={t('topbar.openNav')}>
         <Menu />
       </Button>
       <Breadcrumbs />
@@ -336,30 +351,30 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
           className="hidden h-8 items-center gap-2 rounded-md border border-input bg-background px-2.5 text-sm text-muted-foreground hover:bg-accent sm:flex"
         >
           <Search className="size-4" aria-hidden />
-          <span>Cari…</span>
+          <span>{t('topbar.search')}</span>
           <Kbd className="ml-4">{isMac ? '⌘K' : 'Ctrl K'}</Kbd>
         </button>
-        <Button variant="ghost" size="icon-sm" className="sm:hidden" onClick={onSearch} aria-label="Cari">
+        <Button variant="ghost" size="icon-sm" className="sm:hidden" onClick={onSearch} aria-label={t('topbar.searchLabel')}>
           <Search />
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="icon-sm" aria-label="Tema">
+            <Button variant="ghost" size="icon-sm" aria-label={t('topbar.theme')}>
               {theme === 'dark' ? <Moon /> : theme === 'light' ? <Sun /> : <Monitor />}
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent>
-            <DropdownMenuLabel>Tema</DropdownMenuLabel>
+            <DropdownMenuLabel>{t('topbar.theme')}</DropdownMenuLabel>
             <DropdownMenuRadioGroup value={theme} onValueChange={(v) => setTheme(v as typeof theme)}>
-              <DropdownMenuRadioItem value="light">Terang</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="dark">Gelap</DropdownMenuRadioItem>
-              <DropdownMenuRadioItem value="system">Sistem</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="light">{t('topbar.themeLight')}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="dark">{t('topbar.themeDark')}</DropdownMenuRadioItem>
+              <DropdownMenuRadioItem value="system">{t('topbar.themeSystem')}</DropdownMenuRadioItem>
             </DropdownMenuRadioGroup>
           </DropdownMenuContent>
         </DropdownMenu>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <button type="button" className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Menu akun ${me.user.name}`}>
+            <button type="button" className="rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" aria-label={t('topbar.accountMenu', { name: me.user.name })}>
               <Avatar name={me.user.name} className="size-7" />
             </button>
           </DropdownMenuTrigger>
@@ -370,11 +385,22 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
             </div>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => navigate({ to: '/settings/profile' })}>
-              <CircleUser /> Profil
+              <CircleUser /> {t('topbar.profile')}
             </DropdownMenuItem>
             <DropdownMenuItem onSelect={() => navigate({ to: '/settings/tokens' })}>
-              <KeyRound /> API token
+              <KeyRound /> {t('topbar.apiTokens')}
             </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel className="flex items-center gap-2">
+              <Languages className="size-3.5" aria-hidden /> {t('topbar.language')}
+            </DropdownMenuLabel>
+            <DropdownMenuRadioGroup aria-label={t('topbar.language')} value={language} onValueChange={(v) => void changeLanguage(v as Language)}>
+              {LANGUAGES.map((l) => (
+                <DropdownMenuRadioItem key={l.value} value={l.value} lang={l.value}>
+                  {l.label}
+                </DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
             <DropdownMenuSeparator />
             <DropdownMenuItem
               onSelect={() =>
@@ -383,7 +409,7 @@ function Topbar({ onMenu, onSearch }: { onMenu: () => void; onSearch: () => void
                 })
               }
             >
-              <LogOut /> Keluar
+              <LogOut /> {t('topbar.logout')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>

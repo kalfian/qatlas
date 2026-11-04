@@ -1,5 +1,6 @@
 import { Link, useNavigate } from '@tanstack/react-router'
 import { Hand, ListChecks, Workflow } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useMyManualRuns } from '@/api/queries'
 import type { RunSummary } from '@/api/types'
 import { EmptyState, ErrorState, PageContainer, PageHeader } from '@/components/page'
@@ -17,6 +18,7 @@ function progress(run: RunSummary) {
 }
 
 export function MyTasksPage() {
+  const { t } = useTranslation('tasks')
   const runs = useMyManualRuns()
   const navigate = useNavigate()
   const list = runs.data?.data ?? []
@@ -26,9 +28,9 @@ export function MyTasksPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="Tugas saya"
-        description="Run manual yang ditugaskan ke kamu di semua project. Yang paling lama menunggu ada di atas."
-        meta={runs.data && list.length > 0 ? <span className="tabular">{list.length} menunggu</span> : undefined}
+        title={t('title')}
+        description={t('description')}
+        meta={runs.data && list.length > 0 ? <span className="tabular">{t('waiting', { count: list.length })}</span> : undefined}
       />
 
       {runs.isPending ? (
@@ -48,19 +50,19 @@ export function MyTasksPage() {
       ) : runs.isError ? (
         <ErrorState error={runs.error} onRetry={() => runs.refetch()} />
       ) : list.length === 0 ? (
-        <EmptyState icon={Hand} title="Tidak ada tugas manual" description="Run manual yang ditugaskan ke kamu akan muncul di sini." />
+        <EmptyState icon={Hand} title={t('emptyTitle')} description={t('emptyDescription')} />
       ) : (
         <div className="rounded-md border border-border">
           <Table>
-            <caption className="sr-only">Run manual yang menunggu kamu, urut dari yang paling lama</caption>
+            <caption className="sr-only">{t('caption')}</caption>
             <TableHeader>
               <TableRow>
-                <TableHead className="hidden sm:table-cell">Project</TableHead>
-                <TableHead>Run</TableHead>
-                <TableHead>Target</TableHead>
-                <TableHead className="text-right">Progres</TableHead>
-                <TableHead className="hidden sm:table-cell">Ditugaskan</TableHead>
-                <TableHead className="hidden sm:table-cell">Status</TableHead>
+                <TableHead className="hidden sm:table-cell">{t('col.project')}</TableHead>
+                <TableHead>{t('col.run')}</TableHead>
+                <TableHead>{t('col.target')}</TableHead>
+                <TableHead className="text-right">{t('col.progress')}</TableHead>
+                <TableHead className="hidden sm:table-cell">{t('col.assigned')}</TableHead>
+                <TableHead className="hidden sm:table-cell">{t('col.status')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -84,7 +86,7 @@ export function MyTasksPage() {
                         to="/p/$key/runs/$runKey"
                         params={{ key: r.project_key, runKey: r.key }}
                         className="rounded-sm font-mono text-xs font-medium text-link underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                        aria-label={`Kerjakan ${r.key}: ${r.target.title}`}
+                        aria-label={t('workOn', { key: r.key, title: r.target.title })}
                       >
                         {r.key}
                       </Link>
@@ -92,13 +94,13 @@ export function MyTasksPage() {
                     <TableCell className="py-2 sm:min-w-56">
                       <span className="flex min-w-0 items-start gap-2 sm:items-center">
                         {r.kind === 'flow' ? (
-                          <Workflow className="mt-0.5 size-3.5 shrink-0 text-muted-foreground sm:mt-0" aria-label="Flow" role="img" />
+                          <Workflow className="mt-0.5 size-3.5 shrink-0 text-muted-foreground sm:mt-0" aria-label={t('kindFlow')} role="img" />
                         ) : (
-                          <ListChecks className="mt-0.5 size-3.5 shrink-0 text-muted-foreground sm:mt-0" aria-label="Test case" role="img" />
+                          <ListChecks className="mt-0.5 size-3.5 shrink-0 text-muted-foreground sm:mt-0" aria-label={t('kindTestCase')} role="img" />
                         )}
                         <span className="min-w-0 sm:truncate">
                           {r.target.title} <span className="font-mono text-xs whitespace-nowrap text-muted-foreground">{r.target.key}</span>
-                          <span className="block text-xs text-muted-foreground sm:hidden">Ditugaskan {formatRelative(r.queued_at)}</span>
+                          <span className="block text-xs text-muted-foreground sm:hidden">{t('assignedAgo', { time: formatRelative(r.queued_at) })}</span>
                         </span>
                       </span>
                     </TableCell>
@@ -106,7 +108,7 @@ export function MyTasksPage() {
                       <span className="tabular">
                         {p.done}/{p.total}
                       </span>{' '}
-                      <span className="text-muted-foreground">step</span>
+                      <span className="text-muted-foreground">{t('step', { count: p.total })}</span>
                     </TableCell>
                     <TableCell className="hidden whitespace-nowrap sm:table-cell">
                       <time dateTime={r.queued_at} title={formatDateTime(r.queued_at)}>

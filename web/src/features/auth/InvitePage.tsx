@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { Link2Off } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ApiError, errorMessage } from '@/api/client'
 import { useAcceptInvite, useInvite, useMockGoogleLogin } from '@/api/queries'
 import type { InviteInfo } from '@/api/types'
@@ -26,6 +27,7 @@ import {
 
 export function InvitePage() {
   const { token } = useParams({ from: '/invite/$token' })
+  const { t } = useTranslation(['auth', 'common'])
   const invite = useInvite(token)
 
   if (invite.isPending) {
@@ -46,7 +48,7 @@ export function InvitePage() {
           </div>
         </Delayed>
         <span className="sr-only" role="status">
-          Memeriksa link undangan…
+          {t('invite.checking')}
         </span>
       </AuthShell>
     )
@@ -58,12 +60,13 @@ export function InvitePage() {
 }
 
 function InviteInvalid({ error, onRetry }: { error: unknown; onRetry: () => void }) {
+  const { t } = useTranslation(['auth', 'common'])
   const status = error instanceof ApiError ? error.status : 0
   const known = status === 404 || status === 410
   const title =
-    status === 404 ? 'Link tidak valid' : status === 410 ? 'Link sudah dipakai atau kedaluwarsa' : 'Gagal memeriksa link'
+    status === 404 ? t('invite.invalidTitle') : status === 410 ? t('invite.usedTitle') : t('invite.checkFailedTitle')
   const body = known
-    ? 'Link undangan dan reset password hanya bisa dipakai sekali dan berlaku 72 jam. Minta admin membuat link baru.'
+    ? t('invite.invalidBody')
     : errorMessage(error)
 
   return (
@@ -76,11 +79,11 @@ function InviteInvalid({ error, onRetry }: { error: unknown; onRetry: () => void
       <div className="flex flex-wrap gap-2">
         {!known && (
           <Button variant="outline" onClick={onRetry}>
-            Coba lagi
+            {t('common:actions.retry')}
           </Button>
         )}
         <Button asChild variant={known ? 'default' : 'ghost'}>
-          <Link to="/login">Ke halaman login</Link>
+          <Link to="/login">{t('invite.toLogin')}</Link>
         </Button>
       </div>
     </AuthShell>
@@ -88,6 +91,7 @@ function InviteInvalid({ error, onRetry }: { error: unknown; onRetry: () => void
 }
 
 function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
+  const { t } = useTranslation(['auth', 'common'])
   const navigate = useNavigate()
   const accept = useAcceptInvite(token)
   const google = useMockGoogleLogin()
@@ -102,13 +106,13 @@ function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
 
   const mismatch = confirm.length > 0 && confirm !== password
   // Pesan "tidak sama" muncul live setelah field konfirmasi disentuh, atau saat submit.
-  const confirmError = errors.confirm ?? (confirmTouched && mismatch ? 'Password tidak sama' : undefined)
+  const confirmError = errors.confirm ?? (confirmTouched && mismatch ? t('invite.mismatch') : undefined)
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     const next: FieldErrors = {
-      password: password.length < MIN_PASSWORD ? `Minimal ${MIN_PASSWORD} karakter` : undefined,
-      confirm: !confirm ? 'Ulangi password' : confirm !== password ? 'Password tidak sama' : undefined,
+      password: password.length < MIN_PASSWORD ? t('invite.tooShort', { count: MIN_PASSWORD }) : undefined,
+      confirm: !confirm ? t('invite.confirmRequired') : confirm !== password ? t('invite.mismatch') : undefined,
     }
     setErrors(next)
     setConfirmTouched(true)
@@ -148,21 +152,21 @@ function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
 
   return (
     <AuthShell
-      footer={<p className="text-xs text-muted-foreground">Link berlaku sampai {formatDateTime(invite.expires_at)} dan hanya bisa dipakai sekali.</p>}
+      footer={<p className="text-xs text-muted-foreground">{t('invite.footer', { date: formatDateTime(invite.expires_at) })}</p>}
     >
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight">{isReset ? 'Atur ulang password' : `Halo, ${firstName}`}</h1>
+        <h1 className="text-xl font-semibold tracking-tight">{isReset ? t('invite.resetTitle') : t('invite.greeting', { name: firstName })}</h1>
         <p className="text-sm text-muted-foreground">
           {isReset
-            ? 'Admin membuatkan link reset untuk akun kamu. Buat password baru, lalu kamu langsung masuk.'
-            : 'Kamu diundang ke QAtlas. Buat password untuk akun kamu, atau masuk dengan Google memakai email yang sama.'}
+            ? t('invite.resetBody')
+            : t('invite.inviteBody')}
         </p>
       </div>
 
       <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1 rounded-md border border-border px-3 py-2.5 text-sm">
-        <dt className="text-muted-foreground">Nama</dt>
+        <dt className="text-muted-foreground">{t('invite.name')}</dt>
         <dd className="truncate">{invite.name}</dd>
-        <dt className="text-muted-foreground">Email</dt>
+        <dt className="text-muted-foreground">{t('invite.email')}</dt>
         <dd className="truncate font-mono text-xs leading-5">{invite.email}</dd>
       </dl>
 
@@ -173,7 +177,7 @@ function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
         <input type="email" name="username" autoComplete="username" value={invite.email} readOnly hidden />
         <Field
           id="invite-password"
-          label={isReset ? 'Password baru' : 'Password'}
+          label={isReset ? t('invite.newPassword') : t('invite.password')}
           error={errors.password}
           hint={<PasswordLengthHint value={password} />}
         >
@@ -191,7 +195,7 @@ function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
             aria-describedby={describedBy('invite-password', { error: errors.password, hint: true })}
           />
         </Field>
-        <Field id="invite-confirm" label="Ulangi password" error={confirmError}>
+        <Field id="invite-confirm" label={t('invite.confirm')} error={confirmError}>
           <PasswordInput
             id="invite-confirm"
             autoComplete="new-password"
@@ -207,7 +211,7 @@ function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
           />
         </Field>
         <Button type="submit" size="lg" className="w-full" loading={accept.isPending} disabled={google.isPending}>
-          {isReset ? 'Simpan password & masuk' : 'Buat password & masuk'}
+          {isReset ? t('invite.submitReset') : t('invite.submitInvite')}
         </Button>
       </form>
 
@@ -216,7 +220,7 @@ function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
           <OrDivider />
           <Button type="button" variant="outline" size="lg" className="w-full" onClick={continueWithGoogle} loading={google.isPending} disabled={busy}>
             {!google.isPending && <GoogleIcon className="size-4" />}
-            Lanjut dengan Google
+            {t('invite.google')}
           </Button>
         </>
       )}

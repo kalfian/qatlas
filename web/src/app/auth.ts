@@ -6,7 +6,7 @@ import { can, type ProjectAction } from '@/lib/permissions'
 /** Data user yang login. Hanya dipakai di bawah route terproteksi (AppShell menjamin sudah ada). */
 export function useAuth(): Me {
   const { data } = useMe()
-  if (!data) throw new Error('useAuth dipakai di luar route terproteksi')
+  if (!data) throw new Error('useAuth used outside a protected route')
   return data
 }
 

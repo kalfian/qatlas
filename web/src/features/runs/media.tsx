@@ -1,17 +1,19 @@
 import * as DialogPrimitive from '@radix-ui/react-dialog'
 import { ChevronLeft, ChevronRight, Download, ExternalLink, FileText, ImageOff, Video, X } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { StatusIcon } from '@/components/status'
 import { cn } from '@/lib/utils'
 import type { MediaItem } from './runUtils'
 
 /** Placeholder abu untuk artifact kedaluwarsa — ukuran sama dengan aslinya. */
-export function ExpiredArtifact({ className, label = 'Artifact kedaluwarsa' }: { className?: string; label?: string }) {
+export function ExpiredArtifact({ className, label }: { className?: string; label?: string }) {
+  const { t } = useTranslation('runs')
   return (
     <div className={cn('flex flex-col items-center justify-center gap-1 rounded-sm border border-dashed border-border bg-muted text-xs text-muted-foreground', className)}>
       <ImageOff className="size-4" aria-hidden />
-      <span>{label}</span>
+      <span>{label ?? t('media.expired')}</span>
     </div>
   )
 }
@@ -22,8 +24,9 @@ export function ExpiredArtifact({ className, label = 'Artifact kedaluwarsa' }: {
  */
 export function Thumb({ item, size = 'sm', onOpen, className }: { item: MediaItem; size?: 'sm' | 'lg'; onOpen: () => void; className?: string }) {
   const box = size === 'sm' ? 'h-7 w-12' : 'aspect-video w-full sm:w-80'
+  const { t } = useTranslation('runs')
   if (item.expired)
-    return <ExpiredArtifact className={cn(box, className)} label={size === 'sm' ? 'Kedaluwarsa' : 'Artifact kedaluwarsa'} />
+    return <ExpiredArtifact className={cn(box, className)} label={size === 'sm' ? t('media.expiredShort') : t('media.expired')} />
   return (
     <button
       type="button"
@@ -33,7 +36,7 @@ export function Thumb({ item, size = 'sm', onOpen, className }: { item: MediaIte
         box,
         className,
       )}
-      aria-label={`Buka ${item.alt}`}
+      aria-label={t('media.open', { alt: item.alt })}
     >
       <img src={item.url} alt="" loading="lazy" className="size-full object-cover object-top" />
     </button>
@@ -80,6 +83,7 @@ export function Lightbox({
   const i = open ? Math.min(index, items.length - 1) : 0
   const item = items[i]
   const [zoom, setZoom] = React.useState(false)
+  const { t } = useTranslation(['runs', 'common'])
   const [prevId, setPrevId] = React.useState<string | undefined>(item?.id)
   if (item?.id !== prevId) {
     setPrevId(item?.id)
@@ -124,18 +128,18 @@ export function Lightbox({
                     <>
                       <Button asChild variant="ghost" size="sm" className="max-sm:h-11">
                         <a href={item.url} download={item.name}>
-                          <Download /> <span className="max-sm:sr-only">Unduh</span>
+                          <Download /> <span className="max-sm:sr-only">{t('common:actions.download')}</span>
                         </a>
                       </Button>
                       <Button asChild variant="ghost" size="sm" className="max-sm:h-11">
                         <a href={item.url} target="_blank" rel="noreferrer">
-                          <ExternalLink /> <span className="max-sm:sr-only">Buka di tab baru</span>
+                          <ExternalLink /> <span className="max-sm:sr-only">{t('media.openInNewTab')}</span>
                         </a>
                       </Button>
                     </>
                   )}
                   <DialogPrimitive.Close asChild>
-                    <Button variant="ghost" size="icon" className="max-sm:size-11" aria-label="Tutup (Esc)">
+                    <Button variant="ghost" size="icon" className="max-sm:size-11" aria-label={t('media.close')}>
                       <X />
                     </Button>
                   </DialogPrimitive.Close>
@@ -165,7 +169,7 @@ export function Lightbox({
                       size="icon"
                       className="absolute top-1/2 left-2 -translate-y-1/2 max-sm:top-auto max-sm:bottom-3 max-sm:size-11 max-sm:translate-y-0 md:left-4"
                       onClick={() => go(-1)}
-                      aria-label="Screenshot sebelumnya (←)"
+                      aria-label={t('media.previous')}
                     >
                       <ChevronLeft />
                     </Button>
@@ -174,7 +178,7 @@ export function Lightbox({
                       size="icon"
                       className="absolute top-1/2 right-2 -translate-y-1/2 max-sm:top-auto max-sm:bottom-3 max-sm:size-11 max-sm:translate-y-0 md:right-4"
                       onClick={() => go(1)}
-                      aria-label="Screenshot berikutnya (→)"
+                      aria-label={t('media.next')}
                     >
                       <ChevronRight />
                     </Button>
@@ -182,7 +186,7 @@ export function Lightbox({
                 )}
               </div>
               <p className="sr-only" aria-live="polite">
-                {`Gambar ${i + 1} dari ${items.length}`}
+                {t('media.position', { n: String(i + 1), total: String(items.length) })}
               </p>
             </>
           )}

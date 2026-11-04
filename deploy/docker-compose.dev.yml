@@ -1,0 +1,18 @@
+# Postgres untuk development lokal (docs/13). Jalankan: docker compose -f deploy/docker-compose.dev.yml up -d
+name: qatlas-dev
+services:
+  postgres:
+    image: postgres:16
+    container_name: qatlas-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: qatlas
+      POSTGRES_PASSWORD: qatlas
+      POSTGRES_DB: qatlas
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - qatlas-dev-pg:/var/lib/postgresql/data
+      - ./dev/init-test-db.sql:/docker-entrypoint-initdb.d/10-test-db.sql:ro
+volumes:
+  qatlas-dev-pg:

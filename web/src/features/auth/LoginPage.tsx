@@ -1,6 +1,8 @@
 import { useRouter, useSearch } from '@tanstack/react-router'
 import { LoaderCircle } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { ApiError } from '@/api/client'
 import { useLogin, useMe, useMockGoogleLogin } from '@/api/queries'
 import { IS_MOCK } from '@/app/config'
@@ -22,27 +24,26 @@ import {
   type FieldErrors,
 } from './shared'
 
-const NOT_REGISTERED = 'Akun Google ini belum terdaftar. Hubungi admin untuk diundang.'
-
-function loginErrorMessage(err: unknown): string {
+function loginErrorMessage(err: unknown, t: TFunction<'auth'>): string {
   if (err instanceof ApiError) {
-    if (err.code === 'invalid_credentials' || err.status === 401) return 'Email atau password salah.'
-    if (err.code === 'not_registered') return NOT_REGISTERED
+    if (err.code === 'invalid_credentials' || err.status === 401) return t('login.invalidCredentials')
+    if (err.code === 'not_registered') return t('login.notRegistered')
     // lockout / rate limit: pesan server menyebut durasinya
     return err.message
   }
-  return 'Tidak bisa terhubung ke server. Periksa koneksi lalu coba lagi.'
+  return t('login.network')
 }
 
-function searchErrorMessage(code: string | undefined): string | null {
+function searchErrorMessage(code: string | undefined, t: TFunction<'auth'>): string | null {
   if (!code) return null
-  if (code === 'not_registered') return NOT_REGISTERED
-  return 'Login dengan Google gagal. Coba lagi, atau masuk dengan email dan password.'
+  if (code === 'not_registered') return t('login.notRegistered')
+  return t('login.googleFailed')
 }
 
 export function LoginPage() {
   const search = useSearch({ from: '/login' })
   const router = useRouter()
+  const { t } = useTranslation('auth')
   const me = useMe()
   const target = safeRedirect(search.redirect)
   const signedIn = !!me.data
@@ -55,10 +56,11 @@ export function LoginPage() {
   if (signedIn || me.isPending) return null
   // Login sukses: hook login memanggil queryClient.clear(), jadi observer useMe di atas tidak
   // ikut ter-update. Navigasi eksplisit; entri /login diganti agar tombol Back tidak kembali ke form.
-  return <LoginForm searchError={searchErrorMessage(search.error)} onSignedIn={() => router.history.replace(target)} />
+  return <LoginForm searchError={searchErrorMessage(search.error, t)} onSignedIn={() => router.history.replace(target)} />
 }
 
 function LoginForm({ searchError, onSignedIn }: { searchError: string | null; onSignedIn: () => void }) {
+  const { t } = useTranslation('auth')
   const login = useLogin()
   const [email, setEmail] = React.useState('')
   const [password, setPassword] = React.useState('')
@@ -69,8 +71,8 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
   const submit = (e: React.FormEvent) => {
     e.preventDefault()
     const next: FieldErrors = {
-      email: email.trim() ? undefined : 'Isi email kamu',
-      password: password ? undefined : 'Isi password kamu',
+      email: email.trim() ? undefined : t('login.emailRequired'),
+      password: password ? undefined : t('login.passwordRequired'),
     }
     setErrors(next)
     if (next.email || next.password) {
@@ -86,7 +88,7 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
       {
         onSuccess: onSignedIn,
         onError: (err) => {
-          setBanner(loginErrorMessage(err))
+          setBanner(loginErrorMessage(err, t))
           document.getElementById('login-password')?.focus()
         },
       },
@@ -103,10 +105,10 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
     <AuthShell
       footer={
         <div className="flex flex-col gap-3 text-xs text-muted-foreground">
-          <p>Belum punya akun atau lupa password? Hubungi admin.</p>
+          <p>{t('login.noAccount')}</p>
           {IS_MOCK && (
             <p className="border-t border-border pt-3">
-              Mode demo · admin <span className="font-mono text-foreground">rina@tokoku.id</span> /{' '}
+              {t('login.demoHint')} <span className="font-mono text-foreground">rina@tokoku.id</span> /{' '}
               <span className="font-mono text-foreground">{DEMO_PASSWORD}</span>{' '}
               <button
                 type="button"
@@ -117,7 +119,7 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
                   setErrors({})
                 }}
               >
-                Isi otomatis
+                {t('login.autofill')}
               </button>
             </p>
           )}
@@ -125,14 +127,14 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
       }
     >
       <div className="flex flex-col gap-1">
-        <h1 className="text-xl font-semibold tracking-tight">Masuk</h1>
-        <p className="text-sm text-muted-foreground">Pakai akun yang dibuatkan admin tim kamu.</p>
+        <h1 className="text-xl font-semibold tracking-tight">{t('login.title')}</h1>
+        <p className="text-sm text-muted-foreground">{t('login.subtitle')}</p>
       </div>
 
       {banner && <Banner>{banner}</Banner>}
 
       <form onSubmit={submit} noValidate className="flex flex-col gap-4">
-        <Field id="login-email" label="Email" error={errors.email}>
+        <Field id="login-email" label={t('login.email')} error={errors.email}>
           <Input
             id="login-email"
             type="email"
@@ -146,7 +148,7 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
             aria-describedby={describedBy('login-email', { error: errors.email })}
           />
         </Field>
-        <Field id="login-password" label="Password" error={errors.password}>
+        <Field id="login-password" label={t('login.password')} error={errors.password}>
           <PasswordInput
             id="login-password"
             autoComplete="current-password"
@@ -158,7 +160,7 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
           />
         </Field>
         <Button type="submit" size="lg" className="w-full" loading={login.isPending}>
-          Masuk
+          {t('login.submit')}
         </Button>
       </form>
 
@@ -166,7 +168,7 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
 
       <Button type="button" variant="outline" size="lg" className="w-full" onClick={google} disabled={login.isPending}>
         <GoogleIcon className="size-4" />
-        Lanjut dengan Google
+        {t('login.google')}
       </Button>
 
       {IS_MOCK && (
@@ -196,13 +198,14 @@ function MockGoogleDialog({
   onSuccess: () => void
   onError: (message: string) => void
 }) {
+  const { t } = useTranslation('auth')
   const google = useMockGoogleLogin()
   const pendingEmail = google.isPending ? google.variables : null
 
   const pick = (email: string) =>
     google.mutate(email, {
       onSuccess,
-      onError: (err) => onError(err instanceof ApiError && err.code === 'not_registered' ? NOT_REGISTERED : loginErrorMessage(err)),
+      onError: (err) => onError(err instanceof ApiError && err.code === 'not_registered' ? t('login.notRegistered') : loginErrorMessage(err, t)),
     })
 
   return (
@@ -211,9 +214,9 @@ function MockGoogleDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <GoogleIcon className="size-4" />
-            Pilih akun Google (simulasi)
+            {t('login.mockGoogleTitle')}
           </DialogTitle>
-          <DialogDescription>Mode demo tidak membuka Google. Pilih akun untuk mencoba user terdaftar dan tidak terdaftar.</DialogDescription>
+          <DialogDescription>{t('login.mockGoogleDescription')}</DialogDescription>
         </DialogHeader>
         <ul className="-mx-2 flex flex-col" aria-busy={google.isPending || undefined}>
           {GOOGLE_ACCOUNTS.map((a) => (
@@ -229,7 +232,7 @@ function MockGoogleDialog({
                   <span className="truncate text-sm font-medium">{a.name}</span>
                   <span className="truncate font-mono text-xs text-muted-foreground">{a.email}</span>
                 </span>
-                {pendingEmail === a.email && <LoaderCircle className="size-4 animate-spin text-muted-foreground" aria-label="Memproses" />}
+                {pendingEmail === a.email && <LoaderCircle className="size-4 animate-spin text-muted-foreground" aria-label={t('login.processing')} />}
               </button>
             </li>
           ))}

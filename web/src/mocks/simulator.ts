@@ -25,8 +25,8 @@ import {
 const MOCK_TRUTH: Record<string, string> = {
   'testid=grand-total': 'Rp 90.000',
   'testid=cart-count': '1',
-  'testid=stock-label': 'Stok: 12',
-  "role=heading[name='Pesanan berhasil']": 'Pesanan berhasil',
+  'testid=stock-label': 'Stock: 12',
+  "role=heading[name='Order placed']": 'Order placed',
 }
 
 export type Rng = () => number
@@ -81,22 +81,22 @@ function failureFor(step: Step, timeout: number, interpolated: Step): { error: s
       return { error: `page.goto: net::ERR_CONNECTION_REFUSED at ${interpolated.url}`, duration: 1200 }
     case 'expect_text':
     case 'expect_value': {
-      const actual = MOCK_TRUTH[sel ?? ''] ?? '(elemen tidak ditemukan)'
+      const actual = MOCK_TRUTH[sel ?? ''] ?? '(element not found)'
       return {
-        error: `expect(${locatorExpr(sel)}).${step.action === 'expect_text' ? 'toHaveText' : 'toHaveValue'}() gagal\nExpected: ${step.match === 'equals' ? '' : 'mengandung '}"${interpolated.value}"\nReceived: "${actual}"`,
+        error: `expect(${locatorExpr(sel)}).${step.action === 'expect_text' ? 'toHaveText' : 'toHaveValue'}() failed\nExpected: ${step.match === 'equals' ? '' : 'containing '}"${interpolated.value}"\nReceived: "${actual}"`,
         details: { expected: String(interpolated.value ?? ''), actual },
         duration: timeout,
       }
     }
     case 'expect_url':
       return {
-        error: `expect(page).toHaveURL() gagal\nExpected: mengandung "${interpolated.value}"\nReceived: "https://staging.tokoku.id/login?error=1"`,
+        error: `expect(page).toHaveURL() failed\nExpected: containing "${interpolated.value}"\nReceived: "https://staging.tokoku.id/login?error=1"`,
         details: { expected: String(interpolated.value ?? ''), actual: 'https://staging.tokoku.id/login?error=1' },
         duration: timeout,
       }
     case 'expect_visible':
     case 'wait_for':
-      return { error: `TimeoutError: ${locatorExpr(sel)} tidak terlihat dalam ${timeout}ms`, duration: timeout }
+      return { error: `TimeoutError: ${locatorExpr(sel)} not visible within ${timeout}ms`, duration: timeout }
     case 'expect_status':
       return {
         error: `Expected status ${interpolated.value}, received 500`,
@@ -113,7 +113,7 @@ function failureFor(step: Step, timeout: number, interpolated: Step): { error: s
       return { error: `apiRequestContext.${(interpolated.method ?? 'get').toLowerCase()}: connect ECONNREFUSED ${interpolated.url}`, duration: 3000 }
     default:
       return {
-        error: `TimeoutError: ${step.action === 'fill' ? 'locator.fill' : `locator.${step.action}`}: Timeout ${timeout}ms exceeded.\nMenunggu ${locatorExpr(sel)}`,
+        error: `TimeoutError: ${step.action === 'fill' ? 'locator.fill' : `locator.${step.action}`}: Timeout ${timeout}ms exceeded.\nWaiting for ${locatorExpr(sel)}`,
         duration: timeout,
       }
   }
@@ -200,7 +200,7 @@ function planStep(step: Step, tc: DbTestCase, isLastAssertion: boolean, timeout:
       response: {
         status,
         time_ms: between(rng, 80, 600),
-        body: interpolated.method === 'POST' ? { data: { id: `ord_${between(rng, 1000, 9999)}`, status: 'created' } } : { data: [{ id: 'p_1', name: 'Kaos Polos Hitam', price: 90000 }], meta: { total: 1 } },
+        body: interpolated.method === 'POST' ? { data: { id: `ord_${between(rng, 1000, 9999)}`, status: 'created' } } : { data: [{ id: 'p_1', name: 'Plain Black T-shirt', price: 90000 }], meta: { total: 1 } },
       },
     }
   }
@@ -232,7 +232,7 @@ function buildCase(
       position: i + 1,
       step_id: step.id,
       action: step.action,
-      summary: summarizeStep(interp),
+      summary: summarizeStep(interp, { lng: 'en' }), // data run dari server → English
       description: interp.description ?? '',
       expected: interp.expected ?? '',
       status: 'pending' as StepStatus,
@@ -351,7 +351,7 @@ export function createRun(a: CreateRunArgs): DbRun {
   }
   if (cases.length === 0) {
     run.status = 'error'
-    run.error_message = 'Tidak ada test case aktif untuk dijalankan'
+    run.error_message = 'No enabled test cases to run'
     run.finished_at = run.queued_at
   }
   return run
@@ -362,8 +362,8 @@ export function createRun(a: CreateRunArgs): DbRun {
 const PAGE_VARIANTS: [RegExp, string][] = [
   [/login|otp|logout|password|auth/i, 'login'],
   [/keranjang|cart/i, 'cart'],
-  [/checkout|voucher|bayar|pembayaran|invoice|order/i, 'checkout'],
-  [/produk|katalog|cari|filter/i, 'catalog'],
+  [/checkout|voucher|bayar|pembayaran|payment|invoice|order/i, 'checkout'],
+  [/produk|product|katalog|catalog|cari|search|filter/i, 'catalog'],
 ]
 
 function pageVariant(title: string): string {
@@ -421,7 +421,7 @@ function finishCase(run: DbRun, c: DbRunCase, at: string) {
 function finalizeRun(run: DbRun, at: string) {
   const st = run.cases.map((c) => c.status)
   run.status = st.includes('error') ? 'error' : st.includes('failed') ? 'failed' : st.includes('blocked') ? 'blocked' : 'passed'
-  if (run.status === 'error' && !run.error_message) run.error_message = 'Error infrastruktur saat eksekusi'
+  if (run.status === 'error' && !run.error_message) run.error_message = 'Infrastructure error during execution'
   run.finished_at = at
   run.resume_position = null
 }
@@ -529,8 +529,8 @@ export function fastForward(run: DbRun, startMs: number) {
 
 export function completeManualCase(run: DbRun, caseId: string, userId: string): string | null {
   const c = run.cases.find((x) => x.id === caseId)
-  if (!c || c.execution !== 'manual') return 'Case bukan case manual'
-  if (c.steps.some((s) => s.status === 'pending')) return 'Masih ada step yang belum ditandai'
+  if (!c || c.execution !== 'manual') return 'Case is not a manual case'
+  if (c.steps.some((s) => s.status === 'pending')) return 'Some steps are not marked yet'
   const at = nowIso()
   c.executed_by_id = c.executed_by_id ?? userId
   c.started_at = c.started_at ?? run.started_at ?? at

@@ -1,5 +1,6 @@
 import { KeyRound, Plus, TerminalSquare } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useRevokeToken, useTokens } from '@/api/queries'
@@ -19,6 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Banner, Delayed } from '@/features/auth/shared'
+import { i18n } from '@/i18n'
 import { formatDate, formatRelative } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { CopyBlock, CreateTokenDialog, mcpCommand } from './CreateTokenDialog'
@@ -31,15 +33,16 @@ function tokenState(t: ApiToken, now: number): TokenState {
   return 'active'
 }
 
-/** "baru saja" untuk < 1 menit; formatRelative menulis "0 detik lalu". */
+/** "just now" untuk < 1 menit; formatRelative menulis "0 seconds ago". */
 function ago(iso: string | null): string {
-  if (iso && Date.now() - Date.parse(iso) < 60_000) return 'baru saja'
+  if (iso && Date.now() - Date.parse(iso) < 60_000) return i18n.t('common:time.justNow')
   return formatRelative(iso)
 }
 
 const STATE_ORDER: Record<TokenState, number> = { active: 0, expired: 1, revoked: 2 }
 
 export function TokensPage() {
+  const { t } = useTranslation('account')
   const tokens = useTokens()
   const [createOpen, setCreateOpen] = React.useState(false)
   const [revoking, setRevoking] = React.useState<ApiToken | null>(null)
@@ -56,22 +59,22 @@ export function TokensPage() {
 
   const createButton = (
     <Button onClick={() => setCreateOpen(true)}>
-      <Plus /> Buat token
+      <Plus /> {t('tokens.create')}
     </Button>
   )
 
   return (
     <PageContainer>
       <PageHeader
-        title="API token"
-        description="Token untuk MCP (Claude Code) dan CI. Hak token tidak pernah melebihi role kamu di project."
+        title={t('tokens.title')}
+        description={t('tokens.description')}
         actions={rows.length > 0 ? createButton : undefined}
       />
 
       <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_22rem]">
         <section aria-labelledby="tokens-heading" className="min-w-0">
           <h2 id="tokens-heading" className="sr-only">
-            Daftar token
+            {t('tokens.listHeading')}
           </h2>
           {tokens.isPending ? (
             <TokensSkeleton />
@@ -80,31 +83,31 @@ export function TokensPage() {
           ) : rows.length === 0 ? (
             <EmptyState
               icon={KeyRound}
-              title="Belum ada token"
-              description="Buat token untuk menghubungkan Claude Code lewat MCP, atau untuk menjalankan test dari CI."
+              title={t('tokens.emptyTitle')}
+              description={t('tokens.emptyDescription')}
               action={createButton}
             />
           ) : (
             <div className="rounded-md border border-border">
               <Table>
                 <caption className="sr-only">
-                  {activeCount} token aktif dari {rows.length}
+                  {t('tokens.caption', { active: String(activeCount), total: String(rows.length) })}
                 </caption>
                 <TableHeader>
                   <TableRow>
-                    <TableHead>Nama</TableHead>
-                    <TableHead className="hidden sm:table-cell">Scope</TableHead>
-                    <TableHead className="hidden md:table-cell">Project</TableHead>
-                    <TableHead className="hidden md:table-cell">Terakhir dipakai</TableHead>
-                    <TableHead className="hidden md:table-cell">Kedaluwarsa</TableHead>
+                    <TableHead>{t('tokens.columns.name')}</TableHead>
+                    <TableHead className="hidden sm:table-cell">{t('tokens.columns.scope')}</TableHead>
+                    <TableHead className="hidden md:table-cell">{t('tokens.columns.project')}</TableHead>
+                    <TableHead className="hidden md:table-cell">{t('tokens.columns.lastUsed')}</TableHead>
+                    <TableHead className="hidden md:table-cell">{t('tokens.columns.expires')}</TableHead>
                     <TableHead>
-                      <span className="sr-only">Aksi</span>
+                      <span className="sr-only">{t('tokens.columns.actions')}</span>
                     </TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map(({ token: t, state }) => (
-                    <TokenRow key={t.id} token={t} state={state} onRevoke={() => setRevoking(t)} />
+                  {rows.map(({ token: tk, state }) => (
+                    <TokenRow key={tk.id} token={tk} state={state} onRevoke={() => setRevoking(tk)} />
                   ))}
                 </TableBody>
               </Table>
@@ -121,33 +124,34 @@ export function TokensPage() {
   )
 }
 
-function TokenRow({ token: t, state, onRevoke }: { token: ApiToken; state: TokenState; onRevoke: () => void }) {
+function TokenRow({ token: tk, state, onRevoke }: { token: ApiToken; state: TokenState; onRevoke: () => void }) {
+  const { t } = useTranslation('account')
   const inactive = state !== 'active'
   return (
     <TableRow className={cn(inactive && 'text-muted-foreground')}>
       <TableCell className="py-2 md:min-w-44">
-        <span className={cn('block font-medium', inactive ? 'text-muted-foreground' : 'text-foreground')}>{t.name}</span>
+        <span className={cn('block font-medium', inactive ? 'text-muted-foreground' : 'text-foreground')}>{tk.name}</span>
         <span className="flex flex-wrap items-baseline gap-x-2 text-xs text-muted-foreground">
           <span className="font-mono">
-            <span className="sr-only">Prefix </span>
-            {t.prefix}…
+            <span className="sr-only">{t('tokens.prefix')} </span>
+            {tk.prefix}…
           </span>
-          {state === 'revoked' && <span>Dicabut {ago(t.revoked_at)}</span>}
-          {state === 'expired' && <span>Kedaluwarsa</span>}
+          {state === 'revoked' && <span>{t('tokens.revokedAgo', { time: ago(tk.revoked_at) })}</span>}
+          {state === 'expired' && <span>{t('tokens.expired')}</span>}
         </span>
         {/* Layar sempit: kolom sekunder diringkas di bawah nama. */}
         <span className="mt-1 block text-xs text-muted-foreground md:hidden">
           <span className="sm:hidden">
-            <span className="font-mono">{t.scopes.join(' ')}</span> ·{' '}
+            <span className="font-mono">{tk.scopes.join(' ')}</span> ·{' '}
           </span>
-          {t.project_keys?.length ? <span className="font-mono">{t.project_keys.join(', ')}</span> : 'Semua project'} ·{' '}
-          {t.last_used_at ? `dipakai ${ago(t.last_used_at)}` : 'belum pernah dipakai'} ·{' '}
-          {t.expires_at ? `berlaku s.d. ${formatDate(t.expires_at)}` : 'tanpa kedaluwarsa'}
+          {tk.project_keys?.length ? <span className="font-mono">{tk.project_keys.join(', ')}</span> : t('tokens.allProjects')} ·{' '}
+          {tk.last_used_at ? t('tokens.usedAgo', { time: ago(tk.last_used_at) }) : t('tokens.neverUsed')} ·{' '}
+          {tk.expires_at ? t('tokens.validUntil', { date: formatDate(tk.expires_at) }) : t('tokens.noExpiry')}
         </span>
       </TableCell>
       <TableCell className="hidden sm:table-cell">
         <span className="flex gap-1">
-          {t.scopes.map((s) => (
+          {tk.scopes.map((s) => (
             <Badge key={s} variant="mono" className={cn(inactive && 'bg-transparent px-0 text-muted-foreground')}>
               {s}
             </Badge>
@@ -155,28 +159,28 @@ function TokenRow({ token: t, state, onRevoke }: { token: ApiToken; state: Token
         </span>
       </TableCell>
       <TableCell className="hidden whitespace-nowrap md:table-cell">
-        {t.project_keys?.length ? (
+        {tk.project_keys?.length ? (
           <span className="flex flex-wrap gap-1">
-            {t.project_keys.map((k) => (
+            {tk.project_keys.map((k) => (
               <span key={k} className="font-mono text-xs">
                 {k}
               </span>
             ))}
           </span>
         ) : (
-          <span className="text-muted-foreground">Semua project</span>
+          <span className="text-muted-foreground">{t('tokens.allProjects')}</span>
         )}
       </TableCell>
       <TableCell className="hidden whitespace-nowrap md:table-cell">
-        {t.last_used_at ? <time dateTime={t.last_used_at}>{ago(t.last_used_at)}</time> : <span className="text-muted-foreground">Belum pernah</span>}
+        {tk.last_used_at ? <time dateTime={tk.last_used_at}>{ago(tk.last_used_at)}</time> : <span className="text-muted-foreground">{t('tokens.never')}</span>}
       </TableCell>
       <TableCell className="hidden whitespace-nowrap md:table-cell">
-        {t.expires_at ? <time dateTime={t.expires_at}>{formatDate(t.expires_at)}</time> : <span className="text-muted-foreground">Tidak ada</span>}
+        {tk.expires_at ? <time dateTime={tk.expires_at}>{formatDate(tk.expires_at)}</time> : <span className="text-muted-foreground">{t('tokens.expiresNever')}</span>}
       </TableCell>
       <TableCell className="w-px text-right">
         {state !== 'revoked' && (
-          <Button variant="ghost" size="sm" onClick={onRevoke} aria-label={`Cabut token ${t.name}`} className="text-destructive hover:text-destructive">
-            Cabut
+          <Button variant="ghost" size="sm" onClick={onRevoke} aria-label={t('tokens.revokeLabel', { name: tk.name })} className="text-destructive hover:text-destructive">
+            {t('tokens.revoke')}
           </Button>
         )}
       </TableCell>
@@ -203,12 +207,14 @@ function TokensSkeleton() {
 }
 
 function McpHelp() {
+  const { t } = useTranslation(['account', 'common'])
+  const code = <code className="font-mono text-xs" />
   return (
     <Panel
       title={
         <span className="inline-flex items-center gap-2">
           <TerminalSquare className="size-4 text-muted-foreground" aria-hidden />
-          Cara pakai MCP
+          {t('mcp.title')}
         </span>
       }
       bodyClassName="flex flex-col gap-4 text-sm"
@@ -217,44 +223,45 @@ function McpHelp() {
         <li className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2">
           <span className="tabular text-muted-foreground">1.</span>
           <span>
-            Buat token. Pilih scope seperlunya: <code className="font-mono text-xs">read</code> untuk membaca,{' '}
-            <code className="font-mono text-xs">write</code> untuk membuat atau mengubah test case,{' '}
-            <code className="font-mono text-xs">run</code> untuk menjalankan.
+            <Trans t={t} i18nKey="mcp.step1" components={{ code }} />
           </span>
         </li>
         <li className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2">
           <span className="tabular text-muted-foreground">2.</span>
           <div className="flex min-w-0 flex-col gap-2">
-            <span>Daftarkan server MCP di Claude Code. Ganti <code className="font-mono text-xs">&lt;token&gt;</code> dengan token kamu:</span>
-            <CopyBlock value={mcpCommand('<token>')} label="Salin perintah" />
+            <span>
+              <Trans t={t} i18nKey="mcp.step2" components={{ placeholder: <code className="font-mono text-xs">{'<token>'}</code> }} />
+            </span>
+            <CopyBlock value={mcpCommand('<token>')} label={t('common:actions.copyCommand')} />
           </div>
         </li>
         <li className="grid grid-cols-[1.25rem_minmax(0,1fr)] gap-x-2">
           <span className="tabular text-muted-foreground">3.</span>
           <span>
-            Minta Claude, misalnya: <span className="text-foreground">&ldquo;Buat test case login untuk project SHOP, jalankan di staging, lalu ringkas hasilnya.&rdquo;</span>
+            <Trans t={t} i18nKey="mcp.step3" components={{ em: <span className="text-foreground" /> }} />
           </span>
         </li>
       </ol>
       <p className="border-t border-border pt-3 text-xs text-muted-foreground">
-        Token yang sama dipakai untuk REST API (CI) lewat header <code className="font-mono">Authorization: Bearer</code>. Cabut token yang tidak dipakai lagi.
+        <Trans t={t} i18nKey="mcp.footer" components={{ code: <code className="font-mono" /> }} />
       </p>
     </Panel>
   )
 }
 
 function RevokeDialog({ token, onClose }: { token: ApiToken | null; onClose: () => void }) {
+  const { t } = useTranslation(['account', 'common'])
   const revoke = useRevokeToken()
   // Simpan token terakhir agar teks tidak hilang saat animasi tutup.
   const [last, setLast] = React.useState<ApiToken | null>(token)
   if (token && token !== last) setLast(token)
-  const t = token ?? last
+  const tk = token ?? last
 
   const confirm = () => {
-    if (!t) return
-    revoke.mutate(t.id, {
+    if (!tk) return
+    revoke.mutate(tk.id, {
       onSuccess: () => {
-        toast.success(`Token "${t.name}" dicabut`)
+        toast.success(t('revoke.done', { name: tk.name }))
         onClose()
       },
     })
@@ -272,17 +279,21 @@ function RevokeDialog({ token, onClose }: { token: ApiToken | null; onClose: () 
     >
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Cabut token &ldquo;{t?.name}&rdquo;?</AlertDialogTitle>
+          <AlertDialogTitle>{t('revoke.title', { name: tk?.name ?? '' })}</AlertDialogTitle>
           <AlertDialogDescription>
-            MCP atau CI yang memakai token <span className="font-mono text-xs text-foreground">{t?.prefix}…</span> langsung kehilangan akses. Token yang
-            sudah dicabut tidak bisa dipulihkan.
+            <Trans
+              t={t}
+              i18nKey="revoke.description"
+              values={{ prefix: tk?.prefix ?? '' }}
+              components={{ code: <span className="font-mono text-xs text-foreground" /> }}
+            />
           </AlertDialogDescription>
         </AlertDialogHeader>
-        {revoke.isError && <Banner>Gagal mencabut token: {errorMessage(revoke.error)}</Banner>}
+        {revoke.isError && <Banner>{t('revoke.failed', { message: errorMessage(revoke.error) })}</Banner>}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={revoke.isPending}>Batal</AlertDialogCancel>
+          <AlertDialogCancel disabled={revoke.isPending}>{t('common:actions.cancel')}</AlertDialogCancel>
           <Button variant="destructive" onClick={confirm} loading={revoke.isPending}>
-            Cabut token
+            {t('revoke.confirm')}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

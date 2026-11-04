@@ -1,5 +1,6 @@
 import * as React from 'react'
 import { ApiError } from '@/api/client'
+import { i18n } from '@/i18n'
 
 /**
  * true setelah `active` bertahan selama `ms` — dipakai agar skeleton tidak berkedip
@@ -50,8 +51,8 @@ export function useRefocusAfterPending(pending: boolean, ref: React.RefObject<HT
   }, [pending, ref])
 }
 
-/** Waktu relatif; < 1 menit = "baru saja" (bukan "0 detik lalu"). */
+/** Waktu relatif; < 1 menit = "just now"/"baru saja" (bukan "0 detik lalu"). */
 export function relativeTime(iso: string | null | undefined, format: (iso: string) => string): string {
   if (!iso) return '—'
-  return Date.now() - Date.parse(iso) < 60_000 ? 'baru saja' : format(iso)
+  return Date.now() - Date.parse(iso) < 60_000 ? i18n.t('common:time.justNow') : format(iso)
 }

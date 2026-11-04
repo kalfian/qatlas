@@ -2,6 +2,7 @@ import { arrayMove } from '@dnd-kit/sortable'
 import { Link, useBlocker, useNavigate, useParams } from '@tanstack/react-router'
 import { ArrowLeft, CircleAlert, ListPlus, Lock, MoreHorizontal, Play, Plus, RotateCw, Search, Trash2 } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ApiError, errorMessage } from '@/api/client'
 import { useCreateFlow, useDeleteFlow, useFlow, useUpdateFlow } from '@/api/queries'
@@ -27,6 +28,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tip } from '@/components/ui/tooltip'
 import { RunDialog } from '@/features/runs/RunDialog'
+import { i18n } from '@/i18n'
 import { formatRelative } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { FlowItemsList } from './FlowItemsList'
@@ -49,7 +51,7 @@ import { isMac, useDelayedFlag, useMediaQuery } from './hooks'
 const ROUTE = '/_app/p/$key/flows/$flowKey'
 
 function relative(iso: string | null) {
-  if (iso && Date.now() - Date.parse(iso) < 60_000) return 'baru saja'
+  if (iso && Date.now() - Date.parse(iso) < 60_000) return i18n.t('common:time.justNow')
   return formatRelative(iso)
 }
 
@@ -61,13 +63,14 @@ export function FlowBuilderPage() {
 
 function NewFlow({ projectKey }: { projectKey: string }) {
   const canEdit = useCan('edit_tests', projectKey)
+  const { t } = useTranslation('flows')
   if (!canEdit) {
     return (
       <PageContainer>
         <EmptyState
           icon={Lock}
-          title="Kamu tidak punya akses untuk membuat flow."
-          description="Hanya editor dan maintainer project yang bisa menyusun flow."
+          title={t('builder.noAccessTitle')}
+          description={t('builder.noAccessDescription')}
           action={<BackToFlows projectKey={projectKey} />}
         />
       </PageContainer>
@@ -79,6 +82,7 @@ function NewFlow({ projectKey }: { projectKey: string }) {
 function ExistingFlow({ projectKey, flowKey }: { projectKey: string; flowKey: string }) {
   const q = useFlow(flowKey)
   const showSkeleton = useDelayedFlag(q.isLoading)
+  const { t } = useTranslation('flows')
   const notFound = (q.error instanceof ApiError && q.error.status === 404) || (q.data && q.data.project_key !== projectKey)
 
   if (notFound) {
@@ -86,8 +90,8 @@ function ExistingFlow({ projectKey, flowKey }: { projectKey: string; flowKey: st
       <PageContainer>
         <EmptyState
           icon={Search}
-          title={`Flow ${flowKey} tidak ditemukan.`}
-          description="Flow ini mungkin sudah dihapus atau key-nya salah."
+          title={t('builder.notFoundTitle', { key: flowKey })}
+          description={t('builder.notFoundDescription')}
           action={<BackToFlows projectKey={projectKey} />}
         />
       </PageContainer>
@@ -105,10 +109,11 @@ function ExistingFlow({ projectKey, flowKey }: { projectKey: string; flowKey: st
 }
 
 function BackToFlows({ projectKey }: { projectKey: string }) {
+  const { t } = useTranslation('flows')
   return (
     <Button asChild variant="outline" size="sm">
       <Link to="/p/$key/flows" params={{ key: projectKey }}>
-        <ArrowLeft /> Kembali ke Flows
+        <ArrowLeft /> {t('builder.backToList')}
       </Link>
     </Button>
   )
@@ -131,6 +136,7 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
   const canRun = useCan('run', projectKey)
   const readOnly = !canEdit
   const wide = useMediaQuery('(min-width: 1280px)')
+  const { t } = useTranslation(['flows', 'common'])
 
   const [saved, setSaved] = React.useState<Flow | null>(flow)
   const [draft, setDraft] = React.useState<FlowDraft>(() => (flow ? draftFromFlow(flow) : emptyDraft()))
@@ -180,7 +186,7 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
   const addItem = (tc: FlowCaseRef) => {
     const n = draft.items.length + 1
     setDraft((d) => ({ ...d, items: [...d.items, newDraftItem(tc)] }))
-    announce(`${tc.key} ditambahkan di posisi ${n}.`)
+    announce(t('builder.announce.added', { key: tc.key, n: String(n) }))
   }
   const moveItem = (from: number, to: number) => setDraft((d) => ({ ...d, items: arrayMove(d.items, from, to) }))
   const changeItem = (uid: string, p: Partial<Pick<DraftItem, 'continue_on_failure' | 'enabled'>>) =>
@@ -196,23 +202,23 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
       delete itemErrors[uid]
       return { ...s, itemErrors }
     })
-    announce(`${removed.test_case.key} dihapus dari posisi ${index + 1}.`)
+    announce(t('builder.announce.removed', { key: removed.test_case.key, n: String(index + 1) }))
     // fokus ke baris pengganti agar keyboard user tidak kehilangan posisi
     requestAnimationFrame(() => {
       const rows = document.querySelectorAll<HTMLElement>('[data-grip]')
       ;(rows[Math.min(index, rows.length - 1)] ?? pickerInputRef.current)?.focus()
     })
-    toast(`${removed.test_case.key} dihapus dari flow`, {
+    toast(t('builder.removedToast', { key: removed.test_case.key }), {
       duration: 5000,
       action: {
-        label: 'Urungkan',
+        label: t('common:actions.undo'),
         onClick: () => {
           setDraft((d) => {
             const items = [...d.items]
             items.splice(Math.min(index, items.length), 0, removed)
             return { ...d, items }
           })
-          announce(`${removed.test_case.key} dikembalikan ke posisi ${index + 1}.`)
+          announce(t('builder.announce.restored', { key: removed.test_case.key, n: String(index + 1) }))
         },
       },
     })
@@ -245,7 +251,7 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
     setAttempted(true)
     if (issues.blocking > 0) {
       focusFirstError()
-      announce(`Flow belum bisa disimpan: ${issues.blocking} masalah perlu diperbaiki.`)
+      announce(t('builder.announce.cannotSave', { count: issues.blocking }))
       return
     }
     const input = draftToInput(draft)
@@ -256,14 +262,14 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
       if (isNew) {
         const f = await create.mutateAsync(input)
         allowNavRef.current = true
-        toast.success(`Flow ${f.key} dibuat`)
+        toast.success(t('builder.created', { key: f.key }))
         navigate({ to: '/p/$key/flows/$flowKey', params: { key: projectKey, flowKey: f.key }, replace: true })
       } else {
         const f = await update.mutateAsync({ ...input, revision: saved!.revision })
         setSaved(f)
         setBaseline(sig)
         setAttempted(false)
-        toast.success(`Flow tersimpan · revisi ${f.revision}`)
+        toast.success(t('builder.saved', { revision: String(f.revision) }))
       }
     } catch (e) {
       if (e instanceof ApiError && e.code === 'revision_conflict') {
@@ -287,7 +293,7 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
         })
         return
       }
-      toast.error(`Gagal menyimpan flow: ${errorMessage(e)}`)
+      toast.error(t('builder.saveFailed', { message: errorMessage(e) }))
     }
   }
   const saveRef = React.useRef(save)
@@ -319,10 +325,10 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
         setServerErrors(NO_SERVER_ERRORS)
         setAttempted(false)
         setConflict(false)
-        toast.success(`Flow dimuat ulang · revisi ${fresh.revision}`)
+        toast.success(t('builder.reloaded', { revision: String(fresh.revision) }))
       }
     } catch (e) {
-      toast.error(`Gagal memuat ulang: ${errorMessage(e)}`)
+      toast.error(t('builder.reloadFailed', { message: errorMessage(e) }))
     } finally {
       setReloading(false)
     }
@@ -334,25 +340,25 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
       await del.mutateAsync(saved.key)
       allowNavRef.current = true
       setDeleteOpen(false)
-      toast.success(`Flow ${saved.key} dihapus`)
+      toast.success(t('builder.deleted', { key: saved.key }))
       navigate({ to: '/p/$key/flows', params: { key: projectKey } })
     } catch (e) {
-      toast.error(`Gagal menghapus flow: ${errorMessage(e)}`)
+      toast.error(t('builder.deleteFailed', { message: errorMessage(e) }))
     }
   }
 
   // ---- run availability
   const enabledCount = draft.items.filter((i) => i.enabled).length
   const runBlockReason = isNew
-    ? 'Simpan flow dulu sebelum menjalankannya.'
+    ? t('builder.runBlock.saveFirst')
     : issues.blocking > 0
       ? firstItemError && issues.itemErrors[firstItemError.uid]
-        ? `Flow belum valid: ${firstItemError.test_case.key} (posisi ${draft.items.indexOf(firstItemError) + 1}) manual tidak boleh ada di flow shared session.`
-        : 'Flow belum valid. Perbaiki error yang ditandai dulu.'
+        ? t('builder.runBlock.manualInShared', { key: firstItemError.test_case.key, n: String(draft.items.indexOf(firstItemError) + 1) })
+        : t('builder.runBlock.invalid')
       : dirty
-        ? 'Simpan perubahan dulu. Run memakai versi flow yang tersimpan.'
+        ? t('builder.runBlock.unsaved')
         : enabledCount === 0
-          ? 'Semua test case di flow ini nonaktif.'
+          ? t('builder.runBlock.allDisabled')
           : null
 
   const saveLabel = isMac ? '⌘S' : 'Ctrl S'
@@ -375,12 +381,12 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
       <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-3">
         <div className="flex min-w-[min(100%,22rem)] flex-1 flex-col gap-1">
           <div className="flex min-w-0 items-center gap-2">
-            {isNew ? <span className="shrink-0 text-xs font-medium text-muted-foreground">Flow baru</span> : <KeyBadge className="shrink-0">{saved!.key}</KeyBadge>}
+            {isNew ? <span className="shrink-0 text-xs font-medium text-muted-foreground">{t('builder.newFlow')}</span> : <KeyBadge className="shrink-0">{saved!.key}</KeyBadge>}
             {readOnly ? (
               <h1 className="min-w-0 truncate text-xl font-semibold tracking-tight">{draft.name}</h1>
             ) : (
               <>
-                <h1 className="sr-only">{isNew ? 'Flow baru' : `Flow ${saved!.key}`}</h1>
+                <h1 className="sr-only">{isNew ? t('builder.newFlow') : t('builder.flowKey', { key: saved!.key })}</h1>
                 <Input
                   ref={nameRef}
                   value={draft.name}
@@ -389,8 +395,8 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
                     patch((d) => ({ ...d, name }))
                     if (serverErrors.name) setServerErrors((s) => ({ ...s, name: undefined }))
                   }}
-                  placeholder="Nama flow, mis. Checkout happy path"
-                  aria-label="Nama flow"
+                  placeholder={t('builder.namePlaceholder')}
+                  aria-label={t('builder.nameLabel')}
                   aria-invalid={!!nameError || undefined}
                   aria-describedby={nameError ? 'flow-name-error' : undefined}
                   autoFocus={isNew}
@@ -407,19 +413,19 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
           )}
           {saved && (
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-              <span>Revisi {saved.revision}</span>
+              <span>{t('builder.revision', { revision: String(saved.revision) })}</span>
               <span>
-                Diubah <time dateTime={saved.updated_at}>{relative(saved.updated_at)}</time>
+                {t('builder.updated')} <time dateTime={saved.updated_at}>{relative(saved.updated_at)}</time>
               </span>
               <span className="flex items-center gap-1.5">
-                Last run
+                {t('builder.lastRun')}
                 {saved.last_run_status ? (
                   <>
                     <StatusBadge status={saved.last_run_status} />
                     <time dateTime={saved.last_run_at ?? undefined}>{relative(saved.last_run_at)}</time>
                   </>
                 ) : (
-                  <span>belum pernah</span>
+                  <span>{t('builder.neverRun')}</span>
                 )}
               </span>
             </div>
@@ -430,18 +436,18 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
           <div className="flex flex-wrap items-center gap-2">
             {canEdit && dirty && (
               <span role="status" className="mr-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                <span className="size-1.5 rounded-full bg-status-blocked" aria-hidden /> Belum disimpan
+                <span className="size-1.5 rounded-full bg-status-blocked" aria-hidden /> {t('builder.unsaved')}
               </span>
             )}
             {canRun && (
-              <Tip label={runBlockReason ?? 'Jalankan flow ini'}>
+              <Tip label={runBlockReason ?? t('builder.runTip')}>
                 <Button
                   variant="outline"
                   aria-disabled={runBlockReason ? true : undefined}
                   aria-describedby={runBlockReason ? 'flow-run-reason' : undefined}
                   onClick={() => !runBlockReason && setRunOpen(true)}
                 >
-                  <Play /> Run
+                  <Play /> {t('builder.run')}
                 </Button>
               </Tip>
             )}
@@ -456,9 +462,9 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
                 loading={saving}
                 aria-disabled={!isNew && !dirty ? true : undefined}
                 aria-keyshortcuts={isMac ? 'Meta+S' : 'Control+S'}
-                title={!isNew && !dirty ? 'Belum ada perubahan' : undefined}
+                title={!isNew && !dirty ? t('builder.noChanges') : undefined}
               >
-                Simpan
+                {t('common:actions.save')}
                 <span className="font-mono text-[11px] font-normal opacity-70" aria-hidden>
                   {saveLabel}
                 </span>
@@ -467,13 +473,13 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
             {canEdit && !isNew && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
-                  <Button variant="ghost" size="icon" aria-label="Aksi lain">
+                  <Button variant="ghost" size="icon" aria-label={t('common:a11y.moreActions')}>
                     <MoreHorizontal />
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => setDeleteOpen(true)} className="text-destructive focus:text-destructive">
-                    <Trash2 /> Hapus flow
+                    <Trash2 /> {t('builder.delete')}
                   </DropdownMenuItem>
                 </DropdownMenuContent>
               </DropdownMenu>
@@ -486,11 +492,11 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
         <div role="alert" className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border border-status-blocked/40 bg-status-blocked-bg px-4 py-2.5 text-sm">
           <CircleAlert className="size-4 shrink-0 text-status-blocked" aria-hidden />
           <p className="min-w-0 flex-1">
-            <span className="font-medium">Flow ini sudah diubah orang lain sejak kamu membukanya.</span>{' '}
-            <span className="text-muted-foreground">Muat ulang untuk mengambil versi terbaru. Perubahanmu yang belum disimpan akan dibuang.</span>
+            <span className="font-medium">{t('builder.conflict.title')}</span>{' '}
+            <span className="text-muted-foreground">{t('builder.conflict.hint')}</span>
           </p>
           <Button variant="outline" size="sm" onClick={() => void reload()} loading={reloading}>
-            <RotateCw /> Muat ulang
+            <RotateCw /> {t('builder.conflict.reload')}
           </Button>
         </div>
       )}
@@ -512,19 +518,19 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
         <section aria-labelledby="flow-items-heading" className="flex min-w-0 flex-col gap-2">
           <div className="flex min-h-8 flex-wrap items-center justify-between gap-2">
             <h2 id="flow-items-heading" className="text-sm font-semibold">
-              Test case <span className="font-normal text-muted-foreground tabular">({draft.items.length})</span>
+              {t('builder.itemsHeading')} <span className="font-normal text-muted-foreground tabular">({draft.items.length})</span>
               {draft.items.length > 0 && enabledCount < draft.items.length && (
-                <span className="ml-2 text-xs font-normal text-muted-foreground">{enabledCount} aktif</span>
+                <span className="ml-2 text-xs font-normal text-muted-foreground">{t('builder.enabledCount', { count: enabledCount })}</span>
               )}
               {errorCount > 0 && (
                 <span className="ml-2 text-xs font-medium text-destructive">
-                  {errorCount} error
+                  {t('builder.errorCount', { count: errorCount })}
                 </span>
               )}
             </h2>
             {!readOnly && !wide && (
               <Button variant="outline" size="sm" onClick={() => setSheetOpen(true)}>
-                <Plus /> Tambah test case
+                <Plus /> {t('builder.addTestCase')}
               </Button>
             )}
           </div>
@@ -537,12 +543,11 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
               )}
             >
               <ListPlus className="size-5 text-muted-foreground" aria-hidden />
-              <p className="text-sm font-medium">Flow ini belum berisi test case.</p>
+              <p className="text-sm font-medium">{t('builder.emptyTitle')}</p>
               {readOnly ? null : (
                 <>
                   <p className="text-sm text-muted-foreground">
-                    {wide ? 'Pilih dari panel Tambah test case di kanan.' : 'Tambahkan dari daftar test case project.'} Urutan bisa diubah dengan drag
-                    atau keyboard.
+                    {wide ? t('builder.emptyHintWide') : t('builder.emptyHint')} {t('builder.emptyReorderHint')}
                   </p>
                   <Button
                     id="flow-empty-add"
@@ -551,7 +556,7 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
                     onClick={() => (wide ? pickerInputRef.current?.focus() : setSheetOpen(true))}
                     className="mt-1"
                   >
-                    <Plus /> Tambah test case
+                    <Plus /> {t('builder.addTestCase')}
                   </Button>
                 </>
               )}
@@ -578,7 +583,7 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
           )}
           {!readOnly && draft.items.length > 1 && (
             <p className="text-xs text-muted-foreground">
-              Ubah urutan dengan menggeser pegangan di kiri, atau fokuskan pegangan lalu tekan Alt + ↑/↓.
+              {t('builder.reorderHint')}
             </p>
           )}
         </section>
@@ -590,9 +595,9 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
           >
             <div className="border-b border-border px-3 py-2">
               <h2 id="flow-picker-heading" className="text-sm font-semibold">
-                Tambah test case
+                {t('builder.addTestCase')}
               </h2>
-              <p className="text-xs text-muted-foreground">Klik atau Enter untuk menambah ke akhir flow.</p>
+              <p className="text-xs text-muted-foreground">{t('builder.pickerHint')}</p>
             </div>
             {picker}
           </aside>
@@ -603,8 +608,8 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
         <Dialog open={sheetOpen} onOpenChange={setSheetOpen}>
           <SheetContent side="right" className="w-[min(100vw,24rem)]">
             <div className="border-b border-border px-4 py-3 pr-10">
-              <DialogTitle className="text-sm font-semibold">Tambah test case</DialogTitle>
-              <DialogDescription className="text-xs">Klik atau Enter untuk menambah ke akhir flow. Panel tetap terbuka.</DialogDescription>
+              <DialogTitle className="text-sm font-semibold">{t('builder.addTestCase')}</DialogTitle>
+              <DialogDescription className="text-xs">{t('builder.pickerSheetHint')}</DialogDescription>
             </div>
             {picker}
           </SheetContent>
@@ -627,13 +632,13 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
       <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Hapus flow {saved?.key}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('builder.deleteTitle', { key: saved?.key ?? '' })}</AlertDialogTitle>
             <AlertDialogDescription>
-              "{saved?.name}" beserta urutan {saved?.items.length ?? 0} test case-nya akan dihapus. Test case-nya sendiri dan riwayat run tetap ada.
+              {t('builder.deleteBody', { name: saved?.name ?? '', count: saved?.items.length ?? 0 })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Batal</AlertDialogCancel>
+            <AlertDialogCancel>{t('common:actions.cancel')}</AlertDialogCancel>
             <AlertDialogAction
               destructive
               onClick={(e) => {
@@ -642,7 +647,7 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
               }}
               disabled={del.isPending}
             >
-              Hapus flow
+              {t('builder.delete')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -651,13 +656,13 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
       <AlertDialog open={blocker.status === 'blocked'} onOpenChange={(o) => !o && blocker.reset?.()}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Buang perubahan?</AlertDialogTitle>
-            <AlertDialogDescription>Perubahan pada flow ini belum disimpan dan akan hilang kalau kamu pindah halaman.</AlertDialogDescription>
+            <AlertDialogTitle>{t('builder.leave.title')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('builder.leave.body')}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => blocker.reset?.()}>Tetap di sini</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => blocker.reset?.()}>{t('builder.leave.stay')}</AlertDialogCancel>
             <AlertDialogAction destructive onClick={() => blocker.proceed?.()}>
-              Buang perubahan
+              {t('builder.leave.discard')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -667,9 +672,10 @@ function FlowEditor({ projectKey, flow, onReload }: { projectKey: string; flow: 
 }
 
 function BuilderSkeleton() {
+  const { t } = useTranslation('flows')
   return (
     <PageContainer className="gap-4">
-      <span className="sr-only" role="status">Memuat flow…</span>
+      <span className="sr-only" role="status">{t('builder.loading')}</span>
       <div className="flex items-center gap-3">
         <Skeleton className="h-5 w-16" />
         <Skeleton className="h-6 w-72" />

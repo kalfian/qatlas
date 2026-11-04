@@ -1,4 +1,6 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
 import { useUpdateProject } from '@/api/queries'
 import type { Project, RunOptions } from '@/api/types'
@@ -52,15 +54,16 @@ const toDraft = (o: RunOptions): Draft => ({
   timeout: String(o.step_timeout_ms),
 })
 
-function intIn(raw: string, min: number, max: number, label: string): string | undefined {
-  if (!raw.trim()) return `${label} wajib diisi`
+function intIn(raw: string, min: number, max: number, label: string, t: TFunction<'settings'>): string | undefined {
+  if (!raw.trim()) return t('validation.required', { label })
   const n = Number(raw)
-  if (!Number.isInteger(n)) return `${label} harus bilangan bulat`
-  if (n < min || n > max) return `${label} antara ${min.toLocaleString('id-ID')}–${max.toLocaleString('id-ID')}`
+  if (!Number.isInteger(n)) return t('validation.integer', { label })
+  if (n < min || n > max) return t('validation.range', { label, min, max })
   return undefined
 }
 
 export function RunDefaultsSection({ project }: { project: Project }) {
+  const { t } = useTranslation('settings')
   const update = useUpdateProject(project.key)
   const saved = { ...SYSTEM_DEFAULTS, ...project.default_run_options }
   const [draft, setDraft] = React.useState<Draft>(() => toDraft(saved))
@@ -70,9 +73,9 @@ export function RunDefaultsSection({ project }: { project: Project }) {
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }))
 
   const errors = {
-    width: intIn(draft.width, 320, 3840, 'Lebar'),
-    height: intIn(draft.height, 320, 2160, 'Tinggi'),
-    timeout: intIn(draft.timeout, 1000, 600000, 'Timeout'),
+    width: intIn(draft.width, 320, 3840, t('runDefaults.width'), t),
+    height: intIn(draft.height, 320, 2160, t('runDefaults.height'), t),
+    timeout: intIn(draft.timeout, 1000, 600000, t('runDefaults.timeoutLabel'), t),
   }
   const server = fieldErrorsOf(update.error)
   const dirty = JSON.stringify(draft) !== JSON.stringify(toDraft(saved))
@@ -97,7 +100,7 @@ export function RunDefaultsSection({ project }: { project: Project }) {
     }
     update.mutate(
       { default_run_options: opts },
-      { onSuccess: () => toast.success('Default run tersimpan') },
+      { onSuccess: () => toast.success(t('runDefaults.saved')) },
     )
   }
 
@@ -107,8 +110,8 @@ export function RunDefaultsSection({ project }: { project: Project }) {
     <form ref={formRef} onSubmit={submit} noValidate>
       <SettingsCard
         id="settings-run-defaults"
-        title="Default run"
-        description="Nilai awal dialog Run untuk semua member project ini. Pilihan terakhir yang dipakai seseorang di browsernya tetap didahulukan."
+        title={t('runDefaults.title')}
+        description={t('runDefaults.description')}
         bodyClassName="grid gap-5"
         footer={
           <>
@@ -122,15 +125,15 @@ export function RunDefaultsSection({ project }: { project: Project }) {
                 setPreset(presetOf(SYSTEM_DEFAULTS.viewport))
               }}
             >
-              Pakai nilai bawaan
+              {t('runDefaults.useSystem')}
             </Button>
             <SaveBar id="run-defaults" dirty={dirty} pending={update.isPending} error={update.isError ? update.error : undefined} />
           </>
         }
       >
-        <Field label="Browser" labelId="run-def-browser-label">
+        <Field label={t('runDefaults.browser')} labelId="run-def-browser-label">
           <Segmented
-            ariaLabel="Browser"
+            ariaLabel={t('runDefaults.browser')}
             value={draft.browser}
             onChange={(v) => set('browser', v)}
             options={[
@@ -143,7 +146,7 @@ export function RunDefaultsSection({ project }: { project: Project }) {
         </Field>
 
         <div className="grid gap-1.5">
-          <Label htmlFor="run-def-viewport">Viewport</Label>
+          <Label htmlFor="run-def-viewport">{t('runDefaults.viewport')}</Label>
           <div className="flex flex-wrap gap-2">
             <Select
               value={preset}
@@ -162,14 +165,14 @@ export function RunDefaultsSection({ project }: { project: Project }) {
                     {VIEWPORTS[k].label}
                   </SelectItem>
                 ))}
-                <SelectItem value="custom">Custom…</SelectItem>
+                <SelectItem value="custom">{t('runDefaults.custom')}</SelectItem>
               </SelectContent>
             </Select>
             {preset === 'custom' && (
               <div className="flex items-center gap-1.5">
                 <Input
                   {...invalidProps('run-def-width', errors.width)}
-                  aria-label="Lebar viewport (px)"
+                  aria-label={t('runDefaults.widthAria')}
                   inputMode="numeric"
                   className="w-20 font-mono"
                   value={draft.width}
@@ -180,7 +183,7 @@ export function RunDefaultsSection({ project }: { project: Project }) {
                 </span>
                 <Input
                   {...invalidProps('run-def-height', errors.height)}
-                  aria-label="Tinggi viewport (px)"
+                  aria-label={t('runDefaults.heightAria')}
                   inputMode="numeric"
                   className="w-20 font-mono"
                   value={draft.height}
@@ -199,32 +202,32 @@ export function RunDefaultsSection({ project }: { project: Project }) {
         </div>
 
         <div className="grid gap-5 sm:grid-cols-2">
-          <Field label="Screenshot" labelId="run-def-screenshot-label">
+          <Field label={t('runDefaults.screenshot')} labelId="run-def-screenshot-label">
             <Segmented
-              ariaLabel="Screenshot"
+              ariaLabel={t('runDefaults.screenshot')}
               value={draft.screenshot}
               onChange={(v) => set('screenshot', v)}
               options={[
-                { value: 'off', label: 'Off' },
-                { value: 'on_failure', label: 'Saat gagal' },
-                { value: 'every_step', label: 'Tiap step' },
+                { value: 'off', label: t('runDefaults.off') },
+                { value: 'on_failure', label: t('runDefaults.onFailure') },
+                { value: 'every_step', label: t('runDefaults.everyStep') },
               ]}
               className="w-full"
             />
           </Field>
           <Field
-            label="Video"
+            label={t('runDefaults.video')}
             labelId="run-def-video-label"
-            hint={draft.video === 'on_failure' ? 'Saat gagal tetap merekam, lalu dihapus jika passed.' : undefined}
+            hint={draft.video === 'on_failure' ? t('runDefaults.videoHint') : undefined}
           >
             <Segmented
-              ariaLabel="Video"
+              ariaLabel={t('runDefaults.video')}
               value={draft.video}
               onChange={(v) => set('video', v)}
               options={[
-                { value: 'off', label: 'Off' },
-                { value: 'on_failure', label: 'Saat gagal' },
-                { value: 'always', label: 'Selalu' },
+                { value: 'off', label: t('runDefaults.off') },
+                { value: 'on_failure', label: t('runDefaults.onFailure') },
+                { value: 'always', label: t('runDefaults.always') },
               ]}
               className="w-full"
             />
@@ -233,7 +236,7 @@ export function RunDefaultsSection({ project }: { project: Project }) {
 
         <div className="grid gap-5 sm:grid-cols-2">
           <div className="grid content-start gap-1.5">
-            <Label htmlFor="run-def-timeout">Timeout per step</Label>
+            <Label htmlFor="run-def-timeout">{t('runDefaults.timeout')}</Label>
             <div className="flex items-center gap-2">
               <Input
                 {...invalidProps('run-def-timeout', errors.timeout ?? server['default_run_options.step_timeout_ms'], 'run-def-timeout-hint')}
@@ -245,12 +248,12 @@ export function RunDefaultsSection({ project }: { project: Project }) {
               <span className="text-xs text-muted-foreground">ms</span>
             </div>
             <FieldHint id="run-def-timeout" error={errors.timeout ?? server['default_run_options.step_timeout_ms']}>
-              = {timeoutSeconds.toLocaleString('id-ID')} detik. Step yang melewati batas ini dianggap gagal.
+              {t('runDefaults.timeoutHint', { count: timeoutSeconds })}
             </FieldHint>
           </div>
-          <Field label="Retries per test case" labelId="run-def-retries-label" hint="Test case yang gagal diulang otomatis sampai sebanyak ini.">
+          <Field label={t('runDefaults.retries')} labelId="run-def-retries-label" hint={t('runDefaults.retriesHint')}>
             <Segmented
-              ariaLabel="Retries per test case"
+              ariaLabel={t('runDefaults.retries')}
               value={String(draft.retries)}
               onChange={(v) => set('retries', Number(v))}
               options={[
@@ -265,9 +268,9 @@ export function RunDefaultsSection({ project }: { project: Project }) {
 
         <div className="flex items-start justify-between gap-4 rounded-md border border-border px-3 py-2.5">
           <div>
-            <Label htmlFor="run-def-headless">Headless</Label>
+            <Label htmlFor="run-def-headless">{t('runDefaults.headless')}</Label>
             <p id="run-def-headless-hint" className="mt-1 text-xs text-muted-foreground">
-              Browser berjalan tanpa jendela. Matikan hanya untuk debugging di runner lokal.
+              {t('runDefaults.headlessHint')}
             </p>
           </div>
           <Switch id="run-def-headless" aria-describedby="run-def-headless-hint" checked={draft.headless} onCheckedChange={(v) => set('headless', v)} />
@@ -293,10 +296,11 @@ function Field({ label, labelId, hint, children }: { label: string; labelId: str
 /* ------------------------------------------------------------------ retention */
 
 export function RetentionSection({ project }: { project: Project }) {
+  const { t } = useTranslation('settings')
   const update = useUpdateProject(project.key)
   const [days, setDays] = React.useState(String(project.artifact_retention_days))
   const inputRef = React.useRef<HTMLInputElement>(null)
-  const error = intIn(days, 1, 365, 'Retensi') ?? fieldErrorsOf(update.error).artifact_retention_days
+  const error = intIn(days, 1, 365, t('retention.label'), t) ?? fieldErrorsOf(update.error).artifact_retention_days
   const dirty = days !== String(project.artifact_retention_days)
 
   const submit = (e: React.FormEvent) => {
@@ -305,7 +309,7 @@ export function RetentionSection({ project }: { project: Project }) {
     if (error) return inputRef.current?.focus()
     update.mutate(
       { artifact_retention_days: Number(days) },
-      { onSuccess: (p) => toast.success(`Artifact disimpan ${p.artifact_retention_days} hari`) },
+      { onSuccess: (p) => toast.success(t('retention.saved', { count: p.artifact_retention_days })) },
     )
   }
 
@@ -313,12 +317,12 @@ export function RetentionSection({ project }: { project: Project }) {
     <form onSubmit={submit} noValidate>
       <SettingsCard
         id="settings-retention"
-        title="Retensi artifact"
-        description="Screenshot, video, dan lampiran yang lebih tua dari batas ini dihapus otomatis setiap hari. Run dan hasil step tetap ada; report menampilkan “Artifact kedaluwarsa”."
+        title={t('retention.title')}
+        description={t('retention.description')}
         footer={<SaveBar id="retention" dirty={dirty} pending={update.isPending} error={update.isError ? update.error : undefined} />}
         bodyClassName="grid gap-1.5"
       >
-        <Label htmlFor="retention-days">Simpan artifact selama</Label>
+        <Label htmlFor="retention-days">{t('retention.keepFor')}</Label>
         <div className="flex items-center gap-2">
           <Input
             ref={inputRef}
@@ -328,10 +332,10 @@ export function RetentionSection({ project }: { project: Project }) {
             value={days}
             onChange={(e) => setDays(e.target.value.replace(/\D/g, ''))}
           />
-          <span className="text-sm text-muted-foreground">hari</span>
+          <span className="text-sm text-muted-foreground">{t('retention.days')}</span>
         </div>
         <FieldHint id="retention-days" error={error}>
-          1–365 hari. Screenshot dan video bisa berisi data sensitif aplikasi yang dites, jadi simpan secukupnya.
+          {t('retention.hint')}
         </FieldHint>
       </SettingsCard>
     </form>

@@ -1,5 +1,6 @@
 import { Check, Copy } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { errorMessage } from '@/api/client'
 import { useAdminCreateUser } from '@/api/queries'
 import type { SystemRole, User, UserInvite } from '@/api/types'
@@ -23,6 +24,7 @@ const firstName = (name: string) => name.split(/\s+/)[0]
 
 /** Isi state "Link undangan": input mono read-only + Salin. Fokus pindah ke Salin saat muncul. */
 function InviteLinkBody({ invite, kind, onDone }: { invite: UserInvite; kind: 'invite' | 'reset_password'; onDone: () => void }) {
+  const { t } = useTranslation(['admin', 'common'])
   const { copied, copy } = useCopy()
   const copyRef = React.useRef<HTMLButtonElement>(null)
   React.useEffect(() => {
@@ -33,32 +35,30 @@ function InviteLinkBody({ invite, kind, onDone }: { invite: UserInvite; kind: 'i
   return (
     <>
       <DialogHeader>
-        <DialogTitle>{kind === 'invite' ? `Link undangan untuk ${name}` : `Link reset password untuk ${name}`}</DialogTitle>
+        <DialogTitle>{kind === 'invite' ? t('link.inviteTitle', { name }) : t('link.resetTitle', { name })}</DialogTitle>
         <DialogDescription>
-          Kirim link ini ke {name} lewat chat atau email.{' '}
-          {kind === 'invite'
-            ? `${name} membuat password sendiri, atau masuk dengan Google memakai ${invite.user.email}.`
-            : 'Password lama tetap berlaku sampai link dipakai.'}
+          {t('link.sendHint', { name })}{' '}
+          {kind === 'invite' ? t('link.inviteHint', { name, email: invite.user.email }) : t('link.resetHint')}
         </DialogDescription>
       </DialogHeader>
       <div className="flex flex-col gap-1.5">
         <label htmlFor="invite-url" className="text-sm font-medium">
-          {kind === 'invite' ? 'Link undangan' : 'Link reset password'}
+          {kind === 'invite' ? t('link.inviteLabel') : t('link.resetLabel')}
         </label>
         <div className="flex gap-2">
           <Input id="invite-url" readOnly value={invite.invite_url} className="font-mono text-xs" onFocus={(e) => e.currentTarget.select()} aria-describedby="invite-url-hint" />
-          <Button ref={copyRef} type="button" variant="outline" className="w-26" onClick={() => copy(invite.invite_url, 'Link disalin')}>
+          <Button ref={copyRef} type="button" variant="outline" className="w-26" onClick={() => copy(invite.invite_url, t('link.copiedToast'))}>
             {copied ? <Check /> : <Copy />}
-            {copied ? 'Tersalin' : 'Salin'}
+            {copied ? t('common:actions.copied') : t('common:actions.copy')}
           </Button>
         </div>
         <p id="invite-url-hint" className="text-xs text-muted-foreground">
-          Berlaku 72 jam (sampai {formatDateTime(invite.expires_at)}) dan hanya bisa dipakai sekali.
+          {t('link.validity', { date: formatDateTime(invite.expires_at) })}
         </p>
       </div>
       <DialogFooter>
         <Button type="button" onClick={onDone}>
-          Selesai
+          {t('common:actions.done')}
         </Button>
       </DialogFooter>
     </>
@@ -67,6 +67,7 @@ function InviteLinkBody({ invite, kind, onDone }: { invite: UserInvite; kind: 'i
 
 /** Dialog untuk "Buat ulang link undangan" / "Buat link reset password" dari menu baris. */
 export function InviteLinkDialog({ state, onClose }: { state: LinkDialogState | null; onClose: () => void }) {
+  const { t } = useTranslation(['admin', 'common'])
   const [last, setLast] = React.useState(state)
   if (state && state !== last) setLast(state)
   const s = state ?? last
@@ -79,21 +80,21 @@ export function InviteLinkDialog({ state, onClose }: { state: LinkDialogState | 
         ) : s?.error ? (
           <>
             <DialogHeader>
-              <DialogTitle>Gagal membuat link</DialogTitle>
-              <DialogDescription className="sr-only">Link untuk {s.user.name} tidak berhasil dibuat.</DialogDescription>
+              <DialogTitle>{t('link.failedTitle')}</DialogTitle>
+              <DialogDescription className="sr-only">{t('link.failedDescription', { name: s.user.name })}</DialogDescription>
             </DialogHeader>
             <Banner>{s.error}</Banner>
             <DialogFooter>
               <Button type="button" variant="outline" onClick={onClose}>
-                Tutup
+                {t('common:actions.close')}
               </Button>
             </DialogFooter>
           </>
         ) : (
           <div className="flex flex-col gap-4" aria-busy>
             <DialogHeader>
-              <DialogTitle>{s?.kind === 'reset_password' ? 'Membuat link reset password…' : 'Membuat link undangan…'}</DialogTitle>
-              <DialogDescription>Untuk {s?.user.name}</DialogDescription>
+              <DialogTitle>{s?.kind === 'reset_password' ? t('link.creatingReset') : t('link.creatingInvite')}</DialogTitle>
+              <DialogDescription>{t('link.forUser', { name: s?.user.name ?? '' })}</DialogDescription>
             </DialogHeader>
             <Skeleton className="h-8 w-full" />
             <Skeleton className="h-3.5 w-56" />
@@ -126,6 +127,7 @@ export function CreateUserDialog({ open, onOpenChange }: { open: boolean; onOpen
 }
 
 function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreated: (res: UserInvite) => void }) {
+  const { t } = useTranslation(['admin', 'common'])
   const create = useAdminCreateUser()
   const [email, setEmail] = React.useState('')
   const [name, setName] = React.useState('')
@@ -141,8 +143,8 @@ function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
     e.preventDefault()
     const em = email.trim()
     const v: FieldErrors = {
-      email: !em ? 'Isi email' : !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em) ? 'Format email tidak valid' : undefined,
-      name: name.trim() ? undefined : 'Isi nama',
+      email: !em ? t('createDialog.emailRequired') : !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em) ? t('createDialog.emailInvalid') : undefined,
+      name: name.trim() ? undefined : t('createDialog.nameRequired'),
     }
     setErrors(v)
     setBanner(null)
@@ -167,18 +169,18 @@ function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
   return (
     <form onSubmit={submit} noValidate className="flex flex-col gap-5">
       <DialogHeader>
-        <DialogTitle>Buat user</DialogTitle>
-        <DialogDescription>QAtlas membuat link undangan sekali pakai. Kamu yang mengirimkannya ke user.</DialogDescription>
+        <DialogTitle>{t('createDialog.title')}</DialogTitle>
+        <DialogDescription>{t('createDialog.description')}</DialogDescription>
       </DialogHeader>
       {banner && <Banner>{banner}</Banner>}
-      <Field id="user-email" label="Email" error={errors.email}>
+      <Field id="user-email" label={t('createDialog.email')} error={errors.email}>
         <Input
           id="user-email"
           type="email"
           inputMode="email"
           autoComplete="off"
           autoFocus
-          placeholder="nama@tokoku.id"
+          placeholder={t('createDialog.emailPlaceholder')}
           className="font-mono text-xs"
           value={email}
           onChange={(e) => {
@@ -189,7 +191,7 @@ function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
           aria-describedby={describedBy('user-email', { error: errors.email })}
         />
       </Field>
-      <Field id="user-name" label="Nama" error={errors.name}>
+      <Field id="user-name" label={t('createDialog.name')} error={errors.name}>
         <Input
           id="user-name"
           autoComplete="off"
@@ -203,9 +205,9 @@ function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
         />
       </Field>
       <div className="flex flex-col gap-2">
-        <span className="text-sm font-medium">System role</span>
+        <span className="text-sm font-medium">{t('createDialog.systemRole')}</span>
         <Segmented<SystemRole>
-          ariaLabel="System role"
+          ariaLabel={t('createDialog.systemRole')}
           value={role}
           onChange={setRole}
           options={[
@@ -216,16 +218,16 @@ function CreateUserForm({ onCancel, onCreated }: { onCancel: () => void; onCreat
         />
         <p className="text-xs text-muted-foreground" aria-live="polite">
           {role === 'member'
-            ? 'Hanya melihat project tempat ia ditambahkan sebagai member.'
-            : 'Bisa mengelola user, membuat project, dan mengakses semua project.'}
+            ? t('createDialog.memberDescription')
+            : t('createDialog.adminDescription')}
         </p>
       </div>
       <DialogFooter>
         <Button type="button" variant="outline" onClick={onCancel} disabled={create.isPending}>
-          Batal
+          {t('common:actions.cancel')}
         </Button>
         <Button type="submit" loading={create.isPending}>
-          Buat user
+          {t('createDialog.submit')}
         </Button>
       </DialogFooter>
     </form>

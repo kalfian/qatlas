@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { Play, Plus, Search, Workflow, X } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useFlows } from '@/api/queries'
 import type { FlowSummary } from '@/api/types'
 import { useCan } from '@/app/auth'
@@ -26,6 +27,7 @@ export function FlowsPage() {
   const flows = useFlows(key, debounced || undefined)
   const [runTarget, setRunTarget] = React.useState<FlowSummary | null>(null)
   const showSkeleton = useDelayedFlag(flows.isLoading)
+  const { t } = useTranslation('flows')
 
   const list = flows.data?.data ?? []
   const searching = debounced !== ''
@@ -33,13 +35,13 @@ export function FlowsPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="Flows"
-        description="Urutan test case yang dijalankan sebagai satu run."
+        title={t('list.title')}
+        description={t('list.description')}
         actions={
           canEdit && (
             <Button asChild>
               <Link to="/p/$key/flows/$flowKey" params={{ key, flowKey: 'new' }}>
-                <Plus /> Flow
+                <Plus /> {t('list.newButton')}
               </Link>
             </Button>
           )
@@ -54,8 +56,8 @@ export function FlowsPage() {
             value={q}
             onChange={(e) => setQ(e.target.value)}
             onKeyDown={(e) => e.key === 'Escape' && setQ('')}
-            placeholder="Cari nama atau key…"
-            aria-label="Cari flow"
+            placeholder={t('list.searchPlaceholder')}
+            aria-label={t('list.searchLabel')}
             className="pl-8"
           />
         </div>
@@ -68,27 +70,27 @@ export function FlowsPage() {
           searching ? (
             <EmptyState
               icon={Search}
-              title={`Tidak ada flow yang cocok dengan "${debounced}".`}
+              title={t('list.noMatch', { q: debounced })}
               action={
                 <Button variant="outline" size="sm" onClick={() => setQ('')}>
-                  <X /> Reset pencarian
+                  <X /> {t('list.resetSearch')}
                 </Button>
               }
             />
           ) : (
             <EmptyState
               icon={Workflow}
-              title="Belum ada flow di project ini."
+              title={t('list.emptyTitle')}
               description={
                 canEdit
-                  ? 'Flow menyusun beberapa test case jadi satu run, misalnya login → keranjang → checkout.'
-                  : 'Editor project bisa menyusun beberapa test case jadi satu flow.'
+                  ? t('list.emptyDescription')
+                  : t('list.emptyDescriptionReadOnly')
               }
               action={
                 canEdit && (
                   <Button asChild size="sm">
                     <Link to="/p/$key/flows/$flowKey" params={{ key, flowKey: 'new' }}>
-                      <Plus /> Buat flow
+                      <Plus /> {t('list.create')}
                     </Link>
                   </Button>
                 )
@@ -124,6 +126,7 @@ function FlowsTable({
   onRun: (f: FlowSummary) => void
 }) {
   const navigate = useNavigate()
+  const { t } = useTranslation(['flows', 'common'])
   const open = (flowKey: string) => navigate({ to: '/p/$key/flows/$flowKey', params: { key: projectKey, flowKey } })
 
   return (
@@ -131,16 +134,16 @@ function FlowsTable({
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="w-22">Key</TableHead>
-            <TableHead>Nama</TableHead>
-            <TableHead className="w-14 text-right">Item</TableHead>
-            <TableHead className="hidden w-30 md:table-cell">Session</TableHead>
-            <TableHead className="hidden w-28 lg:table-cell">Stop on failure</TableHead>
-            <TableHead className="w-48">Last run</TableHead>
-            <TableHead className="hidden w-26 lg:table-cell">Diubah</TableHead>
+            <TableHead className="w-22">{t('list.columns.key')}</TableHead>
+            <TableHead>{t('list.columns.name')}</TableHead>
+            <TableHead className="w-14 text-right">{t('list.columns.items')}</TableHead>
+            <TableHead className="hidden w-30 md:table-cell">{t('list.columns.session')}</TableHead>
+            <TableHead className="hidden w-28 lg:table-cell">{t('list.columns.stopOnFailure')}</TableHead>
+            <TableHead className="w-48">{t('list.columns.lastRun')}</TableHead>
+            <TableHead className="hidden w-26 lg:table-cell">{t('list.columns.updated')}</TableHead>
             {canRun && (
               <TableHead className="w-20">
-                <span className="sr-only">Aksi</span>
+                <span className="sr-only">{t('common:fields.actions')}</span>
               </TableHead>
             )}
           </TableRow>
@@ -170,12 +173,12 @@ function FlowsTable({
                 <TableCell className="text-right tabular">{f.item_count}</TableCell>
                 <TableCell className="hidden md:table-cell">
                   <span className={cn('text-xs', f.shared_session ? 'text-foreground' : 'text-muted-foreground')}>
-                    {f.shared_session ? 'Shared session' : 'Isolated'}
+                    {f.shared_session ? t('session.shared') : t('session.isolated')}
                   </span>
                 </TableCell>
                 <TableCell className="hidden lg:table-cell">
                   <span className={cn('text-xs', f.stop_on_failure ? 'text-foreground' : 'text-muted-foreground')}>
-                    {f.stop_on_failure ? 'Ya' : 'Tidak'}
+                    {f.stop_on_failure ? t('list.yes') : t('list.no')}
                   </span>
                 </TableCell>
                 <TableCell>
@@ -187,7 +190,7 @@ function FlowsTable({
                       </time>
                     </span>
                   ) : (
-                    <span className="text-xs text-muted-foreground">Belum pernah</span>
+                    <span className="text-xs text-muted-foreground">{t('list.neverRun')}</span>
                   )}
                 </TableCell>
                 <TableCell className="hidden text-xs whitespace-nowrap text-muted-foreground lg:table-cell">
@@ -196,14 +199,14 @@ function FlowsTable({
                 {canRun && (
                   <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
                     {blocked ? (
-                      <Tip label="Flow shared session berisi test case manual. Buka flow untuk memperbaikinya.">
-                        <Button variant="ghost" size="sm" aria-disabled="true" aria-label={`Run ${f.key} (tidak tersedia)`}>
-                          <Play /> Run
+                      <Tip label={t('list.runBlocked')}>
+                        <Button variant="ghost" size="sm" aria-disabled="true" aria-label={t('list.runUnavailable', { key: f.key })}>
+                          <Play /> {t('list.run')}
                         </Button>
                       </Tip>
                     ) : (
-                      <Button variant="ghost" size="sm" onClick={() => onRun(f)} aria-label={`Run ${f.key} ${f.name}`}>
-                        <Play /> Run
+                      <Button variant="ghost" size="sm" onClick={() => onRun(f)} aria-label={t('list.runLabel', { key: f.key, name: f.name })}>
+                        <Play /> {t('list.run')}
                       </Button>
                     )}
                   </TableCell>
@@ -218,8 +221,9 @@ function FlowsTable({
 }
 
 function TableSkeleton() {
+  const { t } = useTranslation('flows')
   return (
-    <div className="rounded-md border border-border" aria-busy="true" aria-label="Memuat flow">
+    <div className="rounded-md border border-border" aria-busy="true" aria-label={t('list.loading')}>
       <div className="h-8 border-b border-border" />
       {Array.from({ length: 8 }, (_, i) => (
         <div key={i} className="flex h-9 items-center gap-6 border-b border-border px-3 last:border-0">

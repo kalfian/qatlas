@@ -1,5 +1,6 @@
 import { AlertTriangle, RotateCw, type LucideIcon } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { ApiError, errorMessage } from '@/api/client'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
@@ -57,9 +58,9 @@ export function EmptyState({
 }
 
 export function ErrorState({ error, onRetry, className }: { error: unknown; onRetry?: () => void; className?: string }) {
+  const { t } = useTranslation()
   const status = error instanceof ApiError ? error.status : undefined
-  const title =
-    status === 403 ? 'Kamu tidak punya akses ke halaman ini' : status === 404 ? 'Data tidak ditemukan' : 'Gagal memuat data'
+  const title = status === 403 ? t('errors.forbidden') : status === 404 ? t('errors.notFound') : t('errors.loadFailed')
   return (
     <div role="alert" className={cn('flex flex-col items-start gap-2 rounded-md border border-border px-5 py-6', className)}>
       <AlertTriangle className="size-5 text-status-failed" aria-hidden />
@@ -67,12 +68,12 @@ export function ErrorState({ error, onRetry, className }: { error: unknown; onRe
       <p className="text-sm text-muted-foreground">{errorMessage(error)}</p>
       {onRetry && status !== 403 && status !== 404 && (
         <Button variant="outline" size="sm" onClick={onRetry}>
-          <RotateCw /> Coba lagi
+          <RotateCw /> {t('actions.retry')}
         </Button>
       )}
       {error instanceof ApiError && (
         <details className="text-xs text-muted-foreground">
-          <summary className="cursor-pointer">Detail teknis</summary>
+          <summary className="cursor-pointer">{t('errors.technicalDetails')}</summary>
           <code className="font-mono">
             HTTP {error.status} · {error.code}
           </code>

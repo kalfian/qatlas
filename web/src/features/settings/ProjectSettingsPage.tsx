@@ -1,5 +1,6 @@
 import { Link, useParams, useSearch } from '@tanstack/react-router'
 import { Lock } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import { useProject } from '@/api/queries'
 import { useCan } from '@/app/auth'
 import type { SettingsSearch } from '@/app/router'
@@ -14,17 +15,18 @@ import { useDelayedFlag } from './shared'
 
 type SectionId = NonNullable<SettingsSearch['section']>
 
-const SECTIONS: { id: SectionId; label: string }[] = [
-  { id: 'general', label: 'Umum' },
-  { id: 'members', label: 'Member' },
-  { id: 'run-defaults', label: 'Default run' },
-  { id: 'retention', label: 'Retensi' },
-  { id: 'danger', label: 'Zona bahaya' },
-]
+const SECTIONS = [
+  { id: 'general', label: 'page.sections.general' },
+  { id: 'members', label: 'page.sections.members' },
+  { id: 'run-defaults', label: 'page.sections.runDefaults' },
+  { id: 'retention', label: 'page.sections.retention' },
+  { id: 'danger', label: 'page.sections.danger' },
+] as const satisfies readonly { id: SectionId; label: string }[]
 
 export function ProjectSettingsPage() {
   const { key } = useParams({ from: '/_app/p/$key/settings' })
   const { section = 'general' } = useSearch({ from: '/_app/p/$key/settings' })
+  const { t } = useTranslation('settings')
   const canManage = useCan('manage_settings', key)
   const project = useProject(key)
   const showSkeleton = useDelayedFlag(project.isPending)
@@ -32,11 +34,11 @@ export function ProjectSettingsPage() {
   if (!canManage) {
     return (
       <PageContainer narrow>
-        <PageHeader title="Pengaturan project" />
+        <PageHeader title={t('page.title')} />
         <EmptyState
           icon={Lock}
-          title="Kamu tidak punya akses ke pengaturan project ini"
-          description="Hanya maintainer yang bisa mengubah member, default run, retensi, dan mengarsipkan project. Hubungi maintainer jika perlu perubahan."
+          title={t('page.noAccessTitle')}
+          description={t('page.noAccessDescription')}
         />
       </PageContainer>
     )
@@ -44,9 +46,9 @@ export function ProjectSettingsPage() {
 
   return (
     <PageContainer className="max-w-5xl">
-      <PageHeader title="Pengaturan project" description={project.data ? `${project.data.name} · ${key}` : key} />
+      <PageHeader title={t('page.title')} description={project.data ? `${project.data.name} · ${key}` : key} />
       <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 md:grid-cols-[168px_minmax(0,1fr)] md:gap-8">
-        <nav aria-label="Bagian pengaturan" className="-mx-4 overflow-x-auto px-4 md:mx-0 md:overflow-visible md:px-0">
+        <nav aria-label={t('page.sectionsLabel')} className="-mx-4 overflow-x-auto px-4 md:mx-0 md:overflow-visible md:px-0">
           <ul className="flex gap-1 border-b border-border pb-px md:flex-col md:gap-0.5 md:border-0 md:pb-0">
             {SECTIONS.map((s) => {
               const active = s.id === section
@@ -63,7 +65,7 @@ export function ProjectSettingsPage() {
                       s.id === 'danger' && 'text-destructive hover:text-destructive',
                     )}
                   >
-                    {s.label}
+                    {t(s.label)}
                   </Link>
                 </li>
               )
@@ -76,7 +78,7 @@ export function ProjectSettingsPage() {
             <ErrorState error={project.error} onRetry={() => project.refetch()} />
           ) : project.isPending ? (
             <div className="grid gap-3" aria-busy="true">
-              <span className="sr-only">Memuat pengaturan…</span>
+              <span className="sr-only">{t('page.loading')}</span>
               {showSkeleton && (
                 <>
                   <Skeleton className="h-6 w-40" />

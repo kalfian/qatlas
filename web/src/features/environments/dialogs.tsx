@@ -1,5 +1,6 @@
 import { Eye, EyeOff } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useEnvironmentMutations } from '@/api/queries'
@@ -58,6 +59,7 @@ export function EnvironmentNameDialog({
   existing: Environment[]
   onCreated?: (env: Environment) => void
 }) {
+  const { t } = useTranslation(['environments', 'common'])
   const { create, update } = useEnvironmentMutations(projectKey)
   const mutation = env ? update : create
   const [name, setName] = React.useState('')
@@ -77,7 +79,13 @@ export function EnvironmentNameDialog({
 
   const trimmed = name.trim()
   const clash = existing.some((e) => e.name.toLowerCase() === trimmed.toLowerCase() && e.id !== env?.id)
-  const clientError = !trimmed ? 'Nama wajib diisi' : trimmed.length > 40 ? 'Maksimal 40 karakter' : clash ? 'Nama ini sudah dipakai environment lain' : undefined
+  const clientError = !trimmed
+    ? t('nameDialog.nameRequired')
+    : trimmed.length > 40
+      ? t('nameDialog.nameMax', { count: 40 })
+      : clash
+        ? t('nameDialog.nameTaken')
+        : undefined
   const serverErrors = fieldErrorsOf(mutation.error)
   const error = (touched ? clientError : undefined) ?? serverErrors.name
 
@@ -94,7 +102,7 @@ export function EnvironmentNameDialog({
         { id: env.id, name: trimmed },
         {
           onSuccess: () => {
-            toast.success(`Environment diganti nama jadi ${trimmed}`)
+            toast.success(t('nameDialog.renamed', { name: trimmed }))
             onOpenChange(false)
           },
         },
@@ -104,7 +112,7 @@ export function EnvironmentNameDialog({
         { name: trimmed, is_default: makeDefault, variables: {} },
         {
           onSuccess: (created) => {
-            toast.success(`Environment ${created.name} dibuat`)
+            toast.success(t('nameDialog.created', { name: created.name }))
             onCreated?.(created)
             onOpenChange(false)
           },
@@ -118,13 +126,11 @@ export function EnvironmentNameDialog({
       <DialogContent className="max-w-md">
         <form onSubmit={submit} className="grid gap-4" noValidate>
           <DialogHeader>
-            <DialogTitle>{env ? 'Ganti nama environment' : 'Buat environment'}</DialogTitle>
-            <DialogDescription>
-              {env ? 'Run lama tetap menampilkan nama sebelumnya.' : 'Misalnya staging, production, atau qa. Variable dan secret diisi setelah dibuat.'}
-            </DialogDescription>
+            <DialogTitle>{env ? t('nameDialog.renameTitle') : t('nameDialog.createTitle')}</DialogTitle>
+            <DialogDescription>{env ? t('nameDialog.renameDescription') : t('nameDialog.createDescription')}</DialogDescription>
           </DialogHeader>
           <div className="grid gap-1.5">
-            <Label htmlFor="env-name">Nama</Label>
+            <Label htmlFor="env-name">{t('nameDialog.name')}</Label>
             <Input
               ref={inputRef}
               {...invalidProps('env-name', error)}
@@ -141,16 +147,16 @@ export function EnvironmentNameDialog({
           {!env && (
             <label className="flex items-center gap-2 text-sm">
               <Checkbox checked={makeDefault} onCheckedChange={(v) => setMakeDefault(v === true)} />
-              Jadikan default untuk run baru
+              {t('nameDialog.makeDefault')}
             </label>
           )}
           {mutation.isError && !serverErrors.name && <FormAlert error={mutation.error} />}
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Batal
+              {t('common:actions.cancel')}
             </Button>
             <Button type="submit" loading={mutation.isPending}>
-              {env ? 'Simpan nama' : 'Buat environment'}
+              {env ? t('nameDialog.saveName') : t('nameDialog.create')}
             </Button>
           </DialogFooter>
         </form>
@@ -174,6 +180,7 @@ export function DeleteEnvironmentDialog({
   onOpenChange: (o: boolean) => void
   onDeleted: () => void
 }) {
+  const { t } = useTranslation(['environments', 'common'])
   const { remove } = useEnvironmentMutations(projectKey)
   const [typed, setTyped] = React.useState('')
   const needsTyping = env.secrets.length > 0
@@ -192,7 +199,7 @@ export function DeleteEnvironmentDialog({
     if (!ok) return
     remove.mutate(env.id, {
       onSuccess: () => {
-        toast.success(`Environment ${env.name} dihapus`)
+        toast.success(t('deleteDialog.deleted', { name: env.name }))
         onOpenChange(false)
         onDeleted()
       },
@@ -203,16 +210,19 @@ export function DeleteEnvironmentDialog({
     <AlertDialog open={open} onOpenChange={(o) => !remove.isPending && onOpenChange(o)}>
       <AlertDialogContent>
         <AlertDialogHeader>
-          <AlertDialogTitle>Hapus environment {env.name}?</AlertDialogTitle>
+          <AlertDialogTitle>{t('deleteDialog.title', { name: env.name })}</AlertDialogTitle>
           <AlertDialogDescription>
-            {varCount} variable dan {env.secrets.length} secret akan dihapus permanen. Run lama tetap tersimpan, tapi run baru tidak bisa memakai environment ini.
-            {env.is_default && ' Environment lain akan otomatis jadi default.'}
+            {t('deleteDialog.description', {
+              variables: t('counts.variables', { count: varCount }),
+              secrets: t('counts.secrets', { count: env.secrets.length }),
+            })}
+            {env.is_default && t('deleteDialog.defaultNote')}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {needsTyping && (
           <div className="grid gap-1.5">
             <Label htmlFor="env-delete-confirm">
-              Ketik <span className="font-mono font-semibold">{env.name}</span> untuk konfirmasi
+              <Trans t={t} i18nKey="deleteDialog.typeToConfirm" values={{ name: env.name }} components={{ name: <span className="font-mono font-semibold" /> }} />
             </Label>
             <Input
               id="env-delete-confirm"
@@ -226,9 +236,9 @@ export function DeleteEnvironmentDialog({
         )}
         {remove.isError && <FormAlert error={remove.error} />}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={remove.isPending}>Batal</AlertDialogCancel>
+          <AlertDialogCancel disabled={remove.isPending}>{t('common:actions.cancel')}</AlertDialogCancel>
           <Button variant="destructive" onClick={confirm} disabled={!ok} loading={remove.isPending}>
-            Hapus environment
+            {t('deleteDialog.confirm')}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>
@@ -252,6 +262,7 @@ export function SecretDialog({
   open: boolean
   onOpenChange: (o: boolean) => void
 }) {
+  const { t } = useTranslation(['environments', 'common'])
   const { setSecret } = useEnvironmentMutations(projectKey)
   const [name, setName] = React.useState('')
   const [value, setValue] = React.useState('')
@@ -277,18 +288,19 @@ export function SecretDialog({
   }, [open, fixedName])
 
   const finalName = isNew ? name : fixedName!
+  const nameRequired = t('secretDialog.nameRequired')
   const nameError = !isNew
     ? undefined
     : !name
-      ? 'Nama wajib diisi'
+      ? nameRequired
       : !SECRET_NAME_RE.test(name)
-        ? 'Gunakan UPPER_SNAKE_CASE, diawali huruf (mis. QA_PASSWORD)'
+        ? t('secretDialog.nameFormat')
         : env.secrets.some((s) => s.name === name)
-          ? 'Secret ini sudah ada. Pakai "Ganti nilai" di daftar.'
+          ? t('secretDialog.nameExists')
           : undefined
-  const valueError = !value ? 'Nilai wajib diisi' : undefined
+  const valueError = !value ? t('secretDialog.valueRequired') : undefined
   const server = fieldErrorsOf(setSecret.error)
-  const shownName = (touched ? nameError : name && nameError !== 'Nama wajib diisi' ? nameError : undefined) ?? server.name
+  const shownName = (touched ? nameError : name && nameError !== nameRequired ? nameError : undefined) ?? server.name
   const shownValue = (touched ? valueError : undefined) ?? server.value
 
   const submit = (e: React.FormEvent) => {
@@ -300,7 +312,7 @@ export function SecretDialog({
       { id: env.id, name: finalName, value },
       {
         onSuccess: () => {
-          toast.success(`Secret ${finalName} tersimpan di ${env.name}`)
+          toast.success(t('secretDialog.saved', { name: finalName, env: env.name }))
           onOpenChange(false)
         },
       },
@@ -313,17 +325,17 @@ export function SecretDialog({
         <form onSubmit={submit} className="grid gap-4" noValidate autoComplete="off">
           <DialogHeader>
             <DialogTitle>
-              {isNew ? 'Tambah secret' : exists ? 'Ganti nilai secret' : 'Isi nilai secret'}
+              {isNew ? t('secretDialog.addTitle') : exists ? t('secretDialog.replaceTitle') : t('secretDialog.fillTitle')}
               {!isNew && <span className="ml-1.5 font-mono text-base font-medium">{fixedName}</span>}
             </DialogTitle>
             <DialogDescription>
-              Environment <span className="font-medium text-foreground">{env.name}</span>. Nilai secret tidak bisa dilihat lagi setelah disimpan.
+              <Trans t={t} i18nKey="secretDialog.description" values={{ name: env.name }} components={{ env: <span className="font-medium text-foreground" /> }} />
             </DialogDescription>
           </DialogHeader>
 
           {isNew && (
             <div className="grid gap-1.5">
-              <Label htmlFor="secret-name">Nama</Label>
+              <Label htmlFor="secret-name">{t('secretDialog.name')}</Label>
               <Input
                 ref={nameRef}
                 {...invalidProps('secret-name', shownName, 'secret-name-hint')}
@@ -338,14 +350,19 @@ export function SecretDialog({
                 <FieldError id="secret-name" message={shownName} />
               ) : (
                 <p id="secret-name-hint" className="text-xs text-muted-foreground">
-                  Dipakai di step sebagai <code className="font-mono">{`{{secret.${name || 'NAMA'}}}`}</code>
+                  <Trans
+                    t={t}
+                    i18nKey="secretDialog.nameHint"
+                    values={{ ref: `{{secret.${name || t('secretDialog.namePlaceholder')}}}` }}
+                    components={{ code: <code className="font-mono" /> }}
+                  />
                 </p>
               )}
             </div>
           )}
 
           <div className="grid gap-1.5">
-            <Label htmlFor="secret-value">Nilai</Label>
+            <Label htmlFor="secret-value">{t('secretDialog.value')}</Label>
             <div className="relative">
               <Input
                 ref={valueRef}
@@ -362,24 +379,24 @@ export function SecretDialog({
                 type="button"
                 onClick={() => setReveal((r) => !r)}
                 aria-pressed={reveal}
-                aria-label={reveal ? 'Sembunyikan nilai yang sedang diketik' : 'Tampilkan nilai yang sedang diketik'}
+                aria-label={reveal ? t('secretDialog.hideTyped') : t('secretDialog.showTyped')}
                 className="absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {reveal ? <EyeOff className="size-4" aria-hidden /> : <Eye className="size-4" aria-hidden />}
               </button>
             </div>
             <FieldError id="secret-value" message={shownValue} />
-            {exists && !shownValue && <p className="text-xs text-muted-foreground">Nilai lama langsung diganti saat kamu menyimpan.</p>}
+            {exists && !shownValue && <p className="text-xs text-muted-foreground">{t('secretDialog.replaceNote')}</p>}
           </div>
 
           {setSecret.isError && !server.name && !server.value && <FormAlert error={setSecret.error} />}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Batal
+              {t('common:actions.cancel')}
             </Button>
             <Button type="submit" loading={setSecret.isPending}>
-              Simpan secret
+              {t('secretDialog.save')}
             </Button>
           </DialogFooter>
         </form>
@@ -401,6 +418,7 @@ export function DeleteSecretDialog({
   open: boolean
   onOpenChange: (o: boolean) => void
 }) {
+  const { t } = useTranslation(['environments', 'common'])
   const { deleteSecret } = useEnvironmentMutations(projectKey)
   React.useEffect(() => {
     if (open) deleteSecret.reset()
@@ -411,16 +429,20 @@ export function DeleteSecretDialog({
       <AlertDialogContent>
         <AlertDialogHeader>
           <AlertDialogTitle>
-            Hapus secret <span className="font-mono">{name}</span>?
+            <Trans t={t} i18nKey="deleteSecretDialog.title" values={{ name }} components={{ name: <span className="font-mono" /> }} />
           </AlertDialogTitle>
           <AlertDialogDescription>
-            Step yang memakai <code className="font-mono">{`{{secret.${name}}}`}</code> akan gagal saat dijalankan di environment {env.name}. Nilainya tidak bisa
-            dipulihkan.
+            <Trans
+              t={t}
+              i18nKey="deleteSecretDialog.description"
+              values={{ ref: `{{secret.${name}}}`, env: env.name }}
+              components={{ code: <code className="font-mono" /> }}
+            />
           </AlertDialogDescription>
         </AlertDialogHeader>
         {deleteSecret.isError && <FormAlert error={deleteSecret.error} />}
         <AlertDialogFooter>
-          <AlertDialogCancel disabled={deleteSecret.isPending}>Batal</AlertDialogCancel>
+          <AlertDialogCancel disabled={deleteSecret.isPending}>{t('common:actions.cancel')}</AlertDialogCancel>
           <Button
             variant="destructive"
             loading={deleteSecret.isPending}
@@ -429,14 +451,14 @@ export function DeleteSecretDialog({
                 { id: env.id, name },
                 {
                   onSuccess: () => {
-                    toast.success(`Secret ${name} dihapus dari ${env.name}`)
+                    toast.success(t('deleteSecretDialog.deleted', { name, env: env.name }))
                     onOpenChange(false)
                   },
                 },
               )
             }
           >
-            Hapus secret
+            {t('deleteSecretDialog.confirm')}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

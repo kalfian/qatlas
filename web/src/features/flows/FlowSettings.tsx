@@ -1,5 +1,6 @@
 import { Braces, ChevronDown, Plus, X } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { TagChip } from '@/components/misc'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,10 +13,6 @@ import { newDraftVariable, type DraftVariable, type FlowDraft } from './flow-dra
 
 type Patch = (fn: (d: FlowDraft) => FlowDraft) => void
 
-const SHARED_HINT = 'Satu browser untuk semua test case: cookie, login, dan vars terbawa ke case berikutnya.'
-const ISOLATED_HINT = 'Tiap test case jalan di browser baru; vars runtime di-reset. Boleh berisi test case manual.'
-const STOP_HINT = 'Item berikutnya di-skip saat satu item gagal, kecuali item yang diberi continue on failure.'
-const NOSTOP_HINT = 'Semua item tetap dijalankan walau ada yang gagal.'
 
 export function FlowSettings({
   draft,
@@ -30,18 +27,21 @@ export function FlowSettings({
 }) {
   const varCount = draft.variables.filter((v) => v.key.trim()).length
   const varErrorCount = Object.keys(variableErrors).length
+  const { t } = useTranslation('flows')
+  const sessionHint = draft.shared_session ? t('settings.sharedHint') : t('settings.isolatedHint')
+  const stopHint = draft.stop_on_failure ? t('settings.stopHint') : t('settings.noStopHint')
 
   if (readOnly) {
     return (
-      <section aria-label="Pengaturan flow" className="rounded-md border border-border">
+      <section aria-label={t('settings.label')} className="rounded-md border border-border">
         <dl className="grid divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">
-          <ReadField label="Session" value={draft.shared_session ? 'Shared session' : 'Isolated'} hint={draft.shared_session ? SHARED_HINT : ISOLATED_HINT} />
-          <ReadField label="Stop on failure" value={draft.stop_on_failure ? 'Ya' : 'Tidak'} hint={draft.stop_on_failure ? STOP_HINT : NOSTOP_HINT} />
+          <ReadField label={t('settings.session')} value={draft.shared_session ? t('session.shared') : t('session.isolated')} hint={sessionHint} />
+          <ReadField label={t('settings.stopOnFailure')} value={draft.stop_on_failure ? t('list.yes') : t('list.no')} hint={stopHint} />
           <div className="px-4 py-3">
-            <dt className="text-xs font-medium text-muted-foreground">Variables ({varCount})</dt>
+            <dt className="text-xs font-medium text-muted-foreground">{t('settings.variablesCount', { count: varCount })}</dt>
             <dd className="mt-1">
               {varCount === 0 ? (
-                <span className="text-sm text-muted-foreground">Tidak ada</span>
+                <span className="text-sm text-muted-foreground">{t('settings.none')}</span>
               ) : (
                 <ul className="flex flex-col gap-0.5">
                   {draft.variables.map((v) => (
@@ -58,13 +58,13 @@ export function FlowSettings({
         {(draft.description || draft.tags.length > 0) && (
           <dl className="grid gap-3 border-t border-border px-4 py-3 md:grid-cols-3">
             <div className="md:col-span-2">
-              <dt className="text-xs font-medium text-muted-foreground">Deskripsi</dt>
-              <dd className="mt-1 text-sm whitespace-pre-line">{draft.description || <span className="text-muted-foreground">Tidak ada</span>}</dd>
+              <dt className="text-xs font-medium text-muted-foreground">{t('settings.description')}</dt>
+              <dd className="mt-1 text-sm whitespace-pre-line">{draft.description || <span className="text-muted-foreground">{t('settings.none')}</span>}</dd>
             </div>
             <div>
-              <dt className="text-xs font-medium text-muted-foreground">Tag</dt>
+              <dt className="text-xs font-medium text-muted-foreground">{t('settings.tags')}</dt>
               <dd className="mt-1 flex flex-wrap gap-1">
-                {draft.tags.length ? draft.tags.map((t) => <TagChip key={t} tag={t} />) : <span className="text-sm text-muted-foreground">Tidak ada</span>}
+                {draft.tags.length ? draft.tags.map((tag) => <TagChip key={tag} tag={tag} />) : <span className="text-sm text-muted-foreground">{t('settings.none')}</span>}
               </dd>
             </div>
           </dl>
@@ -74,33 +74,33 @@ export function FlowSettings({
   }
 
   return (
-    <section aria-label="Pengaturan flow" className="rounded-md border border-border">
+    <section aria-label={t('settings.label')} className="rounded-md border border-border">
       <div className="grid divide-y divide-border md:grid-cols-3 md:divide-x md:divide-y-0">
         <SwitchField
           id="flow-shared"
-          label="Shared session"
-          hint={draft.shared_session ? SHARED_HINT : ISOLATED_HINT}
+          label={t('session.shared')}
+          hint={sessionHint}
           checked={draft.shared_session}
           onChange={(v) => patch((d) => ({ ...d, shared_session: v }))}
         />
         <SwitchField
           id="flow-stop"
-          label="Stop on failure"
-          hint={draft.stop_on_failure ? STOP_HINT : NOSTOP_HINT}
+          label={t('settings.stopOnFailure')}
+          hint={stopHint}
           checked={draft.stop_on_failure}
           onChange={(v) => patch((d) => ({ ...d, stop_on_failure: v }))}
         />
         <div className="flex flex-col items-start gap-1 px-4 py-3">
           <VariablesPopover variables={draft.variables} errors={variableErrors} patch={patch} count={varCount} errorCount={varErrorCount} />
           <p className="text-xs text-muted-foreground">
-            Dipakai di step sebagai <code className="font-mono">{'{{vars.nama}}'}</code>. Variable test case dengan nama sama menimpanya.
+            <Trans t={t} i18nKey="settings.variablesHint" values={{ token: `{{vars.${t('settings.tokenName')}}}` }} components={{ code: <code className="font-mono" /> }} />
           </p>
         </div>
       </div>
       <div className="grid gap-4 border-t border-border px-4 py-3 md:grid-cols-3">
         <div className="flex flex-col gap-1.5 md:col-span-2">
           <Label htmlFor="flow-desc" className="text-xs">
-            Deskripsi
+            {t('settings.description')}
           </Label>
           <Textarea
             id="flow-desc"
@@ -108,7 +108,7 @@ export function FlowSettings({
             className="min-h-0 resize-y"
             value={draft.description}
             onChange={(e) => patch((d) => ({ ...d, description: e.target.value }))}
-            placeholder="Tujuan flow ini, mis. cek checkout end-to-end tiap rilis."
+            placeholder={t('settings.descriptionPlaceholder')}
           />
         </div>
         <TagsField tags={draft.tags} onChange={(tags) => patch((d) => ({ ...d, tags }))} />
@@ -157,6 +157,7 @@ function VariablesPopover({
   errorCount: number
 }) {
   const [open, setOpen] = React.useState(false)
+  const { t } = useTranslation('flows')
   const focusUid = React.useRef<string | null>(null)
 
   const add = () => {
@@ -184,21 +185,21 @@ function VariablesPopover({
     >
       <PopoverTrigger asChild>
         <Button id="flow-vars-trigger" variant="outline" size="sm" aria-invalid={errorCount > 0 || undefined} className={cn(errorCount > 0 && 'border-destructive')}>
-          <Braces /> Variables ({count})
-          {errorCount > 0 && <span className="text-destructive">· {errorCount} error</span>}
+          <Braces /> {t('settings.variablesCount', { count })}
+          {errorCount > 0 && <span className="text-destructive">· {t('builder.errorCount', { count: errorCount })}</span>}
           <ChevronDown className="text-muted-foreground" />
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" collisionPadding={16} className="w-[min(calc(100vw-2rem),28rem)] p-0" aria-label="Variables flow">
+      <PopoverContent align="start" collisionPadding={16} className="w-[min(calc(100vw-2rem),28rem)] p-0" aria-label={t('settings.variablesTitle')}>
         <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-          <h3 className="text-sm font-semibold">Variables flow</h3>
-          <span className="text-xs text-muted-foreground">Menimpa variable environment</span>
+          <h3 className="text-sm font-semibold">{t('settings.variablesTitle')}</h3>
+          <span className="text-xs text-muted-foreground">{t('settings.overridesEnv')}</span>
         </div>
         <div className="flex max-h-72 flex-col gap-2 overflow-y-auto p-3">
           {variables.length > 0 && (
             <div className="grid grid-cols-[1fr_1fr_1.75rem] gap-2 text-xs font-medium text-muted-foreground" aria-hidden>
-              <span>Nama</span>
-              <span>Nilai</span>
+              <span>{t('settings.name')}</span>
+              <span>{t('settings.value')}</span>
             </div>
           )}
           {variables.map((v, i) => {
@@ -211,7 +212,7 @@ function VariablesPopover({
                     value={v.key}
                     onChange={(e) => update(v.uid, 'key', e.target.value)}
                     placeholder="product"
-                    aria-label={`Nama variable ${i + 1}`}
+                    aria-label={t('settings.varNameLabel', { n: String(i + 1) })}
                     aria-invalid={!!err || undefined}
                     aria-describedby={err ? `var-err-${v.uid}` : undefined}
                     className="h-7 font-mono text-xs"
@@ -221,13 +222,13 @@ function VariablesPopover({
                   <Input
                     value={v.value}
                     onChange={(e) => update(v.uid, 'value', e.target.value)}
-                    placeholder="Kaos Polos"
-                    aria-label={`Nilai variable ${v.key || i + 1}`}
+                    placeholder={t('settings.valuePlaceholder')}
+                    aria-label={t('settings.varValueLabel', { name: v.key || String(i + 1) })}
                     className="h-7 font-mono text-xs"
                     spellCheck={false}
                     autoComplete="off"
                   />
-                  <Button variant="ghost" size="icon-sm" onClick={() => remove(v.uid)} aria-label={`Hapus variable ${v.key || i + 1}`}>
+                  <Button variant="ghost" size="icon-sm" onClick={() => remove(v.uid)} aria-label={t('settings.varRemoveLabel', { name: v.key || String(i + 1) })}>
                     <X />
                   </Button>
                 </div>
@@ -240,7 +241,7 @@ function VariablesPopover({
             )
           })}
           <Button variant="ghost" size="sm" onClick={add} className="self-start">
-            <Plus /> Tambah variable
+            <Plus /> {t('settings.addVariable')}
           </Button>
         </div>
       </PopoverContent>
@@ -250,22 +251,23 @@ function VariablesPopover({
 
 function TagsField({ tags, onChange }: { tags: string[]; onChange: (t: string[]) => void }) {
   const [value, setValue] = React.useState('')
+  const { t } = useTranslation('flows')
   const commit = () => {
     const parts = value
       .split(',')
-      .map((t) => t.trim().toLowerCase().replace(/\s+/g, '-'))
-      .filter((t) => t && !tags.includes(t))
+      .map((x) => x.trim().toLowerCase().replace(/\s+/g, '-'))
+      .filter((x) => x && !tags.includes(x))
     if (parts.length) onChange([...tags, ...new Set(parts)])
     setValue('')
   }
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor="flow-tags" className="text-xs">
-        Tag
+        {t('settings.tags')}
       </Label>
       <div className="flex min-h-8 flex-wrap items-center gap-1 rounded-md border border-input bg-background px-1.5 py-1 focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-1 focus-within:ring-offset-background">
-        {tags.map((t) => (
-          <TagChip key={t} tag={t} onRemove={() => onChange(tags.filter((x) => x !== t))} />
+        {tags.map((tag) => (
+          <TagChip key={tag} tag={tag} onRemove={() => onChange(tags.filter((x) => x !== tag))} />
         ))}
         <input
           id="flow-tags"
@@ -286,7 +288,7 @@ function TagsField({ tags, onChange }: { tags: string[]; onChange: (t: string[])
         />
       </div>
       <p id="flow-tags-hint" className="sr-only">
-        Tekan Enter atau koma untuk menambah tag.
+        {t('settings.tagsHint')}
       </p>
     </div>
   )

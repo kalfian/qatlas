@@ -1,7 +1,9 @@
 import { useBlocker, useNavigate, useSearch } from '@tanstack/react-router'
 import { useQueryClient } from '@tanstack/react-query'
 import { ChevronDown, CircleAlert, Keyboard, ListPlus, Play, TriangleAlert } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ApiError, errorMessage } from '@/api/client'
 import { qk, useCreateTestCase, useEnvironments, useUpdateTestCase } from '@/api/queries'
@@ -57,12 +59,14 @@ import { VarSuggestionsContext, type VarSuggestion } from './VarField'
 type Tab = 'steps' | 'variables' | 'info' | 'revisions' | 'runs'
 const FROM = '/_app/p/$key/tests/$caseKey' as const
 
-const FN_SUGGESTIONS: VarSuggestion[] = [
-  { token: 'fn.uuid', ns: 'fn', hint: 'UUID acak' },
-  { token: 'fn.now', ns: 'fn', hint: 'waktu sekarang (ISO)' },
-  { token: 'fn.random_email', ns: 'fn', hint: 'email acak' },
-  { token: 'fn.random_int 1 100', ns: 'fn', hint: 'angka acak' },
-]
+function fnSuggestions(t: TFunction<'testcases'>): VarSuggestion[] {
+  return [
+    { token: 'fn.uuid', ns: 'fn', hint: t('editor.vars.fnUuid') },
+    { token: 'fn.now', ns: 'fn', hint: t('editor.vars.fnNow') },
+    { token: 'fn.random_email', ns: 'fn', hint: t('editor.vars.fnRandomEmail') },
+    { token: 'fn.random_int 1 100', ns: 'fn', hint: t('editor.vars.fnRandomInt') },
+  ]
+}
 
 function useMediaQuery(q: string) {
   return React.useSyncExternalStore(
@@ -98,11 +102,12 @@ export function TestCaseEditor({
   const canRun = useCan('run', projectKey)
   const readOnly = !canEdit
   const isXl = useMediaQuery('(min-width: 1280px)')
+  const { t } = useTranslation(['testcases', 'common'])
 
   const rawTab = (search.tab ?? 'steps') as Tab
   const tab: Tab = isCreate && (rawTab === 'revisions' || rawTab === 'runs') ? 'steps' : rawTab
-  const setTab = (t: Tab) =>
-    navigate({ to: '/p/$key/tests/$caseKey', params: { key: projectKey, caseKey: caseKey ?? 'new' }, search: (p) => ({ ...p, tab: t === 'steps' ? undefined : t }), replace: true })
+  const setTab = (next: Tab) =>
+    navigate({ to: '/p/$key/tests/$caseKey', params: { key: projectKey, caseKey: caseKey ?? 'new' }, search: (p) => ({ ...p, tab: next === 'steps' ? undefined : next }), replace: true })
 
   /* ---------------------------------------------------------------- draft state */
   const [baseline, setBaseline] = React.useState(initial)
@@ -159,19 +164,19 @@ export function TestCaseEditor({
       for (const s of e.secrets) sec.set(s.name, [...(sec.get(s.name) ?? []), e.name])
     }
     const vars = new Map<string, string>()
-    for (const k of Object.keys(draft.variables)) vars.set(k, 'variable test case')
+    for (const k of Object.keys(draft.variables)) vars.set(k, t('editor.vars.fromTestCase'))
     for (const s of draft.steps) {
-      if (s.save_as) vars.set(s.save_as, 'dari extract_text')
-      if (s.action === 'set_variable' && s.name) vars.set(s.name, 'dari set_variable')
-      for (const k of Object.keys(s.save ?? {})) vars.set(k, 'dari HTTP save')
+      if (s.save_as) vars.set(s.save_as, t('editor.vars.fromAction', { action: 'extract_text' }))
+      if (s.action === 'set_variable' && s.name) vars.set(s.name, t('editor.vars.fromAction', { action: 'set_variable' }))
+      for (const k of Object.keys(s.save ?? {})) vars.set(k, t('editor.vars.fromHttpSave'))
     }
     return [
       ...[...env].map(([k, names]) => ({ token: `env.${k}`, ns: 'env' as const, hint: names.join(', ') })),
       ...[...vars].map(([k, hint]) => ({ token: `vars.${k}`, ns: 'vars' as const, hint })),
-      ...[...sec].map(([k]) => ({ token: `secret.${k}`, ns: 'secret' as const, hint: 'nilai tersembunyi' })),
-      ...FN_SUGGESTIONS,
+      ...[...sec].map(([k]) => ({ token: `secret.${k}`, ns: 'secret' as const, hint: t('editor.vars.secretHidden') })),
+      ...fnSuggestions(t),
     ]
-  }, [envs.data, draft.variables, draft.steps])
+  }, [envs.data, draft.variables, draft.steps, t])
 
   /* ---------------------------------------------------------------- step selection & panel */
   const [selectedId, setSelectedId] = React.useState<string | null>(initial.steps[0]?.id ?? null)
@@ -194,8 +199,8 @@ export function TestCaseEditor({
   }
   React.useEffect(() => {
     if (!focusPanelReq || !isXl) return
-    const t = requestAnimationFrame(focusFirstField)
-    return () => cancelAnimationFrame(t)
+    const raf = requestAnimationFrame(focusFirstField)
+    return () => cancelAnimationFrame(raf)
   }, [focusPanelReq, isXl])
 
   const openStep = (id: string, focusField = true) => {
@@ -214,7 +219,7 @@ export function TestCaseEditor({
     const step = newStep(action, id)
     const at = selectedIndex >= 0 ? selectedIndex + 1 : draft.steps.length
     setSteps((steps) => [...steps.slice(0, at), step, ...steps.slice(at)])
-    announce(`Step ${at + 1} (${action === 'manual' ? 'langkah manual' : action}) ditambahkan`)
+    announce(t('editor.announce.added', { n: String(at + 1), action: action === 'manual' ? t('editor.announce.manualStep') : action }))
     openStep(id)
   }
 
@@ -235,7 +240,7 @@ export function TestCaseEditor({
       const copy = { ...structuredClone(draft.steps[idx]), id: newStepId(draft.steps) }
       setSteps((steps) => [...steps.slice(0, idx + 1), copy, ...steps.slice(idx + 1)])
       setSelectedId(copy.id)
-      announce(`Step ${idx + 1} diduplikat sebagai step ${idx + 2}`)
+      announce(t('editor.announce.duplicated', { n: String(idx + 1), to: String(idx + 2) }))
       focusRow(copy.id)
     },
     onToggle: (id) =>
@@ -257,10 +262,10 @@ export function TestCaseEditor({
       if (selectedId === id) setSelectedId(neighbour?.id ?? null)
       if (sheetOpen) setSheetOpen(false)
       focusRow(neighbour?.id)
-      toast(`Step ${idx + 1} dihapus`, {
+      toast(t('editor.announce.deleted', { n: String(idx + 1) }), {
         duration: 5000,
         action: {
-          label: 'Urungkan',
+          label: t('common:actions.undo'),
           onClick: () => {
             setSteps((steps) => (steps.some((s) => s.id === removed.id) ? steps : [...steps.slice(0, idx), removed, ...steps.slice(idx)]))
             setSelectedId(removed.id)
@@ -277,7 +282,7 @@ export function TestCaseEditor({
     const to = selectedIndex + dir
     if (to < 0 || to >= draft.steps.length) return
     handlers.onReorder(selectedIndex, to)
-    announce(`Step ${selectedIndex + 1} dipindah ke posisi ${to + 1}`)
+    announce(t('editor.announce.moved', { n: String(selectedIndex + 1), to: String(to + 1) }))
   }
 
   /* ---------------------------------------------------------------- JSON mode */
@@ -289,23 +294,23 @@ export function TestCaseEditor({
       setMode('json')
     } else {
       if (blocking.length) {
-        toast.error('JSON belum valid', { description: 'Perbaiki error sintaks/struktur di daftar bawah editor dulu, baru kembali ke Form.' })
+        toast.error(t('editor.json.invalidTitle'), { description: t('editor.json.invalidDescription') })
         return
       }
       setMode('form')
     }
   }
-  const onJsonChange = (t: string) => {
-    setJsonText(t)
-    const r = parseJsonDoc(t, draft)
+  const onJsonChange = (text: string) => {
+    setJsonText(text)
+    const r = parseJsonDoc(text, draft)
     setBlocking(r.blocking)
     if (r.draft) setDraft(r.draft)
   }
   const semanticIssues = React.useMemo(() => {
     if (mode !== 'json' || blocking.length) return { errors: [] as JsonIssue[], warnings: [] as JsonIssue[] }
-    const errs = [...(titleMissing ? [{ path: 'title', message: 'Judul wajib diisi' }] : []), ...validation.errors]
+    const errs = [...(titleMissing ? [{ path: 'title', message: t('editor.titleRequired') }] : []), ...validation.errors]
     return { errors: locateIssues(jsonText, errs), warnings: locateIssues(jsonText, validation.warnings.filter((w) => w.path !== 'steps')) }
-  }, [mode, blocking.length, jsonText, validation, titleMissing])
+  }, [mode, blocking.length, jsonText, validation, titleMissing, t])
 
   /* ---------------------------------------------------------------- save */
   const createMut = useCreateTestCase(projectKey)
@@ -319,15 +324,15 @@ export function TestCaseEditor({
   const titleRef = React.useRef<HTMLInputElement>(null)
 
   let saveBlock: string | null = null
-  if (blocking.length) saveBlock = 'JSON belum valid; perbaiki dulu.'
-  else if (errorCount) saveBlock = `Perbaiki ${errorCount} error dulu.`
-  else if (!isCreate && !dirty) saveBlock = 'Belum ada perubahan untuk disimpan.'
+  if (blocking.length) saveBlock = t('editor.block.jsonInvalid')
+  else if (errorCount) saveBlock = t('editor.block.fixErrors', { count: errorCount })
+  else if (!isCreate && !dirty) saveBlock = t('editor.block.noChanges')
 
   let runBlock: string | null = null
-  if (isCreate) runBlock = 'Simpan test case dulu sebelum menjalankannya.'
-  else if (dirty) runBlock = 'Simpan perubahan dulu; run memakai versi yang tersimpan.'
-  else if (errorCount) runBlock = `Perbaiki ${errorCount} error dulu.`
-  else if (!draft.steps.length) runBlock = 'Tambah minimal satu step dulu.'
+  if (isCreate) runBlock = t('editor.block.saveBeforeRun')
+  else if (dirty) runBlock = t('editor.block.saveChangesBeforeRun')
+  else if (errorCount) runBlock = t('editor.block.fixErrors', { count: errorCount })
+  else if (!draft.steps.length) runBlock = t('editor.block.addStep')
 
   const goToFirstError = () => {
     if (titleMissing) {
@@ -352,7 +357,7 @@ export function TestCaseEditor({
       toast.error(err.message, { description: err.details[0]?.message })
       return
     }
-    toast.error('Gagal menyimpan', { description: errorMessage(err) })
+    toast.error(t('editor.saveFailed'), { description: errorMessage(err) })
   }
 
   const save = (changeNote?: string) => {
@@ -370,7 +375,7 @@ export function TestCaseEditor({
       createMut.mutate(input, {
         onSuccess: (tc) => {
           skipBlock.current = true
-          toast.success(`${tc.key} dibuat · revisi 1 tersimpan`)
+          toast.success(t('editor.created', { key: tc.key }))
           navigate({ to: '/p/$key/tests/$caseKey', params: { key: projectKey, caseKey: tc.key }, search: {}, replace: true })
         },
         onError: onSaveError,
@@ -389,7 +394,7 @@ export function TestCaseEditor({
           setServerErrors([])
           setNote('')
           setNoteOpen(false)
-          toast.success(`Revisi ${tc.revision} tersimpan`)
+          toast.success(t('editor.revisionSaved', { revision: String(tc.revision) }))
         },
         onError: onSaveError,
       },
@@ -402,7 +407,7 @@ export function TestCaseEditor({
     if (!fresh) return
     resetTo(draftFromCase(fresh), fresh.revision)
     setConflict(null)
-    toast(`Dimuat ulang ke revisi ${fresh.revision}`)
+    toast(t('editor.reloaded', { revision: String(fresh.revision) }))
   }
 
   /* ---------------------------------------------------------------- keyboard: ⌘S, N, ? */
@@ -490,7 +495,7 @@ export function TestCaseEditor({
   return (
     <VarSuggestionsContext.Provider value={suggestions}>
       <PageContainer className="gap-4">
-        <h1 className="sr-only">{isCreate ? 'Test case baru' : `${caseKey} ${draft.title}`}</h1>
+        <h1 className="sr-only">{isCreate ? t('editor.newHeading') : `${caseKey} ${draft.title}`}</h1>
         <Tabs value={mode === 'json' ? '__json' : tab} onValueChange={(v) => setTab(v as Tab)} className="flex flex-col gap-4">
           <div
             ref={headRef}
@@ -498,7 +503,7 @@ export function TestCaseEditor({
           >
             <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
               <div className="flex min-w-0 flex-1 basis-80 items-center gap-2">
-                <KeyBadge className="shrink-0">{caseKey ?? 'Baru'}</KeyBadge>
+                <KeyBadge className="shrink-0">{caseKey ?? t('editor.newBadge')}</KeyBadge>
                 {manual && <ManualBadge execution="manual" className="shrink-0" />}
                 {readOnly ? (
                   <p className="min-w-0 truncate text-xl font-semibold tracking-tight" title={draft.title}>
@@ -508,11 +513,11 @@ export function TestCaseEditor({
                   <input
                     ref={titleRef}
                     autoFocus={isCreate}
-                    aria-label="Judul test case"
+                    aria-label={t('editor.titleLabel')}
                     aria-invalid={titleTouched && titleMissing ? true : undefined}
                     aria-describedby={titleTouched && titleMissing ? 'tc-title-err' : undefined}
                     value={draft.title}
-                    placeholder={manual ? 'Judul test case manual, mis. Login dengan OTP SMS' : 'Judul test case, mis. User bisa login dengan email'}
+                    placeholder={manual ? t('editor.titlePlaceholderManual') : t('editor.titlePlaceholder')}
                     onChange={(e) => update((d) => ({ ...d, title: e.target.value }))}
                     onBlur={() => setTitleTouched(true)}
                     className="h-9 min-w-0 flex-1 rounded-md border border-transparent bg-transparent px-1.5 text-xl font-semibold tracking-tight transition-colors duration-150 outline-none placeholder:font-normal placeholder:text-muted-foreground hover:border-border focus-visible:border-input focus-visible:ring-2 focus-visible:ring-ring aria-invalid:border-destructive"
@@ -521,13 +526,13 @@ export function TestCaseEditor({
                 {dirty && !readOnly && (
                   <span className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground" role="status">
                     <span className="size-1.5 rounded-full bg-status-blocked" aria-hidden />
-                    belum disimpan
+                    {t('editor.unsaved')}
                   </span>
                 )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 <Segmented
-                  ariaLabel="Mode editor"
+                  ariaLabel={t('editor.modeLabel')}
                   value={mode}
                   onChange={switchMode}
                   options={[
@@ -537,7 +542,7 @@ export function TestCaseEditor({
                 />
                 {canRun && !isCreate && (
                   <>
-                    <Tip label={runBlock ?? 'Jalankan versi tersimpan'}>
+                    <Tip label={runBlock ?? t('editor.runSaved')}>
                       <Button
                         variant="outline"
                         aria-disabled={runBlock ? true : undefined}
@@ -550,7 +555,7 @@ export function TestCaseEditor({
                           setRunOpen(true)
                         }}
                       >
-                        <Play /> Run
+                        <Play /> {t('editor.run')}
                       </Button>
                     </Tip>
                     {runBlock && (
@@ -562,7 +567,7 @@ export function TestCaseEditor({
                 )}
                 {!readOnly && (
                   <div className="inline-flex">
-                    <Tip label={saveBlock ?? `Simpan (${MOD_LABEL}+S)`}>
+                    <Tip label={saveBlock ?? t('editor.saveTip', { mod: MOD_LABEL })}>
                       <Button
                         className={cn(!isCreate && 'rounded-r-none')}
                         aria-disabled={saveBlock ? true : undefined}
@@ -571,7 +576,7 @@ export function TestCaseEditor({
                         loading={saving}
                         onClick={() => save(note)}
                       >
-                        Simpan
+                        {t('common:actions.save')}
                         <span className="hidden font-mono text-[11px] opacity-60 sm:inline">{MOD_LABEL === '⌘' ? '⌘S' : 'Ctrl S'}</span>
                       </Button>
                     </Tip>
@@ -583,7 +588,7 @@ export function TestCaseEditor({
                     {!isCreate && (
                       <Popover open={noteOpen} onOpenChange={setNoteOpen}>
                         <PopoverTrigger asChild>
-                          <Button className="rounded-l-none border-l border-primary-foreground/25 px-2" aria-label="Simpan dengan catatan perubahan" disabled={saving || !dirty}>
+                          <Button className="rounded-l-none border-l border-primary-foreground/25 px-2" aria-label={t('editor.saveWithNote')} disabled={saving || !dirty}>
                             <ChevronDown />
                           </Button>
                         </PopoverTrigger>
@@ -595,11 +600,11 @@ export function TestCaseEditor({
                               save(note)
                             }}
                           >
-                            <Label htmlFor="tc-change-note">Catatan perubahan</Label>
-                            <Input id="tc-change-note" autoFocus value={note} onChange={(e) => setNote(e.target.value)} placeholder="Mis. Perbaiki expected total setelah diskon" />
-                            <p className="text-xs text-muted-foreground">Tampil di tab Revisi. Opsional.</p>
+                            <Label htmlFor="tc-change-note">{t('editor.changeNote')}</Label>
+                            <Input id="tc-change-note" autoFocus value={note} onChange={(e) => setNote(e.target.value)} placeholder={t('editor.changeNotePlaceholder')} />
+                            <p className="text-xs text-muted-foreground">{t('editor.changeNoteHint')}</p>
                             <Button type="submit" className="self-end" loading={saving} aria-disabled={saveBlock ? true : undefined}>
-                              Simpan revisi {baseRevision + 1}
+                              {t('editor.saveRevision', { revision: String(baseRevision + 1) })}
                             </Button>
                           </form>
                         </PopoverContent>
@@ -611,27 +616,27 @@ export function TestCaseEditor({
             </div>
             {titleTouched && titleMissing && !readOnly && (
               <p id="tc-title-err" className="-mt-1 flex items-center gap-1 text-xs text-destructive">
-                <CircleAlert className="size-3.5" aria-hidden /> Judul wajib diisi
+                <CircleAlert className="size-3.5" aria-hidden /> {t('editor.titleRequired')}
               </p>
             )}
             {mode === 'form' && (
-              <TabsList aria-label="Bagian test case">
+              <TabsList aria-label={t('editor.tabsLabel')}>
                 <TabsTrigger value="steps">
-                  {manual ? 'Langkah' : 'Steps'} <span className="text-xs tabular text-muted-foreground">{draft.steps.length}</span>
+                  {manual ? t('editor.tabs.stepsManual') : t('editor.tabs.steps')} <span className="text-xs tabular text-muted-foreground">{draft.steps.length}</span>
                   {validation.errors.length > 0 && (
                     <span className="inline-flex h-4 items-center gap-0.5 rounded-sm bg-status-failed-bg px-1 text-xs text-status-failed">
                       <CircleAlert className="size-3" aria-hidden />
                       <span className="tabular">{validation.errors.length}</span>
-                      <span className="sr-only"> error</span>
+                      <span className="sr-only"> {t('editor.errorWord', { count: validation.errors.length })}</span>
                     </span>
                   )}
                 </TabsTrigger>
                 <TabsTrigger value="variables">
-                  Variables {varCount > 0 && <span className="text-xs tabular text-muted-foreground">{varCount}</span>}
+                  {t('editor.tabs.variables')} {varCount > 0 && <span className="text-xs tabular text-muted-foreground">{varCount}</span>}
                 </TabsTrigger>
-                <TabsTrigger value="info">Info</TabsTrigger>
-                {!isCreate && <TabsTrigger value="revisions">Revisi</TabsTrigger>}
-                {!isCreate && <TabsTrigger value="runs">Riwayat run</TabsTrigger>}
+                <TabsTrigger value="info">{t('editor.tabs.info')}</TabsTrigger>
+                {!isCreate && <TabsTrigger value="revisions">{t('editor.tabs.revisions')}</TabsTrigger>}
+                {!isCreate && <TabsTrigger value="runs">{t('editor.tabs.runs')}</TabsTrigger>}
               </TabsList>
             )}
           </div>
@@ -642,10 +647,10 @@ export function TestCaseEditor({
             <div role="alert" className="flex flex-wrap items-center gap-3 rounded-md border border-status-blocked/40 bg-status-blocked-bg px-4 py-2.5 text-sm">
               <TriangleAlert className="size-4 shrink-0 text-status-blocked" aria-hidden />
               <p className="min-w-0 flex-1">
-                {conflict} <span className="text-muted-foreground">Muat ulang akan membuang perubahanmu yang belum disimpan.</span>
+                {conflict} <span className="text-muted-foreground">{t('editor.conflict.hint')}</span>
               </p>
               <Button variant="outline" size="sm" onClick={reloadFromServer}>
-                Muat ulang
+                {t('editor.conflict.reload')}
               </Button>
               <Button
                 variant="ghost"
@@ -656,13 +661,13 @@ export function TestCaseEditor({
                   setTab('revisions')
                 }}
               >
-                Lihat perbedaan
+                {t('editor.conflict.viewDiff')}
               </Button>
             </div>
           )}
           {serverErrors.length > 0 && !conflict && (
             <div role="alert" className="flex flex-col gap-1 rounded-md border border-destructive/40 bg-status-failed-bg px-4 py-2.5 text-sm">
-              <p className="font-medium text-status-failed">Server menolak simpan:</p>
+              <p className="font-medium text-status-failed">{t('editor.serverRejected')}</p>
               <ul className="list-inside list-disc text-foreground">
                 {serverErrors.map((e) => (
                   <li key={e.path + e.message}>
@@ -689,33 +694,34 @@ export function TestCaseEditor({
                   <div className="flex min-w-0 flex-col gap-2">
                     <div className="flex min-h-7 items-center justify-between gap-2">
                       <p className="text-xs text-muted-foreground">
-                        <span className="tabular">{draft.steps.length}</span> {manual ? 'langkah' : 'step'}
+                        <span className="tabular">{draft.steps.length}</span>{' '}
+                        {manual ? t('editor.stepWordManual', { count: draft.steps.length }) : t('editor.stepWord', { count: draft.steps.length })}
                         {validation.errors.length > 0 && (
                           <span className="text-destructive">
                             {' '}
-                            · <span className="tabular">{validation.errors.length}</span> error
+                            · <span className="tabular">{validation.errors.length}</span> {t('editor.errorWord', { count: validation.errors.length })}
                           </span>
                         )}
                         {stepWarnCount > 0 && (
                           <span className="text-status-blocked">
                             {' '}
-                            · <span className="tabular">{stepWarnCount}</span> warning
+                            · <span className="tabular">{stepWarnCount}</span> {t('editor.warningWord', { count: stepWarnCount })}
                           </span>
                         )}
-                        {runStatus.size > 0 && <span> · status = run terakhir</span>}
+                        {runStatus.size > 0 && <span> · {t('editor.statusIsLastRun')}</span>}
                       </p>
                       <ShortcutsPopover open={shortcutsOpen} onOpenChange={setShortcutsOpen} readOnly={readOnly} manual={manual} />
                     </div>
                     {draft.steps.length === 0 && (
                       <EmptyState
                         icon={ListPlus}
-                        title={readOnly ? 'Test case ini belum punya step' : manual ? 'Belum ada langkah' : 'Belum ada step'}
+                        title={readOnly ? t('editor.empty.readOnlyTitle') : manual ? t('editor.empty.manualTitle') : t('editor.empty.title')}
                         description={
                           readOnly
                             ? undefined
                             : manual
-                              ? 'Tulis instruksi untuk tester dan hasil yang diharapkan, satu langkah per baris.'
-                              : 'Tambah step pertama dari palette action: buka URL, isi input, klik, lalu assertion.'
+                              ? t('editor.empty.manualDescription')
+                              : t('editor.empty.description')
                         }
                       />
                     )}
@@ -757,8 +763,8 @@ export function TestCaseEditor({
                         if ((e.target as HTMLElement | null)?.getAttribute?.('aria-controls')) e.preventDefault()
                       }}
                     >
-                      <DialogTitle className="sr-only">{selectedStep ? `Step ${selectedIndex + 1}` : 'Step'}</DialogTitle>
-                      <DialogDescription className="sr-only">Detail step. Esc kembali ke daftar.</DialogDescription>
+                      <DialogTitle className="sr-only">{selectedStep ? t('editor.stepN', { n: String(selectedIndex + 1) }) : t('editor.step')}</DialogTitle>
+                      <DialogDescription className="sr-only">{t('editor.sheetDescription')}</DialogDescription>
                       {panel}
                     </SheetContent>
                   </Dialog>
@@ -791,7 +797,7 @@ export function TestCaseEditor({
                       readOnly={readOnly}
                       onRestore={(snap: TestCaseInput, rev: number) => {
                         update((d) => draftFromInput(snap, d))
-                        toast(`Revisi ${rev} dipulihkan ke draft`, { description: 'Simpan untuk menjadikannya revisi baru.' })
+                        toast(t('editor.restored', { revision: String(rev) }), { description: t('editor.restoredHint') })
                         setTab('steps')
                       }}
                     />
@@ -812,17 +818,17 @@ export function TestCaseEditor({
         <AlertDialog open={blocker.status === 'blocked'} onOpenChange={(o) => !o && blocker.reset?.()}>
           <AlertDialogContent>
             <AlertDialogHeader>
-              <AlertDialogTitle>Buang perubahan?</AlertDialogTitle>
+              <AlertDialogTitle>{t('editor.leave.title')}</AlertDialogTitle>
               <AlertDialogDescription>
-                {isCreate ? 'Test case baru ini belum disimpan dan akan hilang.' : `Perubahan di ${caseKey} belum disimpan dan akan hilang.`}
+                {isCreate ? t('editor.leave.newCase') : t('editor.leave.existing', { key: caseKey ?? '' })}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel autoFocus onClick={() => blocker.reset?.()}>
-                Tetap di sini
+                {t('editor.leave.stay')}
               </AlertDialogCancel>
               <AlertDialogAction destructive onClick={() => blocker.proceed?.()}>
-                Buang perubahan
+                {t('editor.leave.discard')}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -833,33 +839,35 @@ export function TestCaseEditor({
 }
 
 function ShortcutsPopover({ open, onOpenChange, readOnly, manual }: { open: boolean; onOpenChange: (o: boolean) => void; readOnly: boolean; manual: boolean }) {
+  const { t } = useTranslation('testcases')
+  const space = t('editor.shortcuts.spaceKey')
   const rows: [string, string][] = [
-    ['↑ ↓', 'Pilih step'],
-    ['Enter', 'Buka detail step'],
-    ['Esc', 'Kembali ke daftar'],
+    ['↑ ↓', t('editor.shortcuts.select')],
+    ['Enter', t('editor.shortcuts.open')],
+    ['Esc', t('editor.shortcuts.back')],
     ...(readOnly
       ? []
       : ([
-          ['Alt ↑ ↓', 'Pindah step'],
-          ['Spasi', 'Mulai drag (lalu ↑ ↓, Spasi lepas)'],
-          ['N', manual ? 'Tambah langkah' : 'Tambah step (palette)'],
-          ['D', 'Duplikat'],
-          ['E', 'Aktif / nonaktif'],
-          ['Del', 'Hapus (bisa diurungkan)'],
-          [`${MOD_LABEL} S`, 'Simpan'],
+          ['Alt ↑ ↓', t('editor.shortcuts.move')],
+          [space, t('editor.shortcuts.drag', { space })],
+          ['N', manual ? t('editor.shortcuts.addManual') : t('editor.shortcuts.add')],
+          ['D', t('editor.shortcuts.duplicate')],
+          ['E', t('editor.shortcuts.toggle')],
+          ['Del', t('editor.shortcuts.delete')],
+          [`${MOD_LABEL} S`, t('editor.shortcuts.save')],
         ] as [string, string][])),
-    ['?', 'Daftar pintasan ini'],
+    ['?', t('editor.shortcuts.help')],
   ]
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>
         <Button variant="ghost" size="sm" className="text-muted-foreground" aria-keyshortcuts="Shift+?">
-          <Keyboard /> Pintasan
+          <Keyboard /> {t('editor.shortcuts.button')}
         </Button>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72">
-        <h3 className="mb-2 text-sm font-semibold">Pintasan keyboard</h3>
-        <p className="mb-2 text-xs text-muted-foreground">Aktif saat fokus di daftar step, tidak di dalam field teks.</p>
+        <h3 className="mb-2 text-sm font-semibold">{t('editor.shortcuts.title')}</h3>
+        <p className="mb-2 text-xs text-muted-foreground">{t('editor.shortcuts.hint')}</p>
         <dl className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5 text-sm">
           {rows.map(([k, label]) => (
             <React.Fragment key={k}>

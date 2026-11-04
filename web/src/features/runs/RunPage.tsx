@@ -1,6 +1,7 @@
 import { Link, useNavigate, useParams } from '@tanstack/react-router'
 import { ArrowDown, Ban, ChevronDown, Ellipsis, FileJson, Film, ImageOff, Link2, RotateCw, SlidersHorizontal, SearchX } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { ApiError, errorMessage } from '@/api/client'
 import { useCancelRun, useRerun, useRunProgress } from '@/api/queries'
@@ -45,12 +46,12 @@ import {
   formatClock,
   isActive,
   isLive,
-  KIND_LABEL,
+  kindLabel,
   manualCaseOf,
-  SCREENSHOT_LABEL,
+  screenshotLabel,
   tallySteps,
-  TRIGGER_LABEL,
-  VIDEO_LABEL,
+  triggerLabel,
+  videoLabel,
   type MediaItem,
 } from './runUtils'
 
@@ -60,6 +61,7 @@ export function RunPage() {
   const { key, runKey } = useParams({ from: '/_app/p/$key/runs/$runKey' })
   const q = useRunProgress(runKey)
   const showSkeleton = useDelayedFlag(q.isPending)
+  const { t } = useTranslation('runs')
 
   if (q.isPending) return showSkeleton ? <RunSkeleton /> : <div className="min-h-96" aria-busy="true" />
   if (q.isError) {
@@ -68,12 +70,12 @@ export function RunPage() {
         <PageContainer>
           <EmptyState
             icon={SearchX}
-            title={`Run ${runKey} tidak ditemukan`}
-            description="Run ini tidak ada di project ini, atau sudah dihapus."
+            title={t('report.notFoundTitle', { key: runKey })}
+            description={t('report.notFoundDescription')}
             action={
               <Button asChild variant="outline">
                 <Link to="/p/$key/runs" params={{ key }}>
-                  Kembali ke daftar run
+                  {t('report.backToList')}
                 </Link>
               </Button>
             }
@@ -90,9 +92,10 @@ export function RunPage() {
 }
 
 function RunSkeleton() {
+  const { t } = useTranslation('runs')
   return (
     <PageContainer>
-      <div className="grid gap-2" aria-busy="true" aria-label="Memuat run">
+      <div className="grid gap-2" aria-busy="true" aria-label={t('list.loading')}>
         <Skeleton className="h-7 w-56" />
         <Skeleton className="h-4 w-96 max-w-full" />
       </div>
@@ -114,6 +117,7 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
   const canExecute = useCan('execute_manual', run.project_key)
   const canReassign = useCan('reassign_manual', run.project_key)
   const reduced = usePrefersReducedMotion()
+  const { t, i18n } = useTranslation('runs')
 
   const manualCase = manualCaseOf(run)
   const editable = !!manualCase && canExecute && run.assignee?.id === me.user.id
@@ -123,7 +127,8 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
   const [stepOpen, setStepOpen] = React.useState<Record<string, boolean>>({})
   const [lightbox, setLightbox] = React.useState<{ items: MediaItem[]; index: number } | null>(null)
 
-  const screenshots = React.useMemo(() => collectScreenshots(run), [run])
+  const lang = i18n.language
+  const screenshots = React.useMemo(() => collectScreenshots(run, lang), [run, lang])
   const shotIndex = React.useMemo(() => new Map(screenshots.map((s, i) => [s.id, i])), [screenshots])
   const videos = run.cases.filter((c) => c.video)
 
@@ -202,22 +207,26 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
     for (const c of run.cases) {
       const p = prev.cases.find((x) => x.id === c.id)
       if (!p || p.status === c.status) continue
-      if (c.status === 'running' && c.execution === 'automated') msgs.push(`Case ${c.position} ${c.test_case_key} berjalan`)
+      if (c.status === 'running' && c.execution === 'automated') msgs.push(t('live.caseRunning', { n: String(c.position), key: c.test_case_key }))
       else if (c.status !== 'pending' && c.status !== 'running')
-        msgs.push(`Case ${c.position} ${c.status === 'failed' ? 'gagal' : STATUS_META[c.status].label}`)
+        msgs.push(t('live.caseDone', { n: String(c.position), status: STATUS_META[c.status].label }))
     }
     if (prev.status !== run.status) {
       if (!isActive(run.status)) {
         const failed = run.summary.cases.failed
-        msgs.push(`Run selesai: ${STATUS_META[run.status].label}${failed ? `, ${failed} dari ${run.summary.cases.total} case gagal` : ''}`)
+        msgs.push(
+          failed
+            ? t('live.runFinishedFailed', { status: STATUS_META[run.status].label, failed: String(failed), count: run.summary.cases.total })
+            : t('live.runFinished', { status: STATUS_META[run.status].label }),
+        )
       } else if (run.status === 'awaiting_manual') {
-        msgs.push(`Run menunggu eksekusi manual oleh ${run.assignee?.name ?? 'assignee'}`)
+        msgs.push(t('live.awaitingManual', { name: run.assignee?.name ?? t('live.assigneeFallback') }))
       } else if (prev.status === 'awaiting_manual' && run.status === 'running') {
-        msgs.push('Run dilanjutkan')
+        msgs.push(t('live.resumed'))
       }
     }
     if (msgs.length) setAnnouncement(msgs.join('. '))
-  }, [run])
+  }, [run, t])
 
   const titleRef = React.useRef<HTMLHeadingElement>(null)
 
@@ -240,23 +249,23 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
 
       {run.status === 'error' && run.error_message && (
         <div role="alert" className="flex items-start gap-2 rounded-md border border-status-error/40 bg-status-error-bg px-3 py-2 text-sm text-status-error">
-          <span className="font-medium">Error infrastruktur:</span>
+          <span className="font-medium">{t('report.infraError')}</span>
           <span className="min-w-0 font-mono text-xs leading-5 break-words">{run.error_message}</span>
         </div>
       )}
       {run.cancel_requested && isLive(run.status) && (
-        <p className="text-sm text-muted-foreground">Pembatalan diminta, menunggu step yang sedang berjalan berhenti…</p>
+        <p className="text-sm text-muted-foreground">{t('report.cancelRequested')}</p>
       )}
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="grid gap-4">
-        <TabsList aria-label="Bagian report">
-          <TabsTrigger value="steps">Steps</TabsTrigger>
+        <TabsList aria-label={t('report.tabsLabel')}>
+          <TabsTrigger value="steps">{t('report.tabs.steps')}</TabsTrigger>
           <TabsTrigger value="screenshots">
-            Screenshots <span className="text-xs text-muted-foreground tabular">{screenshots.length}</span>
+            {t('report.tabs.screenshots')} <span className="text-xs text-muted-foreground tabular">{screenshots.length}</span>
           </TabsTrigger>
           <TabsTrigger value="video">
-            Video <span className="text-xs text-muted-foreground tabular">{videos.length}</span>
+            {t('report.tabs.video')} <span className="text-xs text-muted-foreground tabular">{videos.length}</span>
           </TabsTrigger>
-          <TabsTrigger value="detail">Detail</TabsTrigger>
+          <TabsTrigger value="detail">{t('report.tabs.detail')}</TabsTrigger>
         </TabsList>
 
         <TabsContent value="steps">
@@ -310,7 +319,7 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
 
       {pill && failCount > 0 && (
         <Button onClick={jumpToFail} className="fixed bottom-4 left-1/2 z-30 -translate-x-1/2 shadow-overlay max-sm:h-11">
-          {failCount} step gagal <ArrowDown />
+          {t('report.failedPill', { count: failCount })} <ArrowDown />
         </Button>
       )}
 
@@ -340,6 +349,7 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
   const [dialog, setDialog] = React.useState(false)
   const cancelBtn = React.useRef<HTMLButtonElement>(null)
   const rerunBtn = React.useRef<HTMLButtonElement>(null)
+  const { t } = useTranslation(['runs', 'common'])
 
   const live = isLive(run.status)
   const now = useNow(live)
@@ -386,26 +396,26 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
           </h1>
           <StatusBadge status={run.status} />
           {elapsed != null ? (
-            <span className="text-sm text-muted-foreground tabular" title="Durasi berjalan">
-              <span className="sr-only">Durasi </span>
+            <span className="text-sm text-muted-foreground tabular" title={t('report.elapsed')}>
+              <span className="sr-only">{t('report.durationSr')} </span>
               {formatClock(elapsed)}
             </span>
           ) : (
             run.duration_ms != null &&
             !isActive(run.status) && (
               <span className="text-sm text-muted-foreground tabular">
-                <span className="sr-only">Durasi </span>
+                <span className="sr-only">{t('report.durationSr')} </span>
                 {formatDuration(run.duration_ms)}
               </span>
             )
           )}
         </div>
         <p className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-sm text-muted-foreground">
-          <span>{KIND_LABEL[run.kind]}</span>
+          <span>{kindLabel(run.kind)}</span>
           {target}
           <span className="min-w-0 text-foreground">{run.target.title}</span>
           {sep}
-          <span>{run.environment?.name ?? 'tanpa environment'}</span>
+          <span>{run.environment?.name ?? t('report.noEnvironment')}</span>
           {!allManual && (
             <>
               {sep}
@@ -414,8 +424,8 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
           )}
           {sep}
           <span>
-            oleh <span className="text-foreground">{run.triggered_by.name}</span>
-            {run.trigger !== 'manual' && ` ${run.trigger === 'schedule' ? '(terjadwal)' : TRIGGER_LABEL[run.trigger]}`}
+            {t('report.by')} <span className="text-foreground">{run.triggered_by.name}</span>
+            {run.trigger !== 'manual' && ` ${run.trigger === 'schedule' ? t('report.scheduledSuffix') : triggerLabel(run.trigger)}`}
           </span>
           {sep}
           <time dateTime={run.queued_at} title={formatDateTime(run.queued_at)}>
@@ -427,51 +437,51 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
       <div className="flex flex-wrap items-center gap-2">
         {showCancel && (
           <Button ref={cancelBtn} variant="outline" className="max-sm:h-11" onClick={() => setConfirmCancel(true)} disabled={run.cancel_requested} loading={cancel.isPending}>
-            <Ban /> {run.cancel_requested ? 'Membatalkan…' : 'Cancel'}
+            <Ban /> {run.cancel_requested ? t('report.cancelling') : t('report.cancel')}
           </Button>
         )}
         {canRun && (
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button ref={rerunBtn} variant={primaryRerun ? 'default' : 'outline'} className="max-sm:h-11" loading={rerun.isPending}>
-                {!rerun.isPending && <RotateCw />} Re-run <ChevronDown />
+                {!rerun.isPending && <RotateCw />} {t('report.rerun')} <ChevronDown />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent className="w-56">
               <DropdownMenuItem onSelect={() => doRerun(false)}>
-                <RotateCw /> Re-run (opsi sama)
+                <RotateCw /> {t('report.rerunSame')}
               </DropdownMenuItem>
               {run.kind === 'flow' && (
                 <DropdownMenuItem disabled={failedCases === 0 || isActive(run.status)} onSelect={() => doRerun(true)}>
                   <RotateCw />
-                  <span className="flex-1">Re-run yang gagal</span>
-                  {failedCases > 0 && <span className="text-xs text-muted-foreground tabular">{failedCases} case</span>}
+                  <span className="flex-1">{t('report.rerunFailed')}</span>
+                  {failedCases > 0 && <span className="text-xs text-muted-foreground tabular">{t('report.caseCount', { count: failedCases })}</span>}
                 </DropdownMenuItem>
               )}
               <DropdownMenuSeparator />
               <DropdownMenuItem onSelect={() => setDialog(true)}>
-                <SlidersHorizontal /> Ubah opsi & run…
+                <SlidersHorizontal /> {t('report.changeOptions')}
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
         )}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button variant="outline" size="icon" className="max-sm:size-11" aria-label="Aksi lain">
+            <Button variant="outline" size="icon" className="max-sm:size-11" aria-label={t('common:a11y.moreActions')}>
               <Ellipsis />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent className="w-48">
-            <DropdownMenuItem onSelect={() => copy(`${window.location.origin}/p/${run.project_key}/runs/${run.key}`, 'Link run disalin')}>
-              <Link2 /> Salin link
+            <DropdownMenuItem onSelect={() => copy(`${window.location.origin}/p/${run.project_key}/runs/${run.key}`, t('report.linkCopied'))}>
+              <Link2 /> {t('report.copyLink')}
             </DropdownMenuItem>
             <DropdownMenuItem
               onSelect={() => {
                 downloadJson(`${run.key}.json`, run)
-                toast.success(`${run.key}.json diunduh`)
+                toast.success(t('report.exported', { file: `${run.key}.json` }))
               }}
             >
-              <FileJson /> Export JSON
+              <FileJson /> {t('report.exportJson')}
             </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -485,15 +495,15 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
           }}
         >
           <AlertDialogHeader>
-            <AlertDialogTitle>Batalkan run {run.key}?</AlertDialogTitle>
+            <AlertDialogTitle>{t('report.cancelTitle', { key: run.key })}</AlertDialogTitle>
             <AlertDialogDescription>
               {run.status === 'awaiting_manual'
-                ? 'Case manual yang sedang dikerjakan dan case berikutnya akan ditandai Skipped. Hasil yang sudah ada tetap tersimpan.'
-                : 'Step yang sedang berjalan dihentikan dan sisa step ditandai Skipped. Hasil yang sudah ada tetap tersimpan.'}
+                ? t('report.cancelBodyManual')
+                : t('report.cancelBody')}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Kembali</AlertDialogCancel>
+            <AlertDialogCancel>{t('common:actions.back')}</AlertDialogCancel>
             <AlertDialogAction
               destructive
               onClick={() =>
@@ -502,7 +512,7 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
                 })
               }
             >
-              Batalkan run
+              {t('report.cancelConfirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -543,51 +553,51 @@ const SEGMENTS = [
 ] as const
 
 function RunProgress({ run }: { run: Run }) {
-  const t = tallySteps(run)
-  const pct = (n: number) => (t.total ? (n / t.total) * 100 : 0)
+  const tally = tallySteps(run)
+  const { t } = useTranslation('runs')
+  const pct = (n: number) => (tally.total ? (n / tally.total) * 100 : 0)
   const parts: React.ReactNode[] = []
-  if (t.passed) parts.push(<span key="p">{t.passed} passed</span>)
-  if (t.failed)
+  // label status tetap Inggris (sama dengan output MCP/API)
+  if (tally.passed) parts.push(<span key="p">{tally.passed} passed</span>)
+  if (tally.failed)
     parts.push(
       <span key="f" className="font-medium text-status-failed">
-        {t.failed} failed
+        {tally.failed} failed
       </span>,
     )
-  if (t.error)
+  if (tally.error)
     parts.push(
       <span key="e" className="font-medium text-status-error">
-        {t.error} error
+        {tally.error} error
       </span>,
     )
-  if (t.blocked)
+  if (tally.blocked)
     parts.push(
       <span key="b" className="font-medium text-status-blocked">
-        {t.blocked} blocked
+        {tally.blocked} blocked
       </span>,
     )
-  if (t.skipped) parts.push(<span key="s">{t.skipped} skipped</span>)
+  if (tally.skipped) parts.push(<span key="s">{tally.skipped} skipped</span>)
 
   return (
     <div className="grid gap-1.5">
       <div
         role="progressbar"
-        aria-label="Progres run"
+        aria-label={t('progress.label')}
         aria-valuemin={0}
-        aria-valuemax={t.total}
-        aria-valuenow={t.done}
-        aria-valuetext={`${t.done} dari ${t.total} step`}
+        aria-valuemax={tally.total}
+        aria-valuenow={tally.done}
+        aria-valuetext={t('progress.valueText', { done: String(tally.done), count: tally.total })}
         className="flex h-2 w-full gap-px overflow-hidden rounded-sm bg-muted"
       >
         {SEGMENTS.map(({ k, cls }) =>
-          t[k] ? (
-            <div key={k} className={cn('h-full transition-[width] duration-150 ease-out motion-reduce:transition-none', cls)} style={{ width: `${pct(t[k])}%` }} />
+          tally[k] ? (
+            <div key={k} className={cn('h-full transition-[width] duration-150 ease-out motion-reduce:transition-none', cls)} style={{ width: `${pct(tally[k])}%` }} />
           ) : null,
         )}
       </div>
       <p className="flex flex-wrap gap-x-1.5 text-xs text-muted-foreground tabular">
-        <span className="text-foreground">
-          {t.done}/{t.total} step
-        </span>
+        <span className="text-foreground">{t('progress.steps', { done: String(tally.done), count: tally.total })}</span>
         {parts.map((p, i) => (
           <React.Fragment key={i}>
             <span aria-hidden>·</span>
@@ -597,9 +607,7 @@ function RunProgress({ run }: { run: Run }) {
         {run.kind === 'flow' && (
           <>
             <span aria-hidden>·</span>
-            <span>
-              {run.summary.cases.passed}/{run.summary.cases.total} case passed
-            </span>
+            <span>{t('progress.casesPassed', { passed: String(run.summary.cases.passed), count: run.summary.cases.total })}</span>
           </>
         )}
       </p>
@@ -610,12 +618,13 @@ function RunProgress({ run }: { run: Run }) {
 /* ------------------------------------------------------------------ screenshots */
 
 function ScreenshotGallery({ run, items, onOpen }: { run: Run; items: MediaItem[]; onOpen: (i: number) => void }) {
+  const { t } = useTranslation('runs')
   if (items.length === 0)
     return (
       <EmptyState
         icon={ImageOff}
-        title={isLive(run.status) ? 'Belum ada screenshot' : 'Tidak ada screenshot di run ini'}
-        description={`Opsi screenshot run ini: ${SCREENSHOT_LABEL[run.options.screenshot]}.${run.options.screenshot === 'on_failure' ? ' Screenshot hanya diambil saat step gagal.' : ''}`}
+        title={isLive(run.status) ? t('report.screenshots.emptyLive') : t('report.screenshots.empty')}
+        description={`${t('report.screenshots.option', { option: screenshotLabel(run.options.screenshot) })}${run.options.screenshot === 'on_failure' ? ` ${t('report.screenshots.onFailureHint')}` : ''}`}
       />
     )
   return (
@@ -637,12 +646,13 @@ function ScreenshotGallery({ run, items, onOpen }: { run: Run; items: MediaItem[
 
 function VideoList({ run }: { run: Run }) {
   const withVideo = run.cases.filter((c) => c.video)
+  const { t } = useTranslation(['runs', 'common'])
   if (withVideo.length === 0)
     return (
       <EmptyState
         icon={Film}
-        title={isLive(run.status) ? 'Video tersedia setelah case selesai' : 'Tidak ada video di run ini'}
-        description={`Opsi video run ini: ${VIDEO_LABEL[run.options.video]}.${run.options.video === 'on_failure' ? ' Video disimpan hanya untuk case yang gagal.' : ''}`}
+        title={isLive(run.status) ? t('report.videos.emptyLive') : t('report.videos.empty')}
+        description={`${t('report.videos.option', { option: videoLabel(run.options.video) })}${run.options.video === 'on_failure' ? ` ${t('report.videos.onFailureHint')}` : ''}`}
       />
     )
   const sharedSession = run.kind === 'flow' && run.shared_session
@@ -655,10 +665,10 @@ function VideoList({ run }: { run: Run }) {
           <figure key={c.id} className="grid gap-2">
             <figcaption className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
               {sharedSession ? (
-                <span className="font-medium">Seluruh flow · satu sesi browser</span>
+                <span className="font-medium">{t('report.videos.wholeFlow')}</span>
               ) : (
                 <>
-                  <span className="text-xs text-muted-foreground tabular">Case {c.position}</span>
+                  <span className="text-xs text-muted-foreground tabular">{t('report.videos.caseN', { n: String(c.position) })}</span>
                   <KeyBadge>{c.test_case_key}</KeyBadge>
                   <span className="font-medium">{c.title}</span>
                   <StatusBadge status={c.status} />
@@ -668,7 +678,7 @@ function VideoList({ run }: { run: Run }) {
                 {formatBytes(v.size_bytes)}
                 {!v.expired && (
                   <a href={v.url} download={v.name} className="text-link hover:underline">
-                    Unduh
+                    {t('common:actions.download')}
                   </a>
                 )}
               </span>
@@ -681,7 +691,7 @@ function VideoList({ run }: { run: Run }) {
                 preload="metadata"
                 src={v.url}
                 className="aspect-video w-full rounded-md border border-border bg-black"
-                aria-label={sharedSession ? `Video run ${run.key}` : `Video ${c.test_case_key} ${c.title}`}
+                aria-label={sharedSession ? t('report.videos.runLabel', { key: run.key }) : t('report.videos.caseLabel', { key: c.test_case_key, title: c.title })}
               />
             )}
           </figure>
@@ -713,46 +723,47 @@ function RunDetail({ run }: { run: Run }) {
   const o = run.options
   const allManual = run.cases.length > 0 && run.cases.every((c) => c.execution === 'manual')
   const mono = (v: React.ReactNode) => <span className="font-mono text-xs">{v}</span>
+  const { t } = useTranslation('runs')
   return (
     <div className="grid max-w-3xl gap-6">
       {run.error_message && (
         <section className="grid gap-2">
-          <h2 className="text-sm font-semibold">Error</h2>
+          <h2 className="text-sm font-semibold">{t('detail.error')}</h2>
           <pre className="rounded-md border border-status-error/40 bg-status-error-bg px-3 py-2 font-mono text-xs leading-5 break-words whitespace-pre-wrap text-status-error">
             {run.error_message}
           </pre>
         </section>
       )}
       <DetailGroup
-        title="Run"
+        title={t('detail.run')}
         rows={[
-          ['Key', mono(run.key)],
-          ['ID', mono(run.id)],
-          ['Target', <>{KIND_LABEL[run.kind]} {mono(run.target.key)} · {run.target.title}</>],
-          ['Environment', run.environment?.name ?? '—'],
-          ['Pemicu', <>{run.triggered_by.name} · {TRIGGER_LABEL[run.trigger]}</>],
-          ...(run.has_manual ? ([['Assignee manual', run.assignee?.name ?? '—']] as [string, React.ReactNode][]) : []),
+          [t('detail.key'), mono(run.key)],
+          [t('detail.id'), mono(run.id)],
+          [t('detail.target'), <>{kindLabel(run.kind)} {mono(run.target.key)} · {run.target.title}</>],
+          [t('detail.environment'), run.environment?.name ?? '—'],
+          [t('detail.trigger'), <>{run.triggered_by.name} · {triggerLabel(run.trigger)}</>],
+          ...(run.has_manual ? ([[t('detail.manualAssignee'), run.assignee?.name ?? '—']] as [string, React.ReactNode][]) : []),
         ]}
       />
       <DetailGroup
-        title="Waktu"
+        title={t('detail.time')}
         rows={[
-          ['Masuk antrean', <time dateTime={run.queued_at}>{formatDateTime(run.queued_at)}</time>],
-          ['Mulai', run.started_at ? <time dateTime={run.started_at}>{formatDateTime(run.started_at)}</time> : '—'],
-          ['Selesai', run.finished_at ? <time dateTime={run.finished_at}>{formatDateTime(run.finished_at)}</time> : '—'],
-          ['Durasi', <span className="tabular">{formatDuration(run.duration_ms)}</span>],
+          [t('detail.queued'), <time dateTime={run.queued_at}>{formatDateTime(run.queued_at)}</time>],
+          [t('detail.started'), run.started_at ? <time dateTime={run.started_at}>{formatDateTime(run.started_at)}</time> : '—'],
+          [t('detail.finished'), run.finished_at ? <time dateTime={run.finished_at}>{formatDateTime(run.finished_at)}</time> : '—'],
+          [t('detail.duration'), <span className="tabular">{formatDuration(run.duration_ms)}</span>],
         ]}
       />
       {!allManual && (
         <DetailGroup
-          title="Opsi run"
+          title={t('detail.options')}
           rows={[
-            ['Browser', `${BROWSER_LABEL[o.browser]}${o.headless ? ' · headless' : ' · headed'}`],
-            ['Viewport', mono(`${o.viewport.width}×${o.viewport.height}`)],
-            ['Screenshot', SCREENSHOT_LABEL[o.screenshot]],
-            ['Video', VIDEO_LABEL[o.video]],
-            ['Timeout per step', mono(`${o.step_timeout_ms} ms`)],
-            ['Retries', <span className="tabular">{o.retries}</span>],
+            [t('detail.browser'), `${BROWSER_LABEL[o.browser]}${o.headless ? ' · headless' : ' · headed'}`],
+            [t('detail.viewport'), mono(`${o.viewport.width}×${o.viewport.height}`)],
+            [t('detail.screenshot'), screenshotLabel(o.screenshot)],
+            [t('detail.video'), videoLabel(o.video)],
+            [t('detail.stepTimeout'), mono(`${o.step_timeout_ms} ms`)],
+            [t('detail.retries'), <span className="tabular">{o.retries}</span>],
           ]}
         />
       )}

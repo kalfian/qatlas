@@ -21,6 +21,7 @@ import { TestCaseEditorPage } from '@/features/testcases/TestCaseEditorPage'
 import { TestCasesPage } from '@/features/testcases/TestCasesPage'
 import { AppShell, NotFoundPage, ProjectLayout, RootLayout } from './shell/AppShell'
 import { lastProject } from './config'
+import { applyUserLanguageOnce } from './language'
 
 export interface RouterContext {
   queryClient: QueryClient
@@ -91,6 +92,8 @@ const appRoute = createRoute({
   beforeLoad: async ({ context, location }) => {
     try {
       const me = await context.queryClient.ensureQueryData<Me>({ queryKey: qk.me, queryFn: () => unwrap(api.GET('/me')) })
+      // Locale profil diterapkan sekali per user sebelum shell dirender (lihat app/language.ts).
+      await applyUserLanguageOnce(me.user)
       return { me }
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {

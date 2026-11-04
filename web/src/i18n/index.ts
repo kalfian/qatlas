@@ -26,6 +26,7 @@ void i18n.use(initReactI18next).init({
   defaultNS: 'common',
   interpolation: { escapeValue: false },
   returnNull: false,
+  showSupportNotice: false,
 })
 
 if (typeof document !== 'undefined') document.documentElement.lang = i18n.language

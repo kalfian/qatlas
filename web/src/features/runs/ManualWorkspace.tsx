@@ -15,6 +15,7 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useCompleteManualCase, useManualStepResult, useMembers, useSetAssignee, useUploadAttachment } from '@/api/queries'
@@ -124,6 +125,7 @@ export function ManualWorkspace({
   const save = useManualStepResult()
   const complete = useCompleteManualCase()
   const upload = useUploadAttachment()
+  const { t } = useTranslation(['runs', 'common'])
 
   const [drafts, setDrafts] = React.useState<Record<string, Draft>>({})
   const [idx, setIdx] = React.useState(() =>
@@ -193,17 +195,17 @@ export function ManualWorkspace({
   }
 
   function cancelTimer(stepId: string) {
-    const t = timers.current.get(stepId)
-    if (t) {
-      clearTimeout(t)
+    const timer = timers.current.get(stepId)
+    if (timer) {
+      clearTimeout(timer)
       timers.current.delete(stepId)
     }
   }
 
   function flushTimers(): Promise<boolean>[] {
     const out: Promise<boolean>[] = []
-    for (const [stepId, t] of timers.current) {
-      clearTimeout(t)
+    for (const [stepId, timer] of timers.current) {
+      clearTimeout(timer)
       out.push(persist(stepId, latestStatus(stepId), latestActual(stepId)))
     }
     timers.current.clear()
@@ -260,8 +262,8 @@ export function ManualWorkspace({
     if (!focusHeadingNext.current) return
     focusHeadingNext.current = false
     headingRef.current?.focus()
-    setAnnounce(`Step ${idx + 1} dari ${total}`)
-  }, [idx, total])
+    setAnnounce(t('manual.stepOf', { n: String(idx + 1), total: String(total) }))
+  }, [idx, total, t])
 
   /** Maju ke step berikutnya yang belum ditandai; jika semua sudah, fokus ke Selesai. */
   function advanceFrom(fromId: string, override: ManualStatus) {
@@ -272,7 +274,7 @@ export function ManualWorkspace({
       focusHeadingNext.current = true
       setIdx(steps.indexOf(next))
     } else if (steps.every((s) => st(s) !== 'pending')) {
-      setAnnounce('Semua step sudah ditandai. Tekan Selesai untuk menyelesaikan case.')
+      setAnnounce(t('manual.allMarked'))
       requestAnimationFrame(() => finishBtnRef.current?.focus())
     }
   }
@@ -325,11 +327,11 @@ export function ManualWorkspace({
         state: 'uploading',
         retryable: file.size <= MAX_UPLOAD,
       }
-      if (file.size > MAX_UPLOAD) setUploads((list) => [...list, { ...u, state: 'error', error: 'Ukuran maksimum 25 MB' }])
+      if (file.size > MAX_UPLOAD) setUploads((list) => [...list, { ...u, state: 'error', error: t('manual.maxSize') }])
       else startUpload(u)
     }
-    const names = files.map((f) => f.name || 'gambar').join(', ')
-    setAnnounce(`${files.length} lampiran ${how === 'paste' ? 'ditempel' : 'ditambahkan'}: ${names}`)
+    const names = files.map((f) => f.name || t('manual.imageFallback')).join(', ')
+    setAnnounce(how === 'paste' ? t('manual.pasted', { count: files.length, names }) : t('manual.added', { count: files.length, names }))
   }
 
   function removeLocal(u: LocalUpload) {
@@ -367,7 +369,7 @@ export function ManualWorkspace({
       e.preventDefault()
       addFiles(
         files.map((f, i) =>
-          f.name && f.name !== 'image.png' ? f : new File([f], `tempel-${format(new Date(), 'HHmmss')}${i ? `-${i}` : ''}.png`, { type: f.type }),
+          f.name && f.name !== 'image.png' ? f : new File([f], `${t('manual.pastedFilePrefix')}-${format(new Date(), 'HHmmss')}${i ? `-${i}` : ''}.png`, { type: f.type }),
         ),
         'paste',
       )
@@ -398,11 +400,11 @@ export function ManualWorkspace({
         }
       }
       await chain.current
-      if (results.includes(false)) throw new Error('Sebagian step gagal disimpan. Coba lagi.')
+      if (results.includes(false)) throw new Error(t('manual.partialSaveFailed'))
       const done = await complete.mutateAsync({ runKey: run.key, caseId: c.id })
       const fc = done.cases.find((x) => x.id === c.id)
       setFinishOpen(false)
-      const msg = `${c.test_case_key} selesai${fc ? `: ${STATUS_META[fc.status].label}` : ''}`
+      const msg = fc ? t('manual.finishedWithStatus', { key: c.test_case_key, status: STATUS_META[fc.status].label }) : t('manual.finished', { key: c.test_case_key })
       if (fc?.status === 'passed') toast.success(msg)
       else toast(msg)
       onFinished()
@@ -413,7 +415,7 @@ export function ManualWorkspace({
     }
   }
 
-  if (!cur) return <p className="px-3 py-4 text-sm text-muted-foreground">Case manual ini tidak punya step.</p>
+  if (!cur) return <p className="px-3 py-4 text-sm text-muted-foreground">{t('manual.noSteps')}</p>
 
   const marked = steps.filter((s) => statusOf(s) !== 'pending').length
   const curStatus = statusOf(cur)
@@ -428,37 +430,35 @@ export function ManualWorkspace({
       {/* toolbar */}
       <div className="sticky top-12 z-20 flex items-center gap-x-3 gap-y-2 border-b border-border bg-card px-3 py-2 max-sm:gap-x-2">
         <MobileStepper steps={steps} idx={idx} statusOf={statusOf} onPick={goTo} />
-        <span className="hidden text-sm font-medium tabular lg:inline">
-          Step {idx + 1}/{total}
-        </span>
-        <span className="text-xs text-muted-foreground tabular max-sm:hidden">{marked} ditandai</span>
+        <span className="hidden text-sm font-medium tabular lg:inline">{t('manual.stepCounter', { n: String(idx + 1), total: String(total) })}</span>
+        <span className="text-xs text-muted-foreground tabular max-sm:hidden">{t('manual.marked', { count: marked })}</span>
         {editable ? (
           <span aria-live="polite" className="inline-flex min-w-0 flex-1 items-center gap-1 truncate text-xs text-muted-foreground tabular">
             {inflight > 0 ? (
               <>
-                <LoaderCircle className="size-3 shrink-0 animate-spin" aria-hidden /> Menyimpan…
+                <LoaderCircle className="size-3 shrink-0 animate-spin" aria-hidden /> {t('common:states.saving')}
               </>
             ) : saveError ? (
-              <span className="text-status-failed">Belum tersimpan</span>
+              <span className="text-status-failed">{t('manual.notSaved')}</span>
             ) : savedAt ? (
-              `Tersimpan ${format(savedAt, 'HH:mm')}`
+              t('manual.savedAt', { time: format(savedAt, 'HH:mm') })
             ) : (
               <>
-                <span className="sm:hidden">Tersimpan otomatis</span>
-                <span className="max-sm:hidden">Progres tersimpan otomatis</span>
+                <span className="sm:hidden">{t('manual.autosaveShort')}</span>
+                <span className="max-sm:hidden">{t('manual.autosave')}</span>
               </>
             )}
           </span>
         ) : (
           <span className="min-w-0 flex-1 text-xs text-muted-foreground">
-            Dikerjakan oleh <span className="font-medium text-foreground">{run.assignee?.name ?? '—'}</span>
-            <span className="max-sm:hidden"> · diperbarui otomatis</span>
+            {t('steps.executedBy')} <span className="font-medium text-foreground">{run.assignee?.name ?? '—'}</span>
+            <span className="max-sm:hidden"> · {t('manual.autoUpdated')}</span>
           </span>
         )}
         {canReassign && <ReassignMenu run={run} />}
         {editable && (
           <Button ref={finishBtnRef} size="default" className="shrink-0 max-sm:h-11" onClick={() => setFinishOpen(true)}>
-            Selesai
+            {t('manual.finish')}
           </Button>
         )}
       </div>
@@ -469,17 +469,17 @@ export function ManualWorkspace({
           className="flex flex-wrap items-center gap-2 border-b border-status-failed/40 bg-status-failed-bg px-3 py-2 text-sm text-status-failed"
         >
           <span className="min-w-0 flex-1">
-            Gagal menyimpan step {errStep?.position ?? ''}: {saveError.message}. Status di layar tidak hilang.
+            {t('manual.saveError', { n: String(errStep?.position ?? ''), message: saveError.message })}
           </span>
           <Button size="sm" variant="outline" onClick={() => void persist(saveError.stepId, saveError.status, latestActual(saveError.stepId))}>
-            <RotateCw /> Coba lagi
+            <RotateCw /> {t('common:actions.retry')}
           </Button>
         </div>
       )}
 
       <div className="flex">
         {/* rail */}
-        <nav aria-label="Daftar step manual" className="hidden w-60 shrink-0 border-r border-border py-1 lg:block">
+        <nav aria-label={t('manual.railLabel')} className="hidden w-60 shrink-0 border-r border-border py-1 lg:block">
           <ol>
             {steps.map((s, i) => (
               <li key={s.id}>
@@ -505,21 +505,21 @@ export function ManualWorkspace({
         <div className="min-w-0 flex-1 px-4 py-5 md:px-6">
           <div className="grid max-w-2xl gap-6">
             <div>
-              <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">Instruksi</p>
+              <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{t('manual.instruction')}</p>
               <h2
                 ref={headingRef}
                 tabIndex={-1}
                 className="mt-1 rounded-sm text-2xl leading-snug font-medium break-words focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-card"
               >
-                <span className="sr-only">{`Step ${idx + 1} dari ${total}: `}</span>
+                <span className="sr-only">{`${t('manual.stepOf', { n: String(idx + 1), total: String(total) })}: `}</span>
                 {cur.description || cur.summary}
               </h2>
-              <p className="mt-5 text-xs font-medium tracking-wide text-muted-foreground uppercase">Expected</p>
-              <p className="mt-1 text-lg break-words">{cur.expected || <span className="text-muted-foreground">Tidak ada expected result.</span>}</p>
+              <p className="mt-5 text-xs font-medium tracking-wide text-muted-foreground uppercase">{t('manual.expected')}</p>
+              <p className="mt-1 text-lg break-words">{cur.expected || <span className="text-muted-foreground">{t('manual.noExpected')}</span>}</p>
             </div>
 
             {editable ? (
-              <div role="group" aria-label="Hasil step" className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
+              <div role="group" aria-label={t('manual.resultGroup')} className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap">
                 {DECISIONS.map((d) => {
                   const on = curStatus === d.status
                   return (
@@ -542,7 +542,7 @@ export function ManualWorkspace({
               </div>
             ) : (
               <div className="flex items-center gap-2 text-sm">
-                <span className="text-muted-foreground">Status:</span>
+                <span className="text-muted-foreground">{t('manual.statusColon')}</span>
                 <StatusBadge status={curStatus} />
               </div>
             )}
@@ -550,11 +550,11 @@ export function ManualWorkspace({
             {editable ? (
               <div className="grid gap-1.5">
                 <Label htmlFor={`actual-${cur.id}`}>
-                  Actual result
+                  {t('manual.actualResult')}
                   {needsActual(curStatus) ? (
-                    <span className="font-normal text-muted-foreground"> (wajib untuk {STATUS_META[curStatus].label})</span>
+                    <span className="font-normal text-muted-foreground"> {t('manual.requiredFor', { status: STATUS_META[curStatus].label })}</span>
                   ) : (
-                    <span className="font-normal text-muted-foreground"> (opsional)</span>
+                    <span className="font-normal text-muted-foreground"> {t('manual.optional')}</span>
                   )}
                 </Label>
                 <Textarea
@@ -569,29 +569,29 @@ export function ManualWorkspace({
                       saveAndNext()
                     }
                   }}
-                  placeholder="Apa yang sebenarnya terjadi?"
+                  placeholder={t('manual.actualPlaceholder')}
                   aria-invalid={isInvalid || undefined}
                   aria-describedby={`actual-hint-${cur.id}${isInvalid ? ` actual-err-${cur.id}` : ''}`}
                 />
                 {isInvalid && (
                   <p id={`actual-err-${cur.id}`} className="text-xs text-status-failed">
-                    Isi actual result untuk step yang {STATUS_META[curStatus].label} sebelum pindah step.
+                    {t('manual.actualRequired', { status: STATUS_META[curStatus].label })}
                   </p>
                 )}
                 <p id={`actual-hint-${cur.id}`} className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Kbd>{MOD}</Kbd>+<Kbd>Enter</Kbd> simpan & lanjut
+                  <Kbd>{MOD}</Kbd>+<Kbd>Enter</Kbd> {t('manual.saveAndNext')}
                 </p>
               </div>
             ) : (
               <div className="grid gap-1">
-                <p className="text-sm font-medium">Actual result</p>
-                <p className="text-sm break-words whitespace-pre-wrap text-muted-foreground">{actualOf(cur) || 'Belum diisi.'}</p>
+                <p className="text-sm font-medium">{t('manual.actualResult')}</p>
+                <p className="text-sm break-words whitespace-pre-wrap text-muted-foreground">{actualOf(cur) || t('manual.notFilled')}</p>
               </div>
             )}
 
             <div className="grid gap-2">
               <p className="text-sm font-medium" id={`att-label-${cur.id}`}>
-                Lampiran
+                {t('manual.attachments')}
               </p>
               {editable && (
                 <div
@@ -611,13 +611,13 @@ export function ManualWorkspace({
                   )}
                 >
                   <Upload className="size-4 max-sm:hidden" aria-hidden />
-                  <span className="max-sm:hidden">Tarik file ke sini,</span>
+                  <span className="max-sm:hidden">{t('manual.dropHere')}</span>
                   <Button type="button" variant="link" className="h-auto px-0 text-sm max-sm:hidden" onClick={() => fileRef.current?.click()}>
-                    pilih file
+                    {t('manual.chooseFile')}
                   </Button>
-                  <span className="max-sm:hidden">atau tempel ({MOD}+V)</span>
+                  <span className="max-sm:hidden">{t('manual.orPaste', { mod: MOD })}</span>
                   <Button type="button" variant="outline" className="h-11 w-full sm:hidden" onClick={() => fileRef.current?.click()}>
-                    <Upload /> Ambil foto / pilih file
+                    <Upload /> {t('manual.takePhoto')}
                   </Button>
                   <input
                     ref={fileRef}
@@ -635,7 +635,7 @@ export function ManualWorkspace({
                 </div>
               )}
               {curAtts.length === 0 && curUploads.length === 0 ? (
-                !editable && <p className="text-sm text-muted-foreground">Tidak ada lampiran.</p>
+                !editable && <p className="text-sm text-muted-foreground">{t('manual.noAttachments')}</p>
               ) : (
                 <ul className="flex flex-wrap gap-2" aria-labelledby={`att-label-${cur.id}`}>
                   {curAtts.map((a) => {
@@ -657,24 +657,24 @@ export function ManualWorkspace({
                         {u.state === 'uploading' ? (
                           <>
                             <LoaderCircle className="size-4 animate-spin text-muted-foreground" aria-hidden />
-                            <span className="sr-only">Mengunggah {u.file.name}</span>
+                            <span className="sr-only">{t('manual.uploading', { name: u.file.name })}</span>
                           </>
                         ) : (
                           <>
-                            <span className="line-clamp-2 text-status-failed">{u.error ?? 'Gagal'}</span>
+                            <span className="line-clamp-2 text-status-failed">{u.error ?? t('manual.failed')}</span>
                             <span className="flex gap-1">
                               {u.retryable && (
                                 <Button
                                   size="icon-sm"
                                   variant="outline"
                                   className="size-6"
-                                  aria-label={`Coba unggah ulang ${u.file.name}`}
+                                  aria-label={t('manual.retryUpload', { name: u.file.name })}
                                   onClick={() => startUpload(u)}
                                 >
                                   <RotateCw />
                                 </Button>
                               )}
-                              <Button size="icon-sm" variant="outline" className="size-6" aria-label={`Hapus ${u.file.name}`} onClick={() => removeLocal(u)}>
+                              <Button size="icon-sm" variant="outline" className="size-6" aria-label={t('manual.removeUpload', { name: u.file.name })} onClick={() => removeLocal(u)}>
                                 <X />
                               </Button>
                             </span>
@@ -689,7 +689,7 @@ export function ManualWorkspace({
 
             <div className="flex items-center justify-between gap-2 border-t border-border pt-4">
               <Button variant="ghost" className="max-sm:h-11" disabled={idx === 0} onClick={() => goTo(idx - 1)} aria-keyshortcuts="K">
-                <ArrowLeft /> Sebelumnya{' '}
+                <ArrowLeft /> {t('manual.previous')}{' '}
                 <Kbd className="max-sm:hidden" aria-hidden>
                   K
                 </Kbd>
@@ -698,7 +698,7 @@ export function ManualWorkspace({
                 <Kbd className="max-sm:hidden" aria-hidden>
                   J
                 </Kbd>{' '}
-                Berikutnya <ArrowRight />
+                {t('manual.next')} <ArrowRight />
               </Button>
             </div>
           </div>
@@ -750,11 +750,12 @@ function MobileStepper({
   statusOf: (s: RunStep) => ManualStatus
   onPick: (i: number) => void
 }) {
+  const { t } = useTranslation('runs')
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <Button variant="outline" className="max-sm:h-11 lg:hidden">
-          Step {idx + 1}/{steps.length} <ChevronDown />
+          {t('manual.stepCounter', { n: String(idx + 1), total: String(steps.length) })} <ChevronDown />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" className="max-h-80 w-[min(22rem,calc(100vw-2rem))] overflow-y-auto">
@@ -778,17 +779,18 @@ function ReassignMenu({ run }: { run: Run }) {
   const members = useMembers(run.project_key)
   const setAssignee = useSetAssignee()
   const eligible = (members.data?.data ?? []).filter((m) => m.role === 'editor' || m.role === 'maintainer')
+  const { t } = useTranslation(['runs', 'common'])
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="outline" className="shrink-0 max-sm:size-11 max-sm:px-0" loading={setAssignee.isPending} aria-label="Ganti assignee">
-          {!setAssignee.isPending && <UserRoundCog />} <span className="max-sm:hidden">Ganti assignee</span>
+        <Button variant="outline" className="shrink-0 max-sm:size-11 max-sm:px-0" loading={setAssignee.isPending} aria-label={t('manual.reassign')}>
+          {!setAssignee.isPending && <UserRoundCog />} <span className="max-sm:hidden">{t('manual.reassign')}</span>
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-60">
-        <DropdownMenuLabel>Assignee case manual</DropdownMenuLabel>
-        {members.isPending && <p className="px-2 py-1.5 text-xs text-muted-foreground">Memuat member…</p>}
-        {members.isError && <p className="px-2 py-1.5 text-xs text-status-failed">Gagal memuat member.</p>}
+        <DropdownMenuLabel>{t('manual.assigneeLabel')}</DropdownMenuLabel>
+        {members.isPending && <p className="px-2 py-1.5 text-xs text-muted-foreground">{t('manual.loadingMembers')}</p>}
+        {members.isError && <p className="px-2 py-1.5 text-xs text-status-failed">{t('manual.membersFailed')}</p>}
         <DropdownMenuRadioGroup
           value={run.assignee?.id ?? ''}
           onValueChange={(id) => {
@@ -797,7 +799,7 @@ function ReassignMenu({ run }: { run: Run }) {
             setAssignee.mutate(
               { runKey: run.key, user_id: id },
               {
-                onSuccess: () => toast.success(`Assignee diganti ke ${m?.user.name ?? 'member lain'}`),
+                onSuccess: () => toast.success(t('manual.reassigned', { name: m?.user.name ?? t('manual.otherMember') })),
                 onError: (err) => toast.error(errorMessage(err)),
               },
             )
@@ -806,7 +808,7 @@ function ReassignMenu({ run }: { run: Run }) {
           {eligible.map((m) => (
             <DropdownMenuRadioItem key={m.user.id} value={m.user.id}>
               <span className="min-w-0 flex-1 truncate">{m.user.name}</span>
-              <span className="text-xs text-muted-foreground">{m.role === 'maintainer' ? 'Maintainer' : 'Editor'}</span>
+              <span className="text-xs text-muted-foreground">{m.role === 'maintainer' ? t('common:roles.maintainer.label') : t('common:roles.editor.label')}</span>
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
@@ -848,6 +850,7 @@ function FinishDialog({
   const missing = c.steps.filter((s) => needsActual(statusOf(s)) && !actualOf(s).trim())
   const result = projectedManualStatus(statuses.map((s) => (s === 'pending' ? 'skipped' : s)))
   const hasMore = run.cases.some((x) => x.position > c.position && x.status === 'pending')
+  const { t } = useTranslation(['runs', 'common'])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -859,13 +862,13 @@ function FinishDialog({
         }}
       >
         <DialogHeader>
-          <DialogTitle>Selesaikan {c.test_case_key}?</DialogTitle>
+          <DialogTitle>{t('manual.finishDialog.title', { key: c.test_case_key })}</DialogTitle>
           <DialogDescription>
             {hasMore
               ? result === 'passed' || result === 'skipped'
-                ? 'Setelah selesai, run lanjut ke case berikutnya secara otomatis.'
-                : `Case ini akan ${STATUS_META[result].label}. Jika flow memakai stop on failure, case berikutnya ikut di-skip.`
-              : 'Status case dihitung dari hasil tiap step: Failed > Blocked > Passed.'}
+                ? t('manual.finishDialog.continues')
+                : t('manual.finishDialog.willBe', { status: STATUS_META[result].label })
+              : t('manual.finishDialog.rule')}
           </DialogDescription>
         </DialogHeader>
 
@@ -881,17 +884,17 @@ function FinishDialog({
           ))}
         </dl>
         <p className="flex items-center gap-2 text-sm">
-          Hasil case: <StatusBadge status={result} />
+          {t('manual.finishDialog.result')} <StatusBadge status={result} />
         </p>
 
         {missing.length > 0 && (
           <div role="alert" className="grid gap-1.5 rounded-md border border-status-failed/40 bg-status-failed-bg px-3 py-2 text-sm text-status-failed">
-            <p>Actual result wajib diisi untuk step yang Failed/Blocked:</p>
+            <p>{t('manual.finishDialog.missingActual')}</p>
             <ul className="flex flex-wrap gap-1.5">
               {missing.map((s) => (
                 <li key={s.id}>
                   <Button size="sm" variant="outline" onClick={() => onJump(c.steps.indexOf(s))}>
-                    Isi step {s.position}
+                    {t('manual.finishDialog.fillStep', { n: String(s.position) })}
                   </Button>
                 </li>
               ))}
@@ -902,7 +905,12 @@ function FinishDialog({
         {unmarked.length > 0 && (
           <div className="grid gap-1.5">
             <p className="text-sm">
-              <span className="font-medium tabular">{unmarked.length}</span> step belum ditandai dan akan jadi <span className="font-medium">Skipped</span>:
+              <Trans
+                t={t}
+                i18nKey="manual.finishDialog.unmarked"
+                count={unmarked.length}
+                components={{ num: <span className="font-medium tabular" />, b: <span className="font-medium" /> }}
+              />
             </p>
             <ul className="max-h-36 overflow-y-auto rounded-md border border-border text-sm">
               {unmarked.map((s) => (
@@ -923,10 +931,10 @@ function FinishDialog({
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
-            Kembali
+            {t('common:actions.back')}
           </Button>
           <Button onClick={onConfirm} loading={busy} disabled={missing.length > 0} aria-disabled={missing.length > 0 || undefined}>
-            {unmarked.length > 0 ? 'Tandai sisanya Skipped & selesai' : 'Selesai'}
+            {unmarked.length > 0 ? t('manual.finishDialog.skipRestAndFinish') : t('manual.finish')}
           </Button>
         </DialogFooter>
       </DialogContent>

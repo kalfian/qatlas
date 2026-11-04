@@ -1,5 +1,6 @@
 import { FileClock, RotateCcw } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useRevision, useRevisions } from '@/api/queries'
 import type { Step, TestCaseInput } from '@/api/types'
 import { StepSummaryText } from '@/components/misc'
@@ -33,16 +34,17 @@ export function RevisionsTab({
   const selected = picked ?? revs[0]?.revision ?? null
   const rev = useRevision(caseKey, selected)
   const [view, setView] = React.useState<'diff' | 'snapshot'>('diff')
+  const { t } = useTranslation('testcases')
 
   if (list.isError) return <ErrorState error={list.error} onRetry={() => list.refetch()} />
   if (list.isPending) return <Skeleton className="h-64" />
-  if (!revs.length) return <EmptyState icon={FileClock} title="Belum ada revisi" />
+  if (!revs.length) return <EmptyState icon={FileClock} title={t('revisions.empty')} />
 
-  const against = dirty ? 'draft yang belum disimpan' : `versi sekarang (revisi ${currentRevision})`
+  const against = dirty ? t('revisions.againstDraft') : t('revisions.againstCurrent', { revision: String(currentRevision) })
 
   return (
     <div className="grid gap-5 lg:grid-cols-[18rem_minmax(0,1fr)]">
-      <nav aria-label="Daftar revisi" className="lg:sticky lg:top-40 lg:self-start">
+      <nav aria-label={t('revisions.listLabel')} className="lg:sticky lg:top-40 lg:self-start">
         <ol className="flex flex-col overflow-hidden rounded-md border border-border">
           {revs.map((r) => {
             const active = r.revision === selected
@@ -58,10 +60,10 @@ export function RevisionsTab({
                   )}
                 >
                   <span className="flex items-center gap-2 text-sm">
-                    <span className="font-medium tabular">Revisi {r.revision}</span>
-                    {r.revision === currentRevision && <span className="rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground">sekarang</span>}
+                    <span className="font-medium tabular">{t('revisions.revisionN', { revision: String(r.revision) })}</span>
+                    {r.revision === currentRevision && <span className="rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground">{t('revisions.current')}</span>}
                   </span>
-                  <span className="line-clamp-2 text-xs text-foreground/80">{r.change_note || 'Tanpa catatan'}</span>
+                  <span className="line-clamp-2 text-xs text-foreground/80">{r.change_note || t('revisions.noNote')}</span>
                   <span className="text-xs text-muted-foreground">
                     {r.author.name} · <time dateTime={r.created_at} title={formatDateTime(r.created_at)}>{formatRelative(r.created_at)}</time>
                   </span>
@@ -72,7 +74,7 @@ export function RevisionsTab({
         </ol>
       </nav>
 
-      <section aria-label={selected ? `Revisi ${selected}` : 'Revisi'} className="flex min-w-0 flex-col gap-4">
+      <section aria-label={selected ? t('revisions.revisionN', { revision: String(selected) }) : t('editor.tabs.revisions')} className="flex min-w-0 flex-col gap-4">
         {rev.isError ? (
           <ErrorState error={rev.error} onRetry={() => rev.refetch()} />
         ) : !rev.data ? (
@@ -81,19 +83,19 @@ export function RevisionsTab({
           <>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="min-w-0">
-                <h2 className="text-lg font-semibold">Revisi {rev.data.revision}</h2>
+                <h2 className="text-lg font-semibold">{t('revisions.revisionN', { revision: String(rev.data.revision) })}</h2>
                 <p className="text-xs text-muted-foreground">
-                  {rev.data.author.name} · {formatDateTime(rev.data.created_at)} · {rev.data.change_note || 'Tanpa catatan'}
+                  {rev.data.author.name} · {formatDateTime(rev.data.created_at)} · {rev.data.change_note || t('revisions.noNote')}
                 </p>
               </div>
               <div className="flex items-center gap-2">
                 <Segmented
-                  ariaLabel="Tampilan revisi"
+                  ariaLabel={t('revisions.viewLabel')}
                   value={view}
                   onChange={setView}
                   options={[
-                    { value: 'diff', label: 'Perbedaan' },
-                    { value: 'snapshot', label: 'Snapshot' },
+                    { value: 'diff', label: t('revisions.diff') },
+                    { value: 'snapshot', label: t('revisions.snapshot') },
                   ]}
                 />
                 {!readOnly && (
@@ -102,7 +104,7 @@ export function RevisionsTab({
                     disabled={stableStringify(rev.data.snapshot.steps) === stableStringify(draft.steps) && diffMeta(rev.data.snapshot, draft).length === 0}
                     onClick={() => onRestore(rev.data.snapshot, rev.data.revision)}
                   >
-                    <RotateCcw /> Pulihkan ke draft
+                    <RotateCcw /> {t('revisions.restore')}
                   </Button>
                 )}
               </div>
@@ -119,20 +121,23 @@ function DiffView({ snapshot, draft, against }: { snapshot: TestCaseInput; draft
   const meta = diffMeta(snapshot, draft)
   const steps = diffSteps(snapshot.steps, draft.steps)
   const changed = steps.filter((d) => d.kind !== 'same')
+  const { t } = useTranslation('testcases')
   return (
     <div className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        Dibandingkan dengan {against}.{' '}
-        {meta.length === 0 && changed.length === 0 ? 'Tidak ada perbedaan.' : `${meta.length} field info dan ${changed.length} step berbeda.`}
+        {t('revisions.comparedWith', { against })}{' '}
+        {meta.length === 0 && changed.length === 0
+          ? t('revisions.noDiff')
+          : t('revisions.diffSummary', { fields: t('revisions.infoFields', { count: meta.length }), count: changed.length })}
       </p>
       {meta.length > 0 && (
         <table className="w-full border-collapse rounded-md border border-border text-sm">
-          <caption className="sr-only">Perbedaan info test case</caption>
+          <caption className="sr-only">{t('revisions.infoDiffCaption')}</caption>
           <thead>
             <tr className="h-8 border-b border-border text-left text-xs text-muted-foreground">
-              <th scope="col" className="w-32 px-3 font-medium">Field</th>
-              <th scope="col" className="px-3 font-medium">Revisi ini</th>
-              <th scope="col" className="px-3 font-medium">Sekarang</th>
+              <th scope="col" className="w-32 px-3 font-medium">{t('revisions.columns.field')}</th>
+              <th scope="col" className="px-3 font-medium">{t('revisions.columns.thisRevision')}</th>
+              <th scope="col" className="px-3 font-medium">{t('revisions.columns.now')}</th>
             </tr>
           </thead>
           <tbody>
@@ -146,22 +151,22 @@ function DiffView({ snapshot, draft, against }: { snapshot: TestCaseInput; draft
           </tbody>
         </table>
       )}
-      <ol className="flex flex-col divide-y divide-border rounded-md border border-border" aria-label="Perbedaan step">
+      <ol className="flex flex-col divide-y divide-border rounded-md border border-border" aria-label={t('revisions.stepDiffLabel')}>
         {steps.map((d) => (
           <DiffRow key={`${d.kind}-${d.id}`} d={d} />
         ))}
-        {steps.length === 0 && <li className="px-3 py-3 text-sm text-muted-foreground">Kedua versi tidak punya step.</li>}
+        {steps.length === 0 && <li className="px-3 py-3 text-sm text-muted-foreground">{t('revisions.bothEmpty')}</li>}
       </ol>
     </div>
   )
 }
 
-const KIND_META: Record<StepDiff['kind'], { sign: string; label: string; cls: string }> = {
-  added: { sign: '+', label: 'Ditambah', cls: 'text-status-passed' },
-  removed: { sign: '−', label: 'Dihapus', cls: 'text-status-failed' },
-  changed: { sign: '~', label: 'Diubah', cls: 'text-status-blocked' },
-  moved: { sign: '↕', label: 'Dipindah', cls: 'text-status-running' },
-  same: { sign: '', label: 'Sama', cls: 'text-muted-foreground' },
+const KIND_META: Record<StepDiff['kind'], { sign: string; cls: string }> = {
+  added: { sign: '+', cls: 'text-status-passed' },
+  removed: { sign: '−', cls: 'text-status-failed' },
+  changed: { sign: '~', cls: 'text-status-blocked' },
+  moved: { sign: '↕', cls: 'text-status-running' },
+  same: { sign: '', cls: 'text-muted-foreground' },
 }
 
 function show(v: unknown): string {
@@ -171,6 +176,7 @@ function show(v: unknown): string {
 
 function DiffRow({ d }: { d: StepDiff }) {
   const m = KIND_META[d.kind]
+  const { t } = useTranslation('testcases')
   const Icon = actionIcon(d.step.action)
   const pos = d.kind === 'removed' ? `${d.from + 1}` : d.kind === 'added' ? `${d.to + 1}` : d.from === d.to ? `${d.to + 1}` : `${d.from + 1}→${d.to + 1}`
   return (
@@ -179,7 +185,7 @@ function DiffRow({ d }: { d: StepDiff }) {
         <span className={cn('w-4 shrink-0 text-center font-mono font-medium', m.cls)} aria-hidden>
           {m.sign}
         </span>
-        <span className="sr-only">{m.label}:</span>
+        <span className="sr-only">{t(`revisions.kind.${d.kind}`)}:</span>
         <span className="w-8 shrink-0 text-right text-xs tabular text-muted-foreground">{pos}</span>
         <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="hidden w-28 shrink-0 truncate font-mono text-xs text-muted-foreground sm:inline">{d.step.action}</span>
@@ -195,7 +201,7 @@ function DiffRow({ d }: { d: StepDiff }) {
                 <span className="mx-1.5 text-muted-foreground" aria-hidden>
                   →
                 </span>
-                <span className="sr-only"> menjadi </span>
+                <span className="sr-only"> {t('revisions.becomes')} </span>
                 <span className="text-status-passed">{show(f.after)}</span>
               </dd>
             </React.Fragment>
@@ -207,20 +213,21 @@ function DiffRow({ d }: { d: StepDiff }) {
 }
 
 function SnapshotView({ snapshot }: { snapshot: TestCaseInput }) {
+  const { t } = useTranslation('testcases')
   return (
     <div className="flex flex-col gap-4">
       <dl className="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-4 gap-y-1.5 text-sm">
-        <dt className="text-muted-foreground">Judul</dt>
+        <dt className="text-muted-foreground">{t('fields.title')}</dt>
         <dd>{snapshot.title}</dd>
-        <dt className="text-muted-foreground">Prioritas · Status</dt>
+        <dt className="text-muted-foreground">{t('revisions.priorityStatus')}</dt>
         <dd>
           {snapshot.priority ?? '—'} · {snapshot.status ?? '—'} · {snapshot.execution ?? 'automated'}
         </dd>
-        <dt className="text-muted-foreground">Tag</dt>
+        <dt className="text-muted-foreground">{t('fields.tags')}</dt>
         <dd>{snapshot.tags?.join(', ') || '—'}</dd>
         {snapshot.description ? (
           <>
-            <dt className="text-muted-foreground">Deskripsi</dt>
+            <dt className="text-muted-foreground">{t('fields.description')}</dt>
             <dd className="whitespace-pre-wrap">{snapshot.description}</dd>
           </>
         ) : null}
@@ -231,9 +238,10 @@ function SnapshotView({ snapshot }: { snapshot: TestCaseInput }) {
 }
 
 function ReadOnlySteps({ steps }: { steps: Step[] }) {
-  if (!steps.length) return <p className="text-sm text-muted-foreground">Tidak ada step.</p>
+  const { t } = useTranslation('testcases')
+  if (!steps.length) return <p className="text-sm text-muted-foreground">{t('revisions.noSteps')}</p>
   return (
-    <ol className="flex flex-col divide-y divide-border rounded-md border border-border" aria-label="Step pada revisi ini">
+    <ol className="flex flex-col divide-y divide-border rounded-md border border-border" aria-label={t('revisions.stepsLabel')}>
       {steps.map((s, i) => {
         const Icon = actionIcon(s.action)
         return (
@@ -242,7 +250,7 @@ function ReadOnlySteps({ steps }: { steps: Step[] }) {
             <Icon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             <span className="hidden w-28 shrink-0 truncate font-mono text-xs text-muted-foreground sm:inline">{s.action}</span>
             <StepSummaryText text={summarizeStep(s)} className="min-w-0 flex-1 truncate" />
-            {s.enabled === false && <span className="rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground">Nonaktif</span>}
+            {s.enabled === false && <span className="rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground">{t('stepList.disabledBadge')}</span>}
           </li>
         )
       })}

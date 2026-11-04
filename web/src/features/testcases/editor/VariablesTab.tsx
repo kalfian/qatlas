@@ -1,29 +1,34 @@
 import { Variable } from 'lucide-react'
+import { Trans, useTranslation } from 'react-i18next'
 import { EmptyState } from '@/components/page'
 import type { Draft } from '../lib'
 import { KeyValueEditor } from './KeyValueEditor'
 
 export function VariablesTab({ draft, update, readOnly }: { draft: Draft; update: (fn: (d: Draft) => Draft) => void; readOnly: boolean }) {
   const entries = Object.entries(draft.variables)
+  const { t } = useTranslation('testcases')
   return (
     <div className="flex max-w-3xl flex-col gap-4">
       <p className="text-sm text-muted-foreground">
-        Dipakai di step sebagai <code className="font-mono text-[12px] text-foreground">{'{{vars.NAMA}}'}</code>. Nilai di sini menimpa variable flow dan
-        environment dengan nama sama; hasil <span className="font-mono text-[12px]">save</span> / <span className="font-mono text-[12px]">set_variable</span>{' '}
-        saat run menimpa keduanya. Jangan simpan password di sini, pakai secret environment.
+        <Trans
+          t={t}
+          i18nKey="variables.intro"
+          values={{ token: `{{vars.${t('variables.tokenName')}}}` }}
+          components={{ code: <code className="font-mono text-[12px] text-foreground" />, mono: <span className="font-mono text-[12px]" /> }}
+        />
       </p>
       {readOnly ? (
         entries.length === 0 ? (
-          <EmptyState icon={Variable} title="Belum ada variable" />
+          <EmptyState icon={Variable} title={t('variables.empty')} />
         ) : (
           <table className="w-full max-w-2xl border-collapse rounded-md border border-border text-sm">
             <thead>
               <tr className="h-8 border-b border-border">
                 <th scope="col" className="px-3 text-left text-xs font-medium text-muted-foreground">
-                  Nama
+                  {t('variables.name')}
                 </th>
                 <th scope="col" className="px-3 text-left text-xs font-medium text-muted-foreground">
-                  Nilai
+                  {t('variables.value')}
                 </th>
               </tr>
             </thead>
@@ -42,13 +47,13 @@ export function VariablesTab({ draft, update, readOnly }: { draft: Draft; update
           idPrefix="tc-vars"
           value={draft.variables}
           onChange={(v) => update((d) => ({ ...d, variables: v }))}
-          keyLabel="Nama"
-          valueLabel="Nilai"
+          keyLabel={t('variables.name')}
+          valueLabel={t('variables.value')}
           keyPlaceholder="email"
           valuePlaceholder="qa.bot@tokoku.id"
-          addLabel="Tambah variable"
+          addLabel={t('panel.kv.addVariable')}
           keyPattern={/^[A-Za-z_][A-Za-z0-9_]*$/}
-          keyPatternMessage="Nama hanya boleh huruf, angka, dan _ (tidak diawali angka)."
+          keyPatternMessage={t('variables.keyPattern')}
         />
       )}
     </div>

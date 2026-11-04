@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useUpdateProject } from '@/api/queries'
 import type { Project } from '@/api/types'
@@ -13,6 +14,7 @@ const NAME_MAX = 80
 const DESC_MAX = 500
 
 export function GeneralSection({ project }: { project: Project }) {
+  const { t } = useTranslation('settings')
   const update = useUpdateProject(project.key)
   const [name, setName] = React.useState(project.name)
   const [description, setDescription] = React.useState(project.description)
@@ -21,8 +23,12 @@ export function GeneralSection({ project }: { project: Project }) {
 
   const dirty = name.trim() !== project.name || description.trim() !== project.description
   const server = fieldErrorsOf(update.error)
-  const nameClientError = !name.trim() ? 'Nama project wajib diisi' : name.trim().length > NAME_MAX ? `Maksimal ${NAME_MAX} karakter` : undefined
-  const descClientError = description.length > DESC_MAX ? `Maksimal ${DESC_MAX} karakter` : undefined
+  const nameClientError = !name.trim()
+    ? t('general.nameRequired')
+    : name.trim().length > NAME_MAX
+      ? t('general.maxChars', { count: NAME_MAX })
+      : undefined
+  const descClientError = description.length > DESC_MAX ? t('general.maxChars', { count: DESC_MAX }) : undefined
   const nameError = (submitted || name.length > NAME_MAX ? nameClientError : undefined) ?? server.name
   const descError = descClientError ?? server.description
 
@@ -39,7 +45,7 @@ export function GeneralSection({ project }: { project: Project }) {
           setName(p.name)
           setDescription(p.description)
           setSubmitted(false)
-          toast.success('Info project tersimpan')
+          toast.success(t('general.saved'))
         },
       },
     )
@@ -49,20 +55,27 @@ export function GeneralSection({ project }: { project: Project }) {
     <form onSubmit={submit} noValidate>
       <SettingsCard
         id="settings-general"
-        title="Umum"
-        description="Nama dan deskripsi tampil di daftar project dan command palette."
+        title={t('general.title')}
+        description={t('general.description')}
         footer={<SaveBar id="general" dirty={dirty} pending={update.isPending} error={update.isError && !server.name ? update.error : undefined} />}
         bodyClassName="grid gap-4"
       >
         <div className="grid gap-1.5">
-          <span className="text-sm font-medium">Key</span>
+          <span className="text-sm font-medium">{t('general.key')}</span>
           <p className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             <KeyBadge>{project.key}</KeyBadge>
-            Tidak bisa diubah, karena dipakai di semua key test case, flow, dan run (mis. <span className="font-mono">{project.key}-T12</span>).
+            <span>
+              <Trans
+                t={t}
+                i18nKey="general.keyNote"
+                values={{ example: `${project.key}-T12` }}
+                components={{ code: <span className="font-mono" /> }}
+              />
+            </span>
           </p>
         </div>
         <div className="grid gap-1.5">
-          <Label htmlFor="project-name">Nama project</Label>
+          <Label htmlFor="project-name">{t('general.name')}</Label>
           <Input
             ref={nameRef}
             {...invalidProps('project-name', nameError)}
@@ -74,13 +87,13 @@ export function GeneralSection({ project }: { project: Project }) {
           <FieldHint id="project-name" error={nameError} />
         </div>
         <div className="grid gap-1.5">
-          <Label htmlFor="project-desc">Deskripsi</Label>
+          <Label htmlFor="project-desc">{t('general.descriptionLabel')}</Label>
           <Textarea
             {...invalidProps('project-desc', descError, 'project-desc-hint')}
             value={description}
             onChange={(e) => setDescription(e.target.value)}
             rows={3}
-            placeholder="Cakupan pengujian project ini, mis. smoke & regression storefront."
+            placeholder={t('general.descriptionPlaceholder')}
           />
           <FieldHint id="project-desc" error={descError}>
             <span className="tabular">

@@ -1,4 +1,5 @@
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 
 export interface VarSuggestion {
@@ -39,6 +40,7 @@ export const VarField = React.forwardRef<HTMLInputElement | HTMLTextAreaElement,
   const [query, setQuery] = React.useState<{ start: number; text: string } | null>(null)
   const [active, setActive] = React.useState(0)
   const reactId = React.useId()
+  const { t } = useTranslation('testcases')
   const listId = `${id ?? reactId}-vars`
 
   const matches = React.useMemo(() => {
@@ -148,7 +150,7 @@ export const VarField = React.forwardRef<HTMLInputElement | HTMLTextAreaElement,
         <ul
           id={listId}
           role="listbox"
-          aria-label="Variable"
+          aria-label={t('varField.listLabel')}
           className="absolute top-full left-0 z-50 mt-1 max-h-56 w-full min-w-56 overflow-y-auto rounded-lg border border-border bg-popover p-1 text-popover-foreground shadow-overlay"
         >
           {matches.map((s, i) => (

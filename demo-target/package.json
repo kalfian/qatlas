@@ -1,0 +1,12 @@
+{
+  "name": "@qatlas/demo-target",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Tiny fake \"Tokoku\" shop used as the target app for QAtlas runner tests and demos.",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check public/app.js"
+  }
+}

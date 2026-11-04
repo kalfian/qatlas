@@ -1,5 +1,6 @@
 import { CircleDashed, Copy, KeyRound, Plus, Trash2, Variable } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useEnvironmentMutations } from '@/api/queries'
 import type { Environment } from '@/api/types'
@@ -38,15 +39,16 @@ function SectionHeader({ id, title, count, description, action }: {
 }
 
 export function CopyRefButton({ text }: { text: string }) {
+  const { t } = useTranslation('environments')
   const { copy } = useCopy()
   return (
-    <Tip label={`Salin ${text}`}>
+    <Tip label={t('copyRef', { text })}>
       <Button
         type="button"
         variant="ghost"
         size="icon-sm"
-        aria-label={`Salin ${text}`}
-        onClick={() => copy(text, `${text} disalin`)}
+        aria-label={t('copyRef', { text })}
+        onClick={() => copy(text, t('copiedRef', { text }))}
         className="text-muted-foreground hover:text-foreground"
       >
         <Copy />
@@ -73,33 +75,30 @@ export function VariablesSection({ projectKey, env, canManage, onDirtyChange }: 
   canManage: boolean
   onDirtyChange: (dirty: boolean) => void
 }) {
+  const { t } = useTranslation('environments')
   const count = Object.keys(env.variables).length
   return (
     <section aria-labelledby="vars-title" className="rounded-md border border-border bg-card">
       <SectionHeader
         id="vars-title"
-        title="Variables"
+        title={t('variables.title')}
         count={count}
-        description={
-          <>
-            Nilai biasa, terlihat oleh semua member. Dipakai di step sebagai <code className="font-mono">{'{{env.KEY}}'}</code>.
-          </>
-        }
+        description={<Trans t={t} i18nKey="variables.description" values={{ ref: '{{env.KEY}}' }} components={{ code: <code className="font-mono" /> }} />}
       />
       {canManage ? (
         <VariablesEditor key={env.id} projectKey={projectKey} env={env} onDirtyChange={onDirtyChange} />
       ) : count === 0 ? (
         <p className="flex items-center gap-2 px-4 py-6 text-sm text-muted-foreground">
-          <Variable className="size-5" aria-hidden /> Belum ada variable di environment ini.
+          <Variable className="size-5" aria-hidden /> {t('variables.emptyReadOnly')}
         </p>
       ) : (
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead className="w-[38%] pl-4">Key</TableHead>
-              <TableHead>Value</TableHead>
+              <TableHead className="w-[38%] pl-4">{t('variables.key')}</TableHead>
+              <TableHead>{t('variables.value')}</TableHead>
               <TableHead className="w-10 pr-4">
-                <span className="sr-only">Aksi</span>
+                <span className="sr-only">{t('variables.actions')}</span>
               </TableHead>
             </TableRow>
           </TableHeader>
@@ -107,7 +106,7 @@ export function VariablesSection({ projectKey, env, canManage, onDirtyChange }: 
             {Object.entries(env.variables).map(([k, v]) => (
               <TableRow key={k}>
                 <TableCell className="pl-4 font-mono text-xs font-medium break-all">{k}</TableCell>
-                <TableCell className="font-mono text-xs break-all text-muted-foreground">{v || <span className="italic">kosong</span>}</TableCell>
+                <TableCell className="font-mono text-xs break-all text-muted-foreground">{v || <span className="italic">{t('variables.emptyValue')}</span>}</TableCell>
                 <TableCell className="py-0 pr-4 text-right">
                   <CopyRefButton text={`{{env.${k}}}`} />
                 </TableCell>
@@ -121,6 +120,7 @@ export function VariablesSection({ projectKey, env, canManage, onDirtyChange }: 
 }
 
 function VariablesEditor({ projectKey, env, onDirtyChange }: { projectKey: string; env: Environment; onDirtyChange: (d: boolean) => void }) {
+  const { t } = useTranslation(['environments', 'common'])
   const { update } = useEnvironmentMutations(projectKey)
   const [rows, setRows] = React.useState<Row[]>(() => toRows(env.variables))
   const [base, setBase] = React.useState(() => serverSignature(env.variables))
@@ -186,9 +186,9 @@ function VariablesEditor({ projectKey, env, onDirtyChange }: { projectKey: strin
     const seen = new Map<string, string>()
     for (const r of kept) {
       const k = r.key.trim()
-      if (!k) errs[r.id] = 'Key wajib diisi'
-      else if (!VAR_KEY_RE.test(k)) errs[r.id] = 'Hanya huruf, angka, dan _ ; tidak diawali angka'
-      else if (seen.has(k)) errs[r.id] = `Key ${k} dipakai dua kali`
+      if (!k) errs[r.id] = t('variables.keyRequired')
+      else if (!VAR_KEY_RE.test(k)) errs[r.id] = t('variables.keyFormat')
+      else if (seen.has(k)) errs[r.id] = t('variables.keyDuplicate', { key: k })
       seen.set(k, r.id)
     }
     setErrors(errs)
@@ -205,7 +205,7 @@ function VariablesEditor({ projectKey, env, onDirtyChange }: { projectKey: strin
           const next = kept.map((r) => ({ ...r, key: r.key.trim() }))
           setRows(next)
           setSavedSig(signature(next))
-          toast.success(`Variable ${env.name} tersimpan`)
+          toast.success(t('variables.saved', { name: env.name }))
         },
       },
     )
@@ -217,22 +217,22 @@ function VariablesEditor({ projectKey, env, onDirtyChange }: { projectKey: strin
     <form onSubmit={save} noValidate>
       {rows.length > 0 && (
         <div className="hidden grid-cols-[minmax(0,2fr)_minmax(0,3fr)_4.5rem] gap-2 border-b border-border px-4 py-2 text-xs font-medium text-muted-foreground sm:grid" aria-hidden>
-          <span>Key</span>
-          <span>Value</span>
+          <span>{t('variables.key')}</span>
+          <span>{t('variables.value')}</span>
           <span />
         </div>
       )}
-      <div ref={listRef} role="list" aria-label="Variables" className="divide-y divide-border">
+      <div ref={listRef} role="list" aria-label={t('variables.listLabel')} className="divide-y divide-border">
         {rows.map((r, i) => {
           const err = errors[r.id]
-          const label = r.key.trim() || `baris ${i + 1}`
+          const label = r.key.trim() || t('variables.rowFallback', { index: String(i + 1) })
           return (
             <div key={r.id} role="listitem" className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-2 gap-y-1.5 px-4 py-2 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)_4.5rem]">
               <div className="min-w-0">
                 <Input
                   data-row={r.id}
                   data-field="key"
-                  aria-label={`Key variable ${i + 1}`}
+                  aria-label={t('variables.keyAria', { index: String(i + 1) })}
                   aria-invalid={err ? true : undefined}
                   aria-describedby={err ? `${r.id}-error` : undefined}
                   value={r.key}
@@ -249,7 +249,7 @@ function VariablesEditor({ projectKey, env, onDirtyChange }: { projectKey: strin
                 )}
               </div>
               <Input
-                aria-label={`Value ${label}`}
+                aria-label={t('variables.valueAria', { label })}
                 value={r.value}
                 placeholder="https://staging.tokoku.id"
                 onChange={(e) => patch(r.id, 'value', e.target.value)}
@@ -259,12 +259,12 @@ function VariablesEditor({ projectKey, env, onDirtyChange }: { projectKey: strin
               />
               <div className="col-start-2 row-span-2 row-start-1 flex items-start justify-end gap-0.5 pt-0.5 sm:col-start-3 sm:row-span-1">
                 {r.key.trim() && VAR_KEY_RE.test(r.key.trim()) ? <CopyRefButton text={`{{env.${r.key.trim()}}}`} /> : <span className="size-7" />}
-                <Tip label="Hapus baris">
+                <Tip label={t('variables.removeRow')}>
                   <Button
                     type="button"
                     variant="ghost"
                     size="icon-sm"
-                    aria-label={`Hapus variable ${label}`}
+                    aria-label={t('variables.removeAria', { label })}
                     onClick={() => removeRow(r.id)}
                     className="text-muted-foreground hover:text-destructive"
                   >
@@ -278,26 +278,26 @@ function VariablesEditor({ projectKey, env, onDirtyChange }: { projectKey: strin
       </div>
       {rows.length === 0 && (
         <p className="flex items-center gap-2 px-4 py-5 text-sm text-muted-foreground">
-          <Variable className="size-5" aria-hidden /> Belum ada variable. Tambahkan misalnya <code className="font-mono text-xs">BASE_URL</code>.
+          <Variable className="size-5" aria-hidden /> <Trans t={t} i18nKey="variables.emptyEditor" components={{ code: <code className="font-mono text-xs" /> }} />
         </p>
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border px-4 py-2.5">
         <Button type="button" variant="ghost" size="sm" onClick={addRow}>
-          <Plus /> Tambah variable
+          <Plus /> {t('variables.add')}
         </Button>
         <div className="flex flex-wrap items-center gap-2">
           <span id={`${env.id}-vars-hint`} className="text-xs text-muted-foreground">
-            {dirty ? 'Perubahan belum disimpan' : 'Belum ada perubahan'}
+            {dirty ? t('variables.unsaved') : t('common:states.noChanges')}
           </span>
           {dirty && (
             <Button type="button" variant="outline" size="sm" onClick={discard} disabled={update.isPending}>
-              Batalkan
+              {t('variables.discard')}
             </Button>
           )}
           {/* tetap ter-mount agar fokus tidak hilang setelah simpan; aria-disabled saat bersih (§6) */}
           <Button ref={saveRef} type="submit" size="sm" loading={update.isPending} aria-disabled={!dirty || undefined} aria-describedby={`${env.id}-vars-hint`}>
-            Simpan variable
+            {t('variables.save')}
           </Button>
         </div>
       </div>
@@ -329,6 +329,7 @@ export function SecretsSection({ projectKey, env, allEnvs, canManage }: {
   allEnvs: Environment[]
   canManage: boolean
 }) {
+  const { t } = useTranslation('environments')
   const [dialog, setDialog] = React.useState<SecretDialogState>(null)
   const [lastName, setLastName] = React.useState<string | undefined>(undefined)
 
@@ -355,18 +356,13 @@ export function SecretsSection({ projectKey, env, allEnvs, canManage }: {
     <section aria-labelledby="secrets-title" className="rounded-md border border-border bg-card">
       <SectionHeader
         id="secrets-title"
-        title="Secrets"
+        title={t('secrets.title')}
         count={env.secrets.length}
-        description={
-          <>
-            Write-only: nilai secret tidak bisa dilihat lagi setelah disimpan. Dipakai sebagai <code className="font-mono">{'{{secret.KEY}}'}</code> dan disamarkan di
-            report.
-          </>
-        }
+        description={<Trans t={t} i18nKey="secrets.description" values={{ ref: '{{secret.KEY}}' }} components={{ code: <code className="font-mono" /> }} />}
         action={
           canManage && (
             <Button size="sm" variant="outline" onClick={() => openSet(undefined)}>
-              <Plus /> Secret
+              <Plus /> {t('secrets.add')}
             </Button>
           )
         }
@@ -374,34 +370,36 @@ export function SecretsSection({ projectKey, env, allEnvs, canManage }: {
       {rows.length === 0 ? (
         <div className="flex flex-col items-start gap-2 px-4 py-6">
           <KeyRound className="size-5 text-muted-foreground" aria-hidden />
-          <p className="text-sm text-muted-foreground">Belum ada secret. Simpan password, token, atau API key di sini, bukan di variable.</p>
+          <p className="text-sm text-muted-foreground">{t('secrets.empty')}</p>
           {canManage && (
             <Button size="sm" onClick={() => openSet(undefined)}>
-              <Plus /> Tambah secret
+              <Plus /> {t('secrets.addSecret')}
             </Button>
           )}
         </div>
       ) : (
-        <ul className="divide-y divide-border" aria-label="Secrets">
+        <ul className="divide-y divide-border" aria-label={t('secrets.listLabel')}>
           {rows.map((s) => (
             <li key={s.name} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-4 py-2 sm:min-h-11 sm:flex-nowrap">
               <span className="min-w-0 flex-1 basis-full font-mono text-xs font-medium break-all sm:basis-auto">{s.name}</span>
               <span className="min-w-0 flex-1 text-xs">
                 {s.updated_at ? (
                   <span className="text-foreground">
-                    Terisi
+                    {t('secrets.set')}
                     <span className="text-muted-foreground">
-                      {' · diubah '}
-                      <time dateTime={s.updated_at} title={formatDateTime(s.updated_at)}>
-                        {relativeTime(s.updated_at, formatRelative)}
-                      </time>
+                      <Trans
+                        t={t}
+                        i18nKey="secrets.updated"
+                        values={{ time: relativeTime(s.updated_at, formatRelative) }}
+                        components={{ time: <time dateTime={s.updated_at} title={formatDateTime(s.updated_at)} /> }}
+                      />
                     </span>
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1 text-status-blocked">
                     <CircleDashed className="size-3.5" aria-hidden />
-                    Belum diisi
-                    <span className="text-muted-foreground">· ada di {s.elsewhere.join(', ')}</span>
+                    {t('secrets.notSet')}
+                    <span className="text-muted-foreground">{t('secrets.elsewhere', { envs: s.elsewhere.join(', ') })}</span>
                   </span>
                 )}
               </span>
@@ -409,15 +407,15 @@ export function SecretsSection({ projectKey, env, allEnvs, canManage }: {
                 <CopyRefButton text={`{{secret.${s.name}}}`} />
                 {canManage && (
                   <>
-                    <Button size="sm" variant="outline" className="min-w-[5.75rem]" onClick={() => openSet(s.name)} aria-label={`${s.updated_at ? 'Ganti nilai' : 'Isi nilai'} ${s.name}`}>
-                      {s.updated_at ? 'Ganti nilai' : 'Isi nilai'}
+                    <Button size="sm" variant="outline" className="min-w-[5.75rem]" onClick={() => openSet(s.name)} aria-label={s.updated_at ? t('secrets.replaceAria', { name: s.name }) : t('secrets.fillAria', { name: s.name })}>
+                      {s.updated_at ? t('secrets.replace') : t('secrets.fill')}
                     </Button>
                     {s.updated_at ? (
-                      <Tip label="Hapus secret">
+                      <Tip label={t('secrets.delete')}>
                         <Button
                           size="icon-sm"
                           variant="ghost"
-                          aria-label={`Hapus secret ${s.name}`}
+                          aria-label={t('secrets.deleteAria', { name: s.name })}
                           className="text-muted-foreground hover:text-destructive"
                           onClick={() => setDialog({ kind: 'delete', name: s.name })}
                         >
@@ -454,10 +452,11 @@ export function SecretsSection({ projectKey, env, allEnvs, canManage }: {
 }
 
 export function SecretCountHint({ env, className }: { env: Environment; className?: string }) {
+  const { t } = useTranslation('environments')
   const v = Object.keys(env.variables).length
   return (
     <span className={cn('tabular text-xs text-muted-foreground', className)}>
-      {v} variable · {env.secrets.length} secret
+      {t('counts.variables', { count: v })} · {t('counts.secrets', { count: env.secrets.length })}
     </span>
   )
 }

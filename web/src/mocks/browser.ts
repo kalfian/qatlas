@@ -24,11 +24,11 @@ export async function startMockApi() {
       })
       mode = 'service-worker'
     } catch (err) {
-      console.warn('[mock] service worker gagal, fallback ke fetch-patch', err)
+      console.warn('[mock] service worker failed, falling back to fetch-patch', err)
     }
   }
   if (mode === 'fetch-patch') installFetchInterceptor()
-  console.info(`[mock] API mock aktif (${mode})`)
+  console.info(`[mock] API mock active (${mode})`)
   startSimulator()
 }
 
@@ -40,7 +40,7 @@ function installFetchInterceptor() {
     if (url.origin !== location.origin || !url.pathname.startsWith('/api/')) return original(input, init)
     const response = await getResponse(handlers, request)
     if (response) return response
-    return new Response(JSON.stringify({ error: { code: 'not_found', message: `Mock handler tidak ada untuk ${request.method} ${url.pathname}` } }), {
+    return new Response(JSON.stringify({ error: { code: 'not_found', message: `No mock handler for ${request.method} ${url.pathname}` } }), {
       status: 404,
       headers: { 'content-type': 'application/json' },
     })

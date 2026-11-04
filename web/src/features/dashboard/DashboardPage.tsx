@@ -1,8 +1,10 @@
 import { Link, useParams } from '@tanstack/react-router'
 import { format, parseISO } from 'date-fns'
-import { id as localeId } from 'date-fns/locale'
+import { enUS, id as localeId, type Locale } from 'date-fns/locale'
 import { ArrowDownRight, ArrowRight, ArrowUpRight, CircleCheck, History, Minus } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 import { useProject, useProjectStats, useRuns } from '@/api/queries'
 import type { ProjectStats, RunSummary, RunTrigger } from '@/api/types'
 import { useCan } from '@/app/auth'
@@ -71,6 +73,7 @@ function usePreviousPassRate(projectKey: string): number | null | undefined {
 function StatStrip({ projectKey }: { projectKey: string }) {
   const s7 = useProjectStats(projectKey, '7d')
   const s30 = useProjectStats(projectKey, '30d')
+  const { t, i18n } = useTranslation('dashboard')
   const prev = usePreviousPassRate(projectKey)
   const loading = s7.isPending || s30.isPending
   const showSkeleton = useDelayedFlag(loading)
@@ -93,7 +96,7 @@ function StatStrip({ projectKey }: { projectKey: string }) {
             )}
           </div>
         ))}
-        <span className="sr-only">Memuat ringkasan…</span>
+        <span className="sr-only">{t('stats.loading')}</span>
       </div>
     )
   }
@@ -104,21 +107,21 @@ function StatStrip({ projectKey }: { projectKey: string }) {
 
   return (
     <dl className="grid grid-cols-2 gap-px overflow-hidden rounded-md border border-border bg-border lg:grid-cols-4">
-      <Stat label="Pass rate 7 hari" value={formatPercent(a.pass_rate)} extra={delta != null ? <Delta value={delta} /> : null}>
+      <Stat label={t('stats.passRate7')} value={formatPercent(a.pass_rate)} extra={delta != null ? <Delta value={delta} /> : null}>
         {a.pass_rate == null
-          ? 'Belum ada run selesai'
+          ? t('stats.noFinishedRuns')
           : prev != null
-            ? `7 hari sebelumnya ${formatPercent(prev)}`
-            : 'Belum ada data pembanding'}
+            ? t('stats.previous7', { value: formatPercent(prev) })
+            : t('stats.noComparison')}
       </Stat>
-      <Stat label="Pass rate 30 hari" value={formatPercent(b.pass_rate)}>
-        {b.pass_rate == null ? 'Belum ada run selesai' : `Dari ${b.total_runs} run`}
+      <Stat label={t('stats.passRate30')} value={formatPercent(b.pass_rate)}>
+        {b.pass_rate == null ? t('stats.noFinishedRuns') : t('stats.fromRuns', { count: b.total_runs })}
       </Stat>
-      <Stat label="Total run 7 hari" value={String(a.total_runs)}>
-        {a.avg_duration_ms != null ? `Rata-rata ${formatDuration(a.avg_duration_ms)} per run` : 'Belum ada durasi tercatat'}
+      <Stat label={t('stats.totalRuns7')} value={formatNumber(a.total_runs, i18n.language)}>
+        {a.avg_duration_ms != null ? t('stats.avgDuration', { duration: formatDuration(a.avg_duration_ms) }) : t('stats.noDuration')}
       </Stat>
       <Stat
-        label="Menunggu manual"
+        label={t('stats.awaitingManual')}
         value={
           <Link
             to="/p/$key/runs"
@@ -127,12 +130,12 @@ function StatStrip({ projectKey }: { projectKey: string }) {
             className="group inline-flex items-center gap-1 rounded-sm underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
           >
             {a.awaiting_manual}
-            <span className="sr-only"> run menunggu manual, lihat daftarnya</span>
+            <span className="sr-only">{t('stats.awaitingSr')}</span>
             <ArrowUpRight className="size-4 text-muted-foreground transition-colors group-hover:text-foreground" aria-hidden />
           </Link>
         }
       >
-        {a.awaiting_manual > 0 ? 'Perlu dikerjakan' : 'Tidak ada yang menunggu'}
+        {a.awaiting_manual > 0 ? t('stats.needsWork') : t('stats.nothingWaiting')}
       </Stat>
     </dl>
   )
@@ -152,14 +155,16 @@ function Stat({ label, value, extra, children }: { label: string; value: React.R
 }
 
 function Delta({ value }: { value: number }) {
+  const { t } = useTranslation('dashboard')
   const Icon = value > 0 ? ArrowUpRight : value < 0 ? ArrowDownRight : Minus
   const tone = value > 0 ? 'text-status-passed' : value < 0 ? 'text-status-failed' : 'text-muted-foreground'
-  const spoken = value > 0 ? `naik ${value} poin` : value < 0 ? `turun ${Math.abs(value)} poin` : 'tidak berubah'
+  const spoken =
+    value > 0 ? t('stats.deltaUp', { count: value }) : value < 0 ? t('stats.deltaDown', { count: Math.abs(value) }) : t('stats.deltaFlat')
   return (
     <span className={cn('tabular inline-flex items-center gap-0.5 text-xs font-medium', tone)}>
       <Icon className="size-3.5" aria-hidden />
       <span aria-hidden>{value === 0 ? '0' : Math.abs(value)}</span>
-      <span className="sr-only">{spoken} dibanding 7 hari sebelumnya</span>
+      <span className="sr-only">{spoken}</span>
     </span>
   )
 }
@@ -169,13 +174,21 @@ function Delta({ value }: { value: number }) {
 const SERIES = [
   { key: 'passed', label: 'Passed', fill: 'fill-status-passed', swatch: 'bg-status-passed' },
   { key: 'failed', label: 'Failed / Error', fill: 'fill-status-failed', swatch: 'bg-status-failed' },
-  { key: 'other', label: 'Lainnya', fill: 'fill-status-skipped', swatch: 'bg-status-skipped' },
+  { key: 'other', label: null, fill: 'fill-status-skipped', swatch: 'bg-status-skipped' },
 ] as const
+
+/** Label seri: status (Passed, Failed / Error) tetap Inggris; "lainnya" diterjemahkan. */
+const seriesLabel = (s: (typeof SERIES)[number], t: TFunction<'dashboard'>) => s.label ?? t('trend.other')
+
+/** Locale date-fns sesuai bahasa UI. */
+const dateLocale = (lang: string): Locale => (lang === 'id' ? localeId : enUS)
+
+const formatNumber = (n: number, lang: string) => new Intl.NumberFormat(lang).format(n)
 
 const dayTotal = (d: Day) => d.passed + d.failed + d.other
 const dayDate = (d: Day) => parseISO(d.date)
-const longDate = (d: Day) => format(dayDate(d), 'EEEE, d MMM', { locale: localeId })
-const shortDate = (d: Day) => format(dayDate(d), 'd MMM', { locale: localeId })
+const longDate = (d: Day, lang: string) => format(dayDate(d), 'EEEE, d MMM', { locale: dateLocale(lang) })
+const shortDate = (d: Day, lang: string) => format(dayDate(d), 'd MMM', { locale: dateLocale(lang) })
 
 /** Batas atas sumbu Y yang "bulat" dan setengahnya tetap bilangan bulat. */
 function niceMax(v: number): number {
@@ -186,6 +199,7 @@ function niceMax(v: number): number {
 }
 
 function TrendPanel({ projectKey, className }: { projectKey: string; className?: string }) {
+  const { t } = useTranslation('dashboard')
   const stats = useProjectStats(projectKey, '30d')
   const showSkeleton = useDelayedFlag(stats.isPending)
   const totals = stats.data?.daily.reduce(
@@ -195,7 +209,7 @@ function TrendPanel({ projectKey, className }: { projectKey: string; className?:
 
   return (
     <Panel
-      title="Tren run 30 hari"
+      title={t('trend.title')}
       className={className}
       actions={totals && <Legend totals={totals} className="hidden sm:flex" />}
     >
@@ -205,10 +219,10 @@ function TrendPanel({ projectKey, className }: { projectKey: string; className?:
       ) : stats.isPending ? (
         <div className="h-[200px]" aria-busy="true">
           {showSkeleton && <Skeleton className="h-full w-full" />}
-          <span className="sr-only">Memuat grafik…</span>
+          <span className="sr-only">{t('trend.loading')}</span>
         </div>
       ) : stats.data.daily.every((d) => dayTotal(d) === 0) ? (
-        <EmptyState icon={History} title="Belum ada run dalam 30 hari terakhir." className="h-[200px] justify-center border-0 px-0" />
+        <EmptyState icon={History} title={t('trend.empty')} className="h-[200px] justify-center border-0 px-0" />
       ) : (
         <TrendChart daily={stats.data.daily} />
       )}
@@ -217,12 +231,13 @@ function TrendPanel({ projectKey, className }: { projectKey: string; className?:
 }
 
 function Legend({ totals, className }: { totals: Record<(typeof SERIES)[number]['key'], number>; className?: string }) {
+  const { t } = useTranslation('dashboard')
   return (
-    <ul className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground', className)} aria-label="Legenda, total 30 hari">
+    <ul className={cn('flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground', className)} aria-label={t('trend.legend')}>
       {SERIES.map((s) => (
         <li key={s.key} className="inline-flex items-center gap-1.5">
           <span className={cn('size-2 rounded-[2px]', s.swatch)} aria-hidden />
-          {s.label}
+          {seriesLabel(s, t)}
           <span className="tabular font-medium text-foreground">{totals[s.key]}</span>
         </li>
       ))}
@@ -231,6 +246,8 @@ function Legend({ totals, className }: { totals: Record<(typeof SERIES)[number][
 }
 
 function TrendChart({ daily }: { daily: Day[] }) {
+  const { t, i18n } = useTranslation('dashboard')
+  const lang = i18n.language
   const [active, setActive] = React.useState<number | null>(null)
   const [viaKeyboard, setViaKeyboard] = React.useState(false)
   const n = daily.length
@@ -273,7 +290,7 @@ function TrendChart({ daily }: { daily: Day[] }) {
           className="relative h-40 min-w-0 flex-1 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-4 focus-visible:ring-offset-card"
           tabIndex={0}
           role="group"
-          aria-label="Grafik tren run 30 hari. Panah kiri dan kanan untuk melihat detail per hari; data lengkap ada di tabel ringkasan."
+          aria-label={t('trend.chartLabel')}
           onKeyDown={onKeyDown}
           onFocus={(e) => {
             // hanya fokus keyboard yang membuka tooltip; klik mouse sudah ditangani hover
@@ -342,36 +359,36 @@ function TrendChart({ daily }: { daily: Day[] }) {
             })}
           </svg>
 
-          {activeDay && active != null && <ChartTooltip day={activeDay} index={active} count={n} />}
+          {activeDay && active != null && <ChartTooltip day={activeDay} index={active} count={n} lang={lang} />}
         </div>
       </div>
 
       {/* sumbu X */}
       <div className="mt-2 ml-8 flex justify-between text-xs text-muted-foreground" aria-hidden>
-        <span>{shortDate(daily[0])}</span>
-        <span>{shortDate(daily[Math.floor(n / 2)])}</span>
-        <span>Hari ini</span>
+        <span>{shortDate(daily[0], lang)}</span>
+        <span>{shortDate(daily[Math.floor(n / 2)], lang)}</span>
+        <span>{t('trend.today')}</span>
       </div>
 
       <p className="sr-only" aria-live="polite">
-        {viaKeyboard && activeDay ? describeDay(activeDay) : ''}
+        {viaKeyboard && activeDay ? describeDay(activeDay, lang, t) : ''}
       </p>
 
       <table className="sr-only">
-        <caption>Jumlah run per hari, 30 hari terakhir</caption>
+        <caption>{t('trend.tableCaption')}</caption>
         <thead>
           <tr>
-            <th scope="col">Tanggal</th>
+            <th scope="col">{t('trend.date')}</th>
             <th scope="col">Passed</th>
             <th scope="col">Failed / Error</th>
-            <th scope="col">Lainnya</th>
-            <th scope="col">Total</th>
+            <th scope="col">{t('trend.other')}</th>
+            <th scope="col">{t('trend.total')}</th>
           </tr>
         </thead>
         <tbody>
           {daily.map((d) => (
             <tr key={d.date}>
-              <th scope="row">{longDate(d)}</th>
+              <th scope="row">{longDate(d, lang)}</th>
               <td>{d.passed}</td>
               <td>{d.failed}</td>
               <td>{d.other}</td>
@@ -384,13 +401,14 @@ function TrendChart({ daily }: { daily: Day[] }) {
   )
 }
 
-function describeDay(d: Day): string {
+function describeDay(d: Day, lang: string, t: TFunction<'dashboard'>): string {
   const total = dayTotal(d)
-  if (!total) return `${longDate(d)}: tidak ada run`
-  return `${longDate(d)}: ${total} run, ${d.passed} passed, ${d.failed} failed atau error, ${d.other} lainnya`
+  if (!total) return t('trend.dayNone', { date: longDate(d, lang) })
+  return t('trend.dayDetail', { date: longDate(d, lang), total, passed: d.passed, failed: d.failed, other: d.other })
 }
 
-function ChartTooltip({ day, index, count }: { day: Day; index: number; count: number }) {
+function ChartTooltip({ day, index, count, lang }: { day: Day; index: number; count: number; lang: string }) {
+  const { t } = useTranslation('dashboard')
   const total = dayTotal(day)
   const finals = day.passed + day.failed
   // tooltip di sisi bar yang lebih lapang agar bar aktif tidak tertutup
@@ -404,25 +422,26 @@ function ChartTooltip({ day, index, count }: { day: Day; index: number; count: n
       style={style}
       aria-hidden
     >
-      <p className="font-medium capitalize">{longDate(day)}</p>
+      <p className="font-medium capitalize">{longDate(day, lang)}</p>
       {total === 0 ? (
-        <p className="mt-1 text-muted-foreground">Tidak ada run</p>
+        <p className="mt-1 text-muted-foreground">{t('trend.noRuns')}</p>
       ) : (
         <>
           <ul className="mt-1.5 grid gap-1">
             {SERIES.map((s) => (
               <li key={s.key} className="flex items-center gap-1.5">
                 <span className={cn('size-2 rounded-[2px]', s.swatch)} />
-                <span className="text-muted-foreground">{s.label}</span>
+                <span className="text-muted-foreground">{seriesLabel(s, t)}</span>
                 <span className="tabular ml-auto font-medium">{day[s.key]}</span>
               </li>
             ))}
           </ul>
           <p className="mt-1.5 border-t border-border pt-1.5 text-muted-foreground">
-            <span className="tabular">{total}</span> run
+            <span className="tabular">{total}</span> {t('trend.runs', { count: total })}
             {finals > 0 && (
               <>
-                {' · '}pass <span className="tabular">{formatPercent(day.passed / finals)}</span>
+                {' · '}
+                {t('trend.pass')} <span className="tabular">{formatPercent(day.passed / finals)}</span>
               </>
             )}
           </p>
@@ -438,9 +457,10 @@ function TopFailingPanel({ projectKey }: { projectKey: string }) {
   const stats = useProjectStats(projectKey, '30d')
   const showSkeleton = useDelayedFlag(stats.isPending)
   const items = stats.data?.top_failing ?? []
+  const { t } = useTranslation('dashboard')
 
   return (
-    <Panel title="Paling sering gagal" actions={<span className="text-xs text-muted-foreground">30 hari</span>} bodyClassName="p-0">
+    <Panel title={t('topFailing.title')} actions={<span className="text-xs text-muted-foreground">{t('topFailing.period')}</span>} bodyClassName="p-0">
       {stats.isError ? (
         <ErrorState error={stats.error} onRetry={() => stats.refetch()} className="m-4" />
       ) : stats.isPending ? (
@@ -455,30 +475,36 @@ function TopFailingPanel({ projectKey }: { projectKey: string }) {
               )}
             </div>
           ))}
-          <span className="sr-only">Memuat…</span>
+          <span className="sr-only">{t('topFailing.loading')}</span>
         </div>
       ) : items.length === 0 ? (
-        <EmptyState icon={CircleCheck} title="Tidak ada test case yang gagal dalam 30 hari terakhir." className="m-4 border-0 px-0 py-4" />
+        <EmptyState icon={CircleCheck} title={t('topFailing.empty')} className="m-4 border-0 px-0 py-4" />
       ) : (
         <ol className="divide-y divide-border">
-          {items.map((t) => (
-            <li key={t.test_case_key}>
+          {items.map((item) => (
+            <li key={item.test_case_key}>
               <Link
                 to="/p/$key/tests/$caseKey"
-                params={{ key: projectKey, caseKey: t.test_case_key }}
+                params={{ key: projectKey, caseKey: item.test_case_key }}
                 className="group flex flex-col gap-1.5 px-4 py-2.5 transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset"
               >
                 <span className="flex min-w-0 items-baseline gap-2">
-                  <span className="shrink-0 font-mono text-xs text-muted-foreground">{t.test_case_key}</span>
-                  <span className="truncate group-hover:underline">{t.title}</span>
+                  <span className="shrink-0 font-mono text-xs text-muted-foreground">{item.test_case_key}</span>
+                  <span className="truncate group-hover:underline">{item.title}</span>
                 </span>
                 <span className="flex items-center gap-2 text-xs text-muted-foreground">
                   {/* bar = proporsi run yang gagal, sesuai teks "x gagal dari y run" */}
                   <span className="h-1 flex-1 overflow-hidden rounded-full bg-muted" aria-hidden>
-                    <span className="block h-full rounded-full bg-status-failed" style={{ width: `${(t.failures / Math.max(1, t.runs)) * 100}%` }} />
+                    <span className="block h-full rounded-full bg-status-failed" style={{ width: `${(item.failures / Math.max(1, item.runs)) * 100}%` }} />
                   </span>
                   <span className="tabular shrink-0">
-                    <span className="font-medium text-status-failed">{t.failures}</span> gagal dari {t.runs} run
+                    <Trans
+                      t={t}
+                      i18nKey="topFailing.failedOf"
+                      count={item.runs}
+                      values={{ failures: item.failures }}
+                      components={{ fail: <span className="font-medium text-status-failed" /> }}
+                    />
                   </span>
                 </span>
               </Link>
@@ -492,22 +518,23 @@ function TopFailingPanel({ projectKey }: { projectKey: string }) {
 
 /* ------------------------------------------------------------------ recent runs */
 
-const TRIGGER_LABEL: Record<RunTrigger, string | null> = { manual: null, mcp: 'MCP', api: 'API', schedule: 'Schedule' }
+const TRIGGER_LABEL: Record<RunTrigger, 'MCP' | 'API' | 'schedule' | null> = { manual: null, mcp: 'MCP', api: 'API', schedule: 'schedule' }
 
 function RecentRunsPanel({ projectKey }: { projectKey: string }) {
   const runs = useRuns(projectKey, {}, { limit: 10 })
   const canRun = useCan('run', projectKey)
+  const { t } = useTranslation('dashboard')
   const showSkeleton = useDelayedFlag(runs.isPending)
   const list = runs.data?.data ?? []
 
   return (
     <Panel
-      title="Run terakhir"
+      title={t('recent.title')}
       bodyClassName="p-0"
       actions={
         <Button asChild variant="ghost" size="sm">
           <Link to="/p/$key/runs" params={{ key: projectKey }}>
-            Lihat semua run <ArrowRight />
+            {t('recent.viewAll')} <ArrowRight />
           </Link>
         </Button>
       }
@@ -527,19 +554,19 @@ function RecentRunsPanel({ projectKey }: { projectKey: string }) {
               )}
             </div>
           ))}
-          <span className="sr-only">Memuat run…</span>
+          <span className="sr-only">{t('recent.loading')}</span>
         </div>
       ) : list.length === 0 ? (
         <EmptyState
           icon={History}
-          title="Belum ada run di project ini."
-          description={canRun ? 'Buka test case lalu tekan Run untuk menjalankan yang pertama.' : undefined}
+          title={t('recent.empty')}
+          description={canRun ? t('recent.emptyHint') : undefined}
           className="m-4"
           action={
             canRun ? (
               <Button asChild size="sm">
                 <Link to="/p/$key/tests" params={{ key: projectKey }}>
-                  Buka test case
+                  {t('recent.openTestCases')}
                 </Link>
               </Button>
             ) : undefined
@@ -549,13 +576,13 @@ function RecentRunsPanel({ projectKey }: { projectKey: string }) {
         <Table>
           <TableHeader>
             <TableRow>
-              <TableHead>Run</TableHead>
-              <TableHead className="hidden sm:table-cell">Target</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead className="hidden md:table-cell">Environment</TableHead>
-              <TableHead className="hidden lg:table-cell">Oleh</TableHead>
-              <TableHead className="hidden text-right md:table-cell">Durasi</TableHead>
-              <TableHead className="hidden text-right sm:table-cell">Waktu</TableHead>
+              <TableHead>{t('recent.col.run')}</TableHead>
+              <TableHead className="hidden sm:table-cell">{t('recent.col.target')}</TableHead>
+              <TableHead>{t('recent.col.status')}</TableHead>
+              <TableHead className="hidden md:table-cell">{t('recent.col.environment')}</TableHead>
+              <TableHead className="hidden lg:table-cell">{t('recent.col.by')}</TableHead>
+              <TableHead className="hidden text-right md:table-cell">{t('recent.col.duration')}</TableHead>
+              <TableHead className="hidden text-right sm:table-cell">{t('recent.col.time')}</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -570,7 +597,9 @@ function RecentRunsPanel({ projectKey }: { projectKey: string }) {
 }
 
 function RunRow({ run, projectKey }: { run: RunSummary; projectKey: string }) {
-  const trigger = TRIGGER_LABEL[run.trigger]
+  const { t } = useTranslation('dashboard')
+  const raw = TRIGGER_LABEL[run.trigger]
+  const trigger = raw === 'schedule' ? t('recent.schedule') : raw
   return (
     <TableRow className="hover:bg-muted/50">
       <TableCell className="max-w-[12rem] sm:max-w-none sm:whitespace-nowrap">
@@ -598,7 +627,7 @@ function RunRow({ run, projectKey }: { run: RunSummary; projectKey: string }) {
       <TableCell className="hidden text-muted-foreground md:table-cell">{run.environment?.name ?? '—'}</TableCell>
       <TableCell className="hidden whitespace-nowrap lg:table-cell">
         {run.triggered_by.name}
-        {trigger && <span className="ml-1.5 text-xs text-muted-foreground">via {trigger}</span>}
+        {trigger && <span className="ml-1.5 text-xs text-muted-foreground">{t('recent.via', { trigger })}</span>}
       </TableCell>
       <TableCell className="hidden text-right whitespace-nowrap text-muted-foreground md:table-cell">{formatDuration(run.duration_ms)}</TableCell>
       <TableCell className="hidden text-right whitespace-nowrap text-muted-foreground sm:table-cell">

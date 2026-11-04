@@ -231,7 +231,8 @@ export interface MockState {
   sim: { speed: number }
 }
 
-export const STATE_VERSION = 3
+/** Naikkan saat bentuk/isi seed berubah → data lama di localStorage di-seed ulang. v4: seed demo berbahasa Inggris. */
+export const STATE_VERSION = 4
 const STORAGE_KEY = 'qatlas.mock.db'
 
 /* ------------------------------------------------------------------ persistence */
@@ -262,7 +263,7 @@ export function db(): MockState {
   } catch {
     // localStorage bisa tidak tersedia / rusak → seed ulang
   }
-  if (!seedFn) throw new Error('Mock seed belum diregistrasi')
+  if (!seedFn) throw new Error('Mock seed is not registered')
   state = seedFn()
   persistNow()
   return state
@@ -311,7 +312,7 @@ export function newId(prefix: string): string {
 
 export function userRef(id: string | null | undefined): UserRef {
   const u = db().users.find((x) => x.id === id)
-  return u ? { id: u.id, name: u.name, email: u.email } : { id: id ?? 'unknown', name: 'Pengguna terhapus', email: '' }
+  return u ? { id: u.id, name: u.name, email: u.email } : { id: id ?? 'unknown', name: 'Deleted user', email: '' }
 }
 
 export function toUser(u: DbUser): User {
@@ -507,7 +508,7 @@ export function toFlow(f: DbFlow): Flow {
         enabled: i.enabled,
         test_case: t
           ? { id: t.id, key: t.key, title: t.title, execution: t.execution, status: t.status, step_count: t.steps.length }
-          : { id: i.test_case_id, key: '?', title: 'Test case terhapus', execution: 'automated', status: 'deprecated', step_count: 0 },
+          : { id: i.test_case_id, key: '?', title: 'Deleted test case', execution: 'automated', status: 'deprecated', step_count: 0 },
       }
     }),
   }

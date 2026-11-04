@@ -10,7 +10,9 @@ import {
   OctagonAlert,
   type LucideIcon,
 } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
 import type { RunStatus, StepStatus } from '@/api/types'
+import { tr } from '@/lib/i18n-labels'
 import { cn } from '@/lib/utils'
 
 export type AnyStatus = RunStatus | StepStatus
@@ -23,20 +25,39 @@ interface StatusMeta {
   spin?: boolean
 }
 
-export const STATUS_META: Record<AnyStatus, StatusMeta> = {
-  passed: { label: 'Passed', icon: CircleCheck, fg: 'text-status-passed', bg: 'bg-status-passed-bg' },
-  failed: { label: 'Failed', icon: CircleX, fg: 'text-status-failed', bg: 'bg-status-failed-bg' },
-  error: { label: 'Error', icon: OctagonAlert, fg: 'text-status-error', bg: 'bg-status-error-bg' },
-  blocked: { label: 'Blocked', icon: Ban, fg: 'text-status-blocked', bg: 'bg-status-blocked-bg' },
-  running: { label: 'Running', icon: LoaderCircle, fg: 'text-status-running', bg: 'bg-status-running-bg', spin: true },
-  queued: { label: 'Queued', icon: Clock, fg: 'text-status-queued', bg: 'bg-status-queued-bg' },
-  pending: { label: 'Pending', icon: Clock, fg: 'text-status-queued', bg: 'bg-status-queued-bg' },
-  awaiting_manual: { label: 'Awaiting manual', icon: Hand, fg: 'text-status-awaiting-manual', bg: 'bg-status-awaiting-manual-bg' },
-  cancelled: { label: 'Cancelled', icon: CircleSlash, fg: 'text-status-cancelled', bg: 'bg-status-cancelled-bg' },
-  skipped: { label: 'Skipped', icon: CircleDashed, fg: 'text-status-skipped', bg: 'bg-status-skipped-bg' },
+type StatusStyle = Omit<StatusMeta, 'label'>
+
+const STATUS_STYLE: Record<AnyStatus, StatusStyle> = {
+  passed: { icon: CircleCheck, fg: 'text-status-passed', bg: 'bg-status-passed-bg' },
+  failed: { icon: CircleX, fg: 'text-status-failed', bg: 'bg-status-failed-bg' },
+  error: { icon: OctagonAlert, fg: 'text-status-error', bg: 'bg-status-error-bg' },
+  blocked: { icon: Ban, fg: 'text-status-blocked', bg: 'bg-status-blocked-bg' },
+  running: { icon: LoaderCircle, fg: 'text-status-running', bg: 'bg-status-running-bg', spin: true },
+  queued: { icon: Clock, fg: 'text-status-queued', bg: 'bg-status-queued-bg' },
+  pending: { icon: Clock, fg: 'text-status-queued', bg: 'bg-status-queued-bg' },
+  awaiting_manual: { icon: Hand, fg: 'text-status-awaiting-manual', bg: 'bg-status-awaiting-manual-bg' },
+  cancelled: { icon: CircleSlash, fg: 'text-status-cancelled', bg: 'bg-status-cancelled-bg' },
+  skipped: { icon: CircleDashed, fg: 'text-status-skipped', bg: 'bg-status-skipped-bg' },
 }
 
+/**
+ * Label lewat namespace `status` (tetap Inggris di semua bahasa, sama dengan output MCP/API).
+ * `label` adalah getter → bentuk `StatusMeta` tidak berubah.
+ */
+export const STATUS_META: Record<AnyStatus, StatusMeta> = Object.fromEntries(
+  (Object.keys(STATUS_STYLE) as AnyStatus[]).map((k) => [
+    k,
+    {
+      ...STATUS_STYLE[k],
+      get label() {
+        return tr(`status:${k}`)
+      },
+    },
+  ]),
+) as Record<AnyStatus, StatusMeta>
+
 export function StatusBadge({ status, className, compact }: { status: AnyStatus; className?: string; compact?: boolean }) {
+  useTranslation('status') // re-render saat bahasa berganti
   const m = STATUS_META[status]
   const Icon = m.icon
   return (
@@ -52,6 +73,7 @@ export function StatusBadge({ status, className, compact }: { status: AnyStatus;
 
 /** Ikon status saja (dengan label sr-only). */
 export function StatusIcon({ status, className }: { status: AnyStatus; className?: string }) {
+  useTranslation('status')
   const m = STATUS_META[status]
   const Icon = m.icon
   return (

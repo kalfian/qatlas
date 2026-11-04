@@ -1,19 +1,14 @@
 import type { Artifact, Run, RunCase, RunKind, RunOptions, RunStatus, RunStep, RunTrigger, StepStatus } from '@/api/types'
+import { i18n } from '@/i18n'
 
 /* ------------------------------------------------------------------ label */
 
-export const TRIGGER_LABEL: Record<RunTrigger, string> = {
-  manual: 'Manual',
-  mcp: 'via MCP',
-  api: 'via API',
-  schedule: 'Terjadwal',
-}
-
-export const KIND_LABEL: Record<RunKind, string> = { test_case: 'Test case', flow: 'Flow' }
-
+// Fungsi (bukan objek konstan) supaya label mengikuti bahasa aktif saat render.
+export const triggerLabel = (v: RunTrigger) => i18n.t(`runs:labels.trigger.${v}`)
+export const kindLabel = (v: RunKind) => i18n.t(`runs:labels.kind.${v}`)
 export const BROWSER_LABEL: Record<RunOptions['browser'], string> = { chromium: 'Chromium', firefox: 'Firefox', webkit: 'WebKit' }
-export const SCREENSHOT_LABEL: Record<RunOptions['screenshot'], string> = { off: 'Off', on_failure: 'Saat gagal', every_step: 'Tiap step' }
-export const VIDEO_LABEL: Record<RunOptions['video'], string> = { off: 'Off', on_failure: 'Saat gagal', always: 'Selalu' }
+export const screenshotLabel = (v: RunOptions['screenshot']) => i18n.t(`runs:labels.screenshot.${v}`)
+export const videoLabel = (v: RunOptions['video']) => i18n.t(`runs:labels.video.${v}`)
 
 export const RUN_STATUS_ORDER: RunStatus[] = ['queued', 'running', 'awaiting_manual', 'passed', 'failed', 'blocked', 'error', 'cancelled']
 
@@ -99,12 +94,13 @@ export function isImage(a: Pick<Artifact, 'mime'>) {
   return a.mime.startsWith('image/')
 }
 
-export function stepCaption(c: RunCase, s: RunStep) {
-  return `Case ${c.position} · Step ${s.position} · ${s.action}`
+export function stepCaption(c: RunCase, s: RunStep, lng?: string) {
+  return i18n.getFixedT(lng ?? null, 'runs')('media.stepCaption', { casePos: String(c.position), stepPos: String(s.position), action: s.action })
 }
 
-/** Semua screenshot run, urut case → step (dipakai galeri & lightbox ←/→). */
-export function collectScreenshots(run: Run): MediaItem[] {
+/** Semua screenshot run, urut case → step (dipakai galeri & lightbox ←/→). `lng` = bahasa caption/alt (default: aktif). */
+export function collectScreenshots(run: Run, lng?: string): MediaItem[] {
+  const t = i18n.getFixedT(lng ?? null, 'runs')
   const out: MediaItem[] = []
   for (const c of run.cases)
     for (const s of c.steps)
@@ -115,8 +111,8 @@ export function collectScreenshots(run: Run): MediaItem[] {
           name: s.screenshot.name,
           mime: s.screenshot.mime,
           expired: s.screenshot.expired,
-          caption: stepCaption(c, s),
-          alt: `Screenshot step ${s.position} (${s.action}) pada ${c.test_case_key}`,
+          caption: stepCaption(c, s, lng),
+          alt: t('media.screenshotAlt', { stepPos: String(s.position), action: s.action, key: c.test_case_key }),
           status: s.status,
         })
   return out
@@ -131,8 +127,12 @@ export function attachmentItems(c: RunCase, list: Artifact[]): MediaItem[] {
       name: a.name,
       mime: a.mime,
       expired: a.expired,
-      caption: step ? `${c.test_case_key} · Step ${step.position} · lampiran ${a.name}` : `${c.test_case_key} · lampiran ${a.name}`,
-      alt: `Lampiran ${a.name}${step ? ` untuk step ${step.position}` : ''} pada ${c.test_case_key}`,
+      caption: step
+        ? i18n.t('runs:media.attachmentCaptionStep', { key: c.test_case_key, stepPos: String(step.position), name: a.name })
+        : i18n.t('runs:media.attachmentCaption', { key: c.test_case_key, name: a.name }),
+      alt: step
+        ? i18n.t('runs:media.attachmentAltStep', { name: a.name, stepPos: String(step.position), key: c.test_case_key })
+        : i18n.t('runs:media.attachmentAlt', { name: a.name, key: c.test_case_key }),
     }
   })
 }

@@ -1,4 +1,5 @@
 import type { Flow, FlowInput, FlowItem } from '@/api/types'
+import { i18n } from '@/i18n'
 import { uid } from '@/lib/utils'
 
 /** Ringkasan test case yang ikut di item flow (bentuk sama dengan FlowItem.test_case). */
@@ -94,22 +95,23 @@ export interface DraftIssues {
 const VAR_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/
 
 export function validateDraft(d: FlowDraft): DraftIssues {
+  const t = i18n.getFixedT(null, 'flows')
   const issues: DraftIssues = { itemErrors: {}, itemWarnings: {}, variableErrors: {}, blocking: 0 }
-  if (!d.name.trim()) issues.name = 'Nama flow wajib diisi.'
-  if (d.items.length === 0) issues.items = 'Flow minimal berisi 1 test case.'
+  if (!d.name.trim()) issues.name = t('validation.nameRequired')
+  if (d.items.length === 0) issues.items = t('validation.itemsRequired')
   for (const it of d.items) {
     if (d.shared_session && it.test_case.execution === 'manual') {
-      issues.itemErrors[it.uid] = 'Test case manual tidak boleh ada di flow dengan shared session. Matikan Shared session atau hapus item ini.'
+      issues.itemErrors[it.uid] = t('validation.manualInShared')
     }
-    if (it.test_case.status === 'draft') issues.itemWarnings[it.uid] = 'Masih Draft, mungkin belum stabil untuk dijalankan.'
-    if (it.test_case.status === 'deprecated') issues.itemWarnings[it.uid] = 'Sudah Deprecated, pertimbangkan untuk menggantinya.'
+    if (it.test_case.status === 'draft') issues.itemWarnings[it.uid] = t('validation.draftWarning')
+    if (it.test_case.status === 'deprecated') issues.itemWarnings[it.uid] = t('validation.deprecatedWarning')
   }
   const seen = new Set<string>()
   for (const v of filledVariables(d)) {
     const k = v.key.trim()
-    if (!k) issues.variableErrors[v.uid] = 'Nama variable wajib diisi.'
-    else if (!VAR_KEY.test(k)) issues.variableErrors[v.uid] = 'Pakai huruf, angka, dan _ saja, tidak diawali angka.'
-    else if (seen.has(k)) issues.variableErrors[v.uid] = `Nama "${k}" sudah dipakai.`
+    if (!k) issues.variableErrors[v.uid] = t('validation.varNameRequired')
+    else if (!VAR_KEY.test(k)) issues.variableErrors[v.uid] = t('validation.varNamePattern')
+    else if (seen.has(k)) issues.variableErrors[v.uid] = t('validation.varNameDuplicate', { name: k })
     seen.add(k)
   }
   issues.blocking =

@@ -28,7 +28,9 @@ import {
   Variable,
   type LucideIcon,
 } from 'lucide-react'
+import { differenceInSeconds, parseISO } from 'date-fns'
 import type { Execution, Folder, Priority, Step, StepAction, TestCase, TestCaseInput, TestCaseStatus } from '@/api/types'
+import { i18n } from '@/i18n'
 import { ACTION_MAP, summarizeStep } from '@/lib/steps'
 import { uid } from '@/lib/utils'
 
@@ -329,36 +331,36 @@ export function parseJsonDoc(text: string, base: Draft): { draft?: Draft; blocki
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e)
     const offset = syntaxOffset(msg, text)
-    return { blocking: [{ path: 'JSON', message: `Sintaks tidak valid: ${msg}`, offset, line: lineOf(text, offset) }] }
+    return { blocking: [{ path: 'JSON', message: i18n.t('testcases:json.invalidSyntax', { message: msg }), offset, line: lineOf(text, offset) }] }
   }
   const issues: { path: string; message: string }[] = []
   const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v)
   if (!isObj(raw)) {
-    return { blocking: [{ path: '', message: 'Dokumen harus berupa objek JSON', offset: 0, line: 1 }] }
+    return { blocking: [{ path: '', message: i18n.t('testcases:json.notObject'), offset: 0, line: 1 }] }
   }
   const o = raw
-  if (typeof o.title !== 'string') issues.push({ path: 'title', message: 'title harus berupa teks' })
+  if (typeof o.title !== 'string') issues.push({ path: 'title', message: i18n.t('testcases:json.mustBeText', { field: 'title' }) })
   for (const k of ['description', 'preconditions'] as const) {
-    if (o[k] !== undefined && typeof o[k] !== 'string') issues.push({ path: k, message: `${k} harus berupa teks` })
+    if (o[k] !== undefined && typeof o[k] !== 'string') issues.push({ path: k, message: i18n.t('testcases:json.mustBeText', { field: k }) })
   }
-  if (!PRIORITIES.includes(o.priority as string)) issues.push({ path: 'priority', message: `priority harus salah satu: ${PRIORITIES.join(', ')}` })
-  if (!STATUSES.includes(o.status as string)) issues.push({ path: 'status', message: `status harus salah satu: ${STATUSES.join(', ')}` })
-  if (!EXECUTIONS.includes(o.execution as string)) issues.push({ path: 'execution', message: `execution harus salah satu: ${EXECUTIONS.join(', ')}` })
+  if (!PRIORITIES.includes(o.priority as string)) issues.push({ path: 'priority', message: i18n.t('testcases:json.mustBeOneOf', { field: 'priority', options: PRIORITIES.join(', ') }) })
+  if (!STATUSES.includes(o.status as string)) issues.push({ path: 'status', message: i18n.t('testcases:json.mustBeOneOf', { field: 'status', options: STATUSES.join(', ') }) })
+  if (!EXECUTIONS.includes(o.execution as string)) issues.push({ path: 'execution', message: i18n.t('testcases:json.mustBeOneOf', { field: 'execution', options: EXECUTIONS.join(', ') }) })
   if (o.tags !== undefined && !(Array.isArray(o.tags) && o.tags.every((t) => typeof t === 'string'))) {
-    issues.push({ path: 'tags', message: 'tags harus berupa array teks' })
+    issues.push({ path: 'tags', message: i18n.t('testcases:json.tagsArray') })
   }
   if (o.variables !== undefined && !(isObj(o.variables) && Object.values(o.variables).every((v) => typeof v === 'string'))) {
-    issues.push({ path: 'variables', message: 'variables harus berupa objek dengan nilai teks' })
+    issues.push({ path: 'variables', message: i18n.t('testcases:json.variablesObject') })
   }
   if (!Array.isArray(o.steps)) {
-    issues.push({ path: 'steps', message: 'steps harus berupa array' })
+    issues.push({ path: 'steps', message: i18n.t('testcases:json.stepsArray') })
   } else {
     o.steps.forEach((s, i) => {
-      if (!isObj(s)) issues.push({ path: `steps[${i}]`, message: 'Step harus berupa objek' })
+      if (!isObj(s)) issues.push({ path: `steps[${i}]`, message: i18n.t('testcases:json.stepObject') })
       else {
-        if (typeof s.id !== 'string') issues.push({ path: `steps[${i}].id`, message: 'id harus berupa teks' })
-        if (typeof s.action !== 'string') issues.push({ path: `steps[${i}].action`, message: 'action wajib diisi' })
-        else if (!ACTION_MAP[s.action as StepAction]) issues.push({ path: `steps[${i}].action`, message: `Action "${s.action}" tidak dikenal` })
+        if (typeof s.id !== 'string') issues.push({ path: `steps[${i}].id`, message: i18n.t('testcases:json.mustBeText', { field: 'id' }) })
+        if (typeof s.action !== 'string') issues.push({ path: `steps[${i}].action`, message: i18n.t('testcases:json.actionRequired') })
+        else if (!ACTION_MAP[s.action as StepAction]) issues.push({ path: `steps[${i}].action`, message: i18n.t('testcases:json.unknownAction', { action: String(s.action) }) })
       }
     })
   }
@@ -534,24 +536,15 @@ export function diffSteps(before: Step[], after: Step[]): StepDiff[] {
   return out
 }
 
-const META_LABELS: Record<string, string> = {
-  title: 'Judul',
-  description: 'Deskripsi',
-  preconditions: 'Prakondisi',
-  priority: 'Prioritas',
-  status: 'Status',
-  execution: 'Execution',
-  tags: 'Tag',
-  variables: 'Variables',
-}
+const META_FIELDS = ['title', 'description', 'preconditions', 'priority', 'status', 'execution', 'tags', 'variables'] as const
 
 export function diffMeta(before: TestCaseInput, after: Draft): { label: string; before: string; after: string }[] {
   const b = before as unknown as Record<string, unknown>
   const a = after as unknown as Record<string, unknown>
   const show = (v: unknown) => (v === undefined || v === '' ? '—' : typeof v === 'string' ? v : stableStringify(v))
-  return Object.keys(META_LABELS)
+  return META_FIELDS
     .filter((k) => stableStringify(b[k] ?? (k === 'tags' ? [] : k === 'variables' ? {} : '')) !== stableStringify(a[k] ?? ''))
-    .map((k) => ({ label: META_LABELS[k], before: show(b[k]), after: show(a[k]) }))
+    .map((k) => ({ label: i18n.t(`testcases:fields.${k}`), before: show(b[k]), after: show(a[k]) }))
 }
 
 export const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent)
@@ -570,3 +563,20 @@ export function isTypingTarget(t: EventTarget | null): boolean {
   return !!t.closest('.cm-editor')
 }
 
+
+/** Waktu relatif ringkas untuk kolom padat ("7h" / "7j"); waktu lengkap ada di `title`. */
+export function shortRelative(iso: string | null | undefined): string {
+  if (!iso) return '—'
+  const sec = Math.abs(differenceInSeconds(Date.now(), parseISO(iso)))
+  if (sec < 45) return i18n.t('testcases:time.justNow')
+  if (sec < 60) return i18n.t('testcases:time.seconds', { count: sec })
+  const min = Math.round(sec / 60)
+  if (min < 60) return i18n.t('testcases:time.minutes', { count: min })
+  const hours = Math.round(sec / 3600)
+  if (hours < 24) return i18n.t('testcases:time.hours', { count: hours })
+  const days = Math.round(sec / 86400)
+  if (days < 30) return i18n.t('testcases:time.days', { count: days })
+  const months = Math.round(days / 30)
+  if (months < 12) return i18n.t('testcases:time.months', { count: months })
+  return i18n.t('testcases:time.years', { count: Math.round(days / 365) })
+}

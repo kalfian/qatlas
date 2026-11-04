@@ -1,6 +1,7 @@
 import { Link } from '@tanstack/react-router'
 import { RotateCw } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import { useTestCases } from '@/api/queries'
 import type { TestCaseSummary } from '@/api/types'
 import { errorMessage } from '@/api/client'
@@ -33,6 +34,7 @@ export function TestCasePicker({
   className?: string
 }) {
   const [q, setQ] = React.useState('')
+  const { t } = useTranslation(['flows', 'common'])
   const debounced = useDebounced(q.trim(), 200)
   const cases = useTestCases(projectKey, debounced ? { q: debounced } : {})
   // Hasil terakhir dari server langsung disaring dengan teks yang sedang diketik (aturan sama dengan API:
@@ -54,21 +56,21 @@ export function TestCasePicker({
       value={active}
       onValueChange={(id) => setSelected({ q: needle, id })}
       className={cn('bg-transparent', className)}
-      label="Cari test case untuk ditambahkan"
+      label={t('picker.label')}
     >
-      <CommandInput ref={inputRef} value={q} onValueChange={setQ} placeholder="Cari judul atau key…" />
+      <CommandInput ref={inputRef} value={q} onValueChange={setQ} placeholder={t('picker.placeholder')} />
       <CommandList className="max-h-none min-h-0 flex-1" aria-busy={settling || cases.isFetching || undefined}>
         {cases.isError ? (
           <div role="alert" className="flex flex-col items-start gap-2 px-2 py-4 text-sm">
-            <p className="font-medium">Gagal memuat test case.</p>
+            <p className="font-medium">{t('picker.loadFailed')}</p>
             <p className="text-xs text-muted-foreground">{errorMessage(cases.error)}</p>
             <Button variant="outline" size="sm" onClick={() => cases.refetch()}>
-              <RotateCw /> Coba lagi
+              <RotateCw /> {t('common:actions.retry')}
             </Button>
           </div>
         ) : cases.isLoading ? (
           showSkeleton && (
-            <div className="flex flex-col gap-3 px-2 py-2" aria-label="Memuat test case">
+            <div className="flex flex-col gap-3 px-2 py-2" aria-label={t('picker.loading')}>
               {Array.from({ length: 6 }, (_, i) => (
                 <div key={i} className="flex flex-col gap-1.5">
                   <Skeleton className="h-3 w-16" />
@@ -81,16 +83,16 @@ export function TestCasePicker({
           <div className="flex flex-col items-start gap-1 px-2 py-4 text-sm text-muted-foreground">
             {debounced ? (
               <>
-                <p>Tidak ada test case yang cocok dengan "{debounced}".</p>
+                <p>{t('picker.noMatch', { q: debounced })}</p>
                 <Button variant="link" size="sm" onClick={() => setQ('')} className="text-xs">
-                  Reset pencarian
+                  {t('list.resetSearch')}
                 </Button>
               </>
             ) : (
               <>
-                <p>Project ini belum punya test case.</p>
+                <p>{t('picker.empty')}</p>
                 <Link to="/p/$key/tests" params={{ key: projectKey }} className="text-xs text-link hover:underline">
-                  Buka Test cases
+                  {t('picker.openTestCases')}
                 </Link>
               </>
             )}
@@ -111,7 +113,7 @@ export function TestCasePicker({
                   <span className="font-mono text-xs font-medium">{tc.key}</span>
                   <ManualBadge execution={tc.execution} />
                   <span className="ml-auto flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <span className="tabular">{tc.step_count} step</span>
+                    <span className="tabular">{t('items.stepCount', { count: tc.step_count })}</span>
                     <span aria-hidden>·</span>
                     <span className={cn(warn && 'font-medium text-status-blocked')}>{TC_STATUS_LABELS[tc.status]}</span>
                   </span>
@@ -119,8 +121,8 @@ export function TestCasePicker({
                 <span className="line-clamp-2 text-sm">{tc.title}</span>
                 {(used > 0 || blocked) && (
                   <span className="flex flex-wrap gap-x-2 text-xs text-muted-foreground">
-                    {used > 0 && <span>Sudah ada {used}× di flow</span>}
-                    {blocked && <span className="text-destructive">Manual, tidak boleh di shared session</span>}
+                    {used > 0 && <span>{t('picker.alreadyUsed', { count: used })}</span>}
+                    {blocked && <span className="text-destructive">{t('picker.manualBlocked')}</span>}
                   </span>
                 )}
               </CommandItem>

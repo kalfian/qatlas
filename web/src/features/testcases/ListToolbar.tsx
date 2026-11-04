@@ -1,5 +1,7 @@
 import { Check, ChevronDown, FolderTree as FolderTreeIcon, Search, X } from 'lucide-react'
+import type { TFunction } from 'i18next'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { RunStatus } from '@/api/types'
 import type { TestCasesSearch } from '@/app/router'
 import { PriorityLabel, PRIORITY_LABELS, TC_STATUS_LABELS } from '@/components/misc'
@@ -20,39 +22,49 @@ interface Option {
   render?: React.ReactNode
 }
 
-const OPTIONS: Record<Exclude<FilterKey, 'tags'>, { title: string; options: Option[] }> = {
-  status: {
-    title: 'Status',
-    options: (['draft', 'ready', 'deprecated'] as const).map((v) => ({ value: v, label: TC_STATUS_LABELS[v] })),
-  },
-  priority: {
-    title: 'Prioritas',
-    options: (['critical', 'high', 'medium', 'low'] as const).map((v) => ({ value: v, label: PRIORITY_LABELS[v], render: <PriorityLabel priority={v} /> })),
-  },
-  execution: {
-    title: 'Execution',
-    options: [
-      { value: 'automated', label: 'Automated' },
-      { value: 'manual', label: 'Manual' },
-    ],
-  },
-  last_run_status: {
-    title: 'Last run',
-    options: RUN_STATUS_OPTIONS.map((v) => ({
-      value: v,
-      label: STATUS_META[v].label,
-      render: (
-        <span className="inline-flex items-center gap-1.5">
-          <StatusIcon status={v} className="[&_svg]:size-3.5" />
-          {STATUS_META[v].label}
-        </span>
-      ),
-    })),
-  },
+type OptionDefs = Record<Exclude<FilterKey, 'tags'>, { title: string; options: Option[] }>
+
+/** Dibangun saat render agar label mengikuti bahasa aktif. */
+function filterOptions(t: TFunction<['testcases', 'common']>): OptionDefs {
+  return {
+    status: {
+      title: t('filters.status'),
+      options: (['draft', 'ready', 'deprecated'] as const).map((v) => ({ value: v, label: TC_STATUS_LABELS[v] })),
+    },
+    priority: {
+      title: t('filters.priority'),
+      options: (['critical', 'high', 'medium', 'low'] as const).map((v) => ({ value: v, label: PRIORITY_LABELS[v], render: <PriorityLabel priority={v} /> })),
+    },
+    execution: {
+      title: t('filters.execution'),
+      options: [
+        { value: 'automated', label: t('common:execution.automated') },
+        { value: 'manual', label: t('common:execution.manual') },
+      ],
+    },
+    last_run_status: {
+      title: t('filters.lastRun'),
+      options: RUN_STATUS_OPTIONS.map((v) => ({
+        value: v,
+        label: STATUS_META[v].label,
+        render: (
+          <span className="inline-flex items-center gap-1.5">
+            <StatusIcon status={v} className="[&_svg]:size-3.5" />
+            {STATUS_META[v].label}
+          </span>
+        ),
+      })),
+    },
+  }
 }
 
-export function labelForFilter(key: Exclude<FilterKey, 'tags'>, value: string): string {
-  return OPTIONS[key].options.find((o) => o.value === value)?.label ?? value
+function useFilterOptions(): OptionDefs {
+  const { t } = useTranslation(['testcases', 'common'])
+  return filterOptions(t)
+}
+
+function labelForFilter(options: OptionDefs, key: Exclude<FilterKey, 'tags'>, value: string): string {
+  return options[key].options.find((o) => o.value === value)?.label ?? value
 }
 
 export function ListToolbar({
@@ -88,10 +100,11 @@ export function ListToolbar({
   }, [q, lastUrlQ])
 
   const activeTags = search.tags?.split(',').filter(Boolean) ?? []
+  const { t } = useTranslation('testcases')
 
   return (
-    <div className="flex flex-wrap items-center gap-2" role="search" aria-label="Cari dan filter test case">
-      <Button ref={folderButtonRef} variant="outline" className="xl:hidden" onClick={onOpenFolders} aria-label={`Folder: ${folderLabel}`}>
+    <div className="flex flex-wrap items-center gap-2" role="search" aria-label={t('filters.searchRegion')}>
+      <Button ref={folderButtonRef} variant="outline" className="xl:hidden" onClick={onOpenFolders} aria-label={t('filters.folderButton', { folder: folderLabel })}>
         <FolderTreeIcon /> <span className="max-w-32 truncate">{folderLabel}</span>
       </Button>
       <div className="relative w-full sm:w-64">
@@ -109,8 +122,8 @@ export function ListToolbar({
               setSearch({ q: undefined })
             }
           }}
-          placeholder="Cari judul atau key…"
-          aria-label="Cari judul atau key test case"
+          placeholder={t('filters.searchPlaceholder')}
+          aria-label={t('filters.searchLabel')}
           className="pl-8"
         />
       </div>
@@ -126,11 +139,12 @@ export function ListToolbar({
 }
 
 function FilterButton({ title, active, valueLabel, ...props }: { title: string; active: boolean; valueLabel?: string } & React.ComponentProps<typeof Button>) {
+  const { t } = useTranslation('testcases')
   return (
     <Button
       variant="outline"
       className={cn('gap-1 px-2.5', active && 'border-foreground/40 bg-accent')}
-      aria-label={active ? `Filter ${title}: ${valueLabel}` : `Filter ${title}`}
+      aria-label={active ? t('filters.buttonActive', { title, value: valueLabel ?? '' }) : t('filters.button', { title })}
       {...props}
     >
       <span className={cn(!active && 'text-muted-foreground')}>{title}</span>
@@ -142,11 +156,13 @@ function FilterButton({ title, active, valueLabel, ...props }: { title: string; 
 
 function SingleFilter({ filterKey, value, onChange }: { filterKey: Exclude<FilterKey, 'tags'>; value?: string; onChange: (v: string | undefined) => void }) {
   const [open, setOpen] = React.useState(false)
-  const def = OPTIONS[filterKey]
+  const { t } = useTranslation('testcases')
+  const options = useFilterOptions()
+  const def = options[filterKey]
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <FilterButton title={def.title} active={!!value} valueLabel={value ? labelForFilter(filterKey, value) : undefined} />
+        <FilterButton title={def.title} active={!!value} valueLabel={value ? labelForFilter(options, filterKey, value) : undefined} />
       </PopoverTrigger>
       <PopoverContent className="w-52 p-0">
         <Command>
@@ -179,7 +195,7 @@ function SingleFilter({ filterKey, value, onChange }: { filterKey: Exclude<Filte
                   setOpen(false)
                 }}
               >
-                <X /> Hapus filter
+                <X /> {t('filters.clear')}
               </Button>
             </div>
           )}
@@ -191,18 +207,19 @@ function SingleFilter({ filterKey, value, onChange }: { filterKey: Exclude<Filte
 
 function TagFilter({ tags, value, onChange }: { tags: { tag: string; count: number }[]; value: string[]; onChange: (v: string[]) => void }) {
   const [open, setOpen] = React.useState(false)
-  const toggle = (t: string) => onChange(value.includes(t) ? value.filter((x) => x !== t) : [...value, t])
+  const { t } = useTranslation('testcases')
+  const toggle = (tag: string) => onChange(value.includes(tag) ? value.filter((x) => x !== tag) : [...value, tag])
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <FilterButton title="Tag" active={value.length > 0} valueLabel={value.length === 1 ? value[0] : `${value.length} tag`} />
+        <FilterButton title={t('filters.tags')} active={value.length > 0} valueLabel={value.length === 1 ? value[0] : t('filters.tagCount', { count: value.length })} />
       </PopoverTrigger>
       <PopoverContent className="w-60 p-0">
         <Command>
-          <CommandInput placeholder="Cari tag…" aria-label="Cari tag" />
+          <CommandInput placeholder={t('filters.tagSearchPlaceholder')} aria-label={t('filters.tagSearchLabel')} />
           <CommandList>
-            <CommandEmpty>Tag tidak ditemukan.</CommandEmpty>
-            <CommandGroup heading="Harus punya semua tag terpilih">
+            <CommandEmpty>{t('filters.tagNotFound')}</CommandEmpty>
+            <CommandGroup heading={t('filters.tagGroupHeading')}>
               {tags.map(({ tag, count }) => {
                 const on = value.includes(tag)
                 return (
@@ -226,7 +243,7 @@ function TagFilter({ tags, value, onChange }: { tags: { tag: string; count: numb
           {value.length > 0 && (
             <div className="border-t border-border p-1">
               <Button variant="ghost" size="sm" className="w-full justify-start" onClick={() => onChange([])}>
-                <X /> Hapus filter tag
+                <X /> {t('filters.clearTags')}
               </Button>
             </div>
           )}
@@ -238,33 +255,35 @@ function TagFilter({ tags, value, onChange }: { tags: { tag: string; count: numb
 
 /** Chip filter aktif + Reset. */
 export function ActiveFilters({ search, setSearch, onReset }: { search: TestCasesSearch; setSearch: (patch: Partial<TestCasesSearch>) => void; onReset: () => void }) {
+  const { t } = useTranslation('testcases')
+  const options = useFilterOptions()
   const chips: { key: string; label: string; onRemove: () => void }[] = []
-  if (search.q) chips.push({ key: 'q', label: `Cari: "${search.q}"`, onRemove: () => setSearch({ q: undefined }) })
+  if (search.q) chips.push({ key: 'q', label: t('filters.chipSearch', { q: search.q }), onRemove: () => setSearch({ q: undefined }) })
   for (const k of ['status', 'priority', 'execution', 'last_run_status'] as const) {
     const v = search[k]
-    if (v) chips.push({ key: k, label: `${OPTIONS[k].title}: ${labelForFilter(k, v)}`, onRemove: () => setSearch({ [k]: undefined } as Partial<TestCasesSearch>) })
+    if (v) chips.push({ key: k, label: t('filters.chip', { title: options[k].title, value: labelForFilter(options, k, v) }), onRemove: () => setSearch({ [k]: undefined } as Partial<TestCasesSearch>) })
   }
   const tags = search.tags?.split(',').filter(Boolean) ?? []
-  for (const t of tags) {
+  for (const tag of tags) {
     chips.push({
-      key: `tag-${t}`,
-      label: `Tag: ${t}`,
+      key: `tag-${tag}`,
+      label: t('filters.chip', { title: t('filters.tags'), value: tag }),
       onRemove: () => {
-        const rest = tags.filter((x) => x !== t)
+        const rest = tags.filter((x) => x !== tag)
         setSearch({ tags: rest.length ? rest.join(',') : undefined })
       },
     })
   }
   if (!chips.length) return null
   return (
-    <div className="flex flex-wrap items-center gap-1.5" aria-label="Filter aktif">
+    <div className="flex flex-wrap items-center gap-1.5" aria-label={t('filters.activeLabel')}>
       {chips.map((c) => (
         <span key={c.key} className="inline-flex h-6 items-center gap-1 rounded-sm bg-secondary pr-0.5 pl-2 text-xs text-secondary-foreground">
           {c.label}
           <button
             type="button"
             onClick={c.onRemove}
-            aria-label={`Hapus filter ${c.label}`}
+            aria-label={t('filters.removeChip', { label: c.label })}
             className="flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
           >
             <X className="size-3" />
@@ -272,7 +291,7 @@ export function ActiveFilters({ search, setSearch, onReset }: { search: TestCase
         </span>
       ))}
       <Button variant="ghost" size="sm" onClick={onReset}>
-        Reset filter
+        {t('filters.reset')}
       </Button>
     </div>
   )

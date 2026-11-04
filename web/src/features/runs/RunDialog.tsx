@@ -1,6 +1,7 @@
 import { useNavigate } from '@tanstack/react-router'
 import { ChevronRight, Play, Star } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { errorMessage } from '@/api/client'
 import { useCreateRun, useEnvironments, useMembers, useProject } from '@/api/queries'
 import type { RunOptions } from '@/api/types'
@@ -24,9 +25,9 @@ export interface RunTarget {
 }
 
 const VIEWPORTS = {
-  desktop: { width: 1280, height: 720, label: 'Desktop 1280×720' },
-  laptop: { width: 1440, height: 900, label: 'Laptop 1440×900' },
-  mobile: { width: 390, height: 844, label: 'Mobile 390×844' },
+  desktop: { width: 1280, height: 720 },
+  laptop: { width: 1440, height: 900 },
+  mobile: { width: 390, height: 844 },
 } as const
 type ViewportPreset = keyof typeof VIEWPORTS | 'custom'
 
@@ -71,6 +72,7 @@ export function RunDialog({
   const members = useMembers(projectKey)
   const canReassign = useCan('reassign_manual', projectKey)
   const create = useCreateRun(projectKey)
+  const { t } = useTranslation(['runs', 'common'])
 
   const [envId, setEnvId] = React.useState<string>('')
   const [opts, setOpts] = React.useState<RunOptions | null>(null)
@@ -130,24 +132,24 @@ export function RunDialog({
       <DialogContent className="max-w-md">
         <form onSubmit={submit} className="grid gap-4">
           <DialogHeader>
-            <DialogTitle>Run {target.kind === 'flow' ? 'flow' : 'test case'}</DialogTitle>
+            <DialogTitle>{target.kind === 'flow' ? t('dialog.titleFlow') : t('dialog.titleTestCase')}</DialogTitle>
             <DialogDescription>
               <span className="font-mono text-xs">{target.key}</span> · {target.title}
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-1.5">
-            <Label htmlFor="run-env">Environment</Label>
+            <Label htmlFor="run-env">{t('dialog.environment')}</Label>
             <Select value={envId} onValueChange={setEnvId}>
               <SelectTrigger id="run-env">
-                <SelectValue placeholder="Pilih environment" />
+                <SelectValue placeholder={t('dialog.environmentPlaceholder')} />
               </SelectTrigger>
               <SelectContent>
                 {envs.data?.data.map((e) => (
                   <SelectItem key={e.id} value={e.id}>
                     <span className="inline-flex items-center gap-1.5">
                       {e.name}
-                      {e.is_default && <Star className="size-3 text-muted-foreground" aria-label="default" />}
+                      {e.is_default && <Star className="size-3 text-muted-foreground" aria-label={t('dialog.default')} />}
                     </span>
                   </SelectItem>
                 ))}
@@ -157,7 +159,7 @@ export function RunDialog({
 
           {showAssignee && (
             <div className="grid gap-1.5">
-              <Label htmlFor="run-assignee">Assignee bagian manual</Label>
+              <Label htmlFor="run-assignee">{t('dialog.assignee')}</Label>
               <Select value={assignee} onValueChange={setAssignee}>
                 <SelectTrigger id="run-assignee">
                   <SelectValue />
@@ -166,10 +168,10 @@ export function RunDialog({
                   {eligibleAssignees.map((m) => (
                     <SelectItem key={m.user.id} value={m.user.id}>
                       {m.user.name}
-                      {m.user.id === me.user.id ? ' (kamu)' : ''}
+                      {m.user.id === me.user.id ? ` ${t('dialog.you')}` : ''}
                     </SelectItem>
                   ))}
-                  {!eligibleAssignees.some((m) => m.user.id === me.user.id) && <SelectItem value={me.user.id}>{me.user.name} (kamu)</SelectItem>}
+                  {!eligibleAssignees.some((m) => m.user.id === me.user.id) && <SelectItem value={me.user.id}>{me.user.name} {t('dialog.you')}</SelectItem>}
                 </SelectContent>
               </Select>
             </div>
@@ -177,19 +179,18 @@ export function RunDialog({
 
           {target.manualOnly ? (
             <p className="text-sm text-muted-foreground">
-              Test case manual tidak dijalankan runner. Run akan langsung berstatus <strong className="font-medium text-foreground">Awaiting manual</strong> dan dikerjakan
-              langkah demi langkah oleh assignee.
+              <Trans t={t} i18nKey="dialog.manualOnly" components={{ b: <strong className="font-medium text-foreground" /> }} />
             </p>
           ) : (
             opts && (
               <>
                 {target.hasManual && (
-                  <p className="text-xs text-muted-foreground">Flow ini berisi test case manual: run akan berhenti di case manual sampai assignee menyelesaikannya.</p>
+                  <p className="text-xs text-muted-foreground">{t('dialog.hasManual')}</p>
                 )}
                 <div className="grid gap-1.5">
-                  <Label id="run-browser">Browser</Label>
+                  <Label id="run-browser">{t('dialog.browser')}</Label>
                   <Segmented
-                    ariaLabel="Browser"
+                    ariaLabel={t('dialog.browser')}
                     value={opts.browser}
                     onChange={(v) => set('browser', v)}
                     options={[
@@ -200,7 +201,7 @@ export function RunDialog({
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="run-viewport">Viewport</Label>
+                  <Label htmlFor="run-viewport">{t('dialog.viewport')}</Label>
                   <div className="flex gap-2">
                     <Select
                       value={preset}
@@ -216,51 +217,51 @@ export function RunDialog({
                       <SelectContent>
                         {(Object.keys(VIEWPORTS) as (keyof typeof VIEWPORTS)[]).map((k) => (
                           <SelectItem key={k} value={k}>
-                            {VIEWPORTS[k].label}
+                            {t(`dialog.viewports.${k}`, { width: String(VIEWPORTS[k].width), height: String(VIEWPORTS[k].height) })}
                           </SelectItem>
                         ))}
-                        <SelectItem value="custom">Custom…</SelectItem>
+                        <SelectItem value="custom">{t('dialog.viewports.custom')}</SelectItem>
                       </SelectContent>
                     </Select>
                     {preset === 'custom' && (
                       <>
-                        <Input aria-label="Lebar" type="number" min={320} className="w-20 font-mono" value={opts.viewport.width} onChange={(e) => set('viewport', { ...opts.viewport, width: Number(e.target.value) })} />
-                        <Input aria-label="Tinggi" type="number" min={320} className="w-20 font-mono" value={opts.viewport.height} onChange={(e) => set('viewport', { ...opts.viewport, height: Number(e.target.value) })} />
+                        <Input aria-label={t('dialog.width')} type="number" min={320} className="w-20 font-mono" value={opts.viewport.width} onChange={(e) => set('viewport', { ...opts.viewport, width: Number(e.target.value) })} />
+                        <Input aria-label={t('dialog.height')} type="number" min={320} className="w-20 font-mono" value={opts.viewport.height} onChange={(e) => set('viewport', { ...opts.viewport, height: Number(e.target.value) })} />
                       </>
                     )}
                   </div>
                 </div>
                 <div className="grid gap-1.5">
-                  <Label>Screenshot</Label>
+                  <Label>{t('dialog.screenshot')}</Label>
                   <Segmented
-                    ariaLabel="Screenshot"
+                    ariaLabel={t('dialog.screenshot')}
                     value={opts.screenshot}
                     onChange={(v) => set('screenshot', v)}
                     options={[
-                      { value: 'off', label: 'Off' },
-                      { value: 'on_failure', label: 'Saat gagal' },
-                      { value: 'every_step', label: 'Tiap step' },
+                      { value: 'off', label: t('labels.screenshot.off') },
+                      { value: 'on_failure', label: t('labels.screenshot.on_failure') },
+                      { value: 'every_step', label: t('labels.screenshot.every_step') },
                     ]}
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label>Video</Label>
+                  <Label>{t('dialog.video')}</Label>
                   <Segmented
-                    ariaLabel="Video"
+                    ariaLabel={t('dialog.video')}
                     value={opts.video}
                     onChange={(v) => set('video', v)}
                     options={[
-                      { value: 'off', label: 'Off' },
-                      { value: 'on_failure', label: 'Saat gagal' },
-                      { value: 'always', label: 'Selalu' },
+                      { value: 'off', label: t('labels.video.off') },
+                      { value: 'on_failure', label: t('labels.video.on_failure') },
+                      { value: 'always', label: t('labels.video.always') },
                     ]}
                   />
-                  {opts.video === 'on_failure' && <p className="text-xs text-muted-foreground">Saat gagal tetap merekam, lalu dihapus jika passed.</p>}
+                  {opts.video === 'on_failure' && <p className="text-xs text-muted-foreground">{t('dialog.videoOnFailureHint')}</p>}
                 </div>
                 <div className="grid gap-1.5">
-                  <Label>Retries per test case</Label>
+                  <Label>{t('dialog.retries')}</Label>
                   <Segmented
-                    ariaLabel="Retries"
+                    ariaLabel={t('dialog.retriesShort')}
                     value={String(opts.retries)}
                     onChange={(v) => set('retries', Number(v))}
                     options={[
@@ -278,16 +279,16 @@ export function RunDialog({
                     aria-expanded={advanced}
                     onClick={() => setAdvanced((a) => !a)}
                   >
-                    <ChevronRight className={advanced ? 'size-4 rotate-90 transition-transform' : 'size-4 transition-transform'} aria-hidden /> Lanjutan
+                    <ChevronRight className={advanced ? 'size-4 rotate-90 transition-transform' : 'size-4 transition-transform'} aria-hidden /> {t('dialog.advanced')}
                   </button>
                   {advanced && (
                     <div className="mt-3 grid gap-3">
                       <label className="flex items-center justify-between gap-3 text-sm">
-                        Headless
+                        {t('dialog.headless')}
                         <Switch checked={opts.headless} onCheckedChange={(v) => set('headless', v)} />
                       </label>
                       <div className="grid gap-1.5">
-                        <Label htmlFor="run-timeout">Timeout per step (ms)</Label>
+                        <Label htmlFor="run-timeout">{t('dialog.stepTimeout')}</Label>
                         <Input id="run-timeout" type="number" min={1000} step={1000} className="font-mono" value={opts.step_timeout_ms} onChange={(e) => set('step_timeout_ms', Number(e.target.value))} />
                       </div>
                     </div>
@@ -314,10 +315,10 @@ export function RunDialog({
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-              Batal
+              {t('common:actions.cancel')}
             </Button>
             <Button type="submit" loading={create.isPending} disabled={!opts && !target.manualOnly}>
-              <Play /> {target.manualOnly ? 'Mulai run manual' : 'Jalankan'}
+              <Play /> {target.manualOnly ? t('dialog.startManual') : t('dialog.submit')}
             </Button>
           </DialogFooter>
         </form>

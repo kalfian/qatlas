@@ -1,6 +1,7 @@
 import { useParams } from '@tanstack/react-router'
 import { Layers, MoreHorizontal, Pencil, Plus, Star, Trash2 } from 'lucide-react'
 import * as React from 'react'
+import { Trans, useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useEnvironmentMutations, useEnvironments } from '@/api/queries'
@@ -28,6 +29,7 @@ import { SecretCountHint, SecretsSection, VariablesSection } from './sections'
 
 export function EnvironmentsPage() {
   const { key } = useParams({ from: '/_app/p/$key/environments' })
+  const { t } = useTranslation(['environments', 'common'])
   const canManage = useCan('manage_environments', key)
   const envs = useEnvironments(key)
   const list = React.useMemo(() => envs.data?.data ?? [], [envs.data])
@@ -49,13 +51,13 @@ export function EnvironmentsPage() {
   return (
     <PageContainer>
       <PageHeader
-        title="Environments"
-        description="Variable dan secret per target pengujian, misalnya staging dan production."
+        title={t('page.title')}
+        description={t('page.description')}
         actions={
           canManage &&
           list.length > 0 && (
             <Button onClick={() => setCreateOpen(true)}>
-              <Plus /> Environment
+              <Plus /> {t('page.add')}
             </Button>
           )
         }
@@ -65,7 +67,7 @@ export function EnvironmentsPage() {
         <ErrorState error={envs.error} onRetry={() => envs.refetch()} />
       ) : envs.isPending ? (
         <div className="grid gap-5 lg:grid-cols-[220px_minmax(0,1fr)]" aria-busy="true">
-          <span className="sr-only">Memuat environment…</span>
+          <span className="sr-only">{t('page.loading')}</span>
           {showSkeleton && (
             <>
               <div className="grid content-start gap-1">
@@ -83,23 +85,19 @@ export function EnvironmentsPage() {
       ) : list.length === 0 ? (
         <EmptyState
           icon={Layers}
-          title="Belum ada environment."
-          description={
-            canManage
-              ? 'Environment menyimpan BASE_URL, kredensial, dan nilai lain yang berbeda per target. Run memakai environment default bila tidak dipilih.'
-              : 'Minta maintainer project membuat environment agar test bisa dijalankan.'
-          }
+          title={t('page.emptyTitle')}
+          description={canManage ? t('page.emptyManage') : t('page.emptyViewer')}
           action={
             canManage && (
               <Button onClick={() => setCreateOpen(true)}>
-                <Plus /> Buat environment
+                <Plus /> {t('page.create')}
               </Button>
             )
           }
         />
       ) : (
         <div className="grid grid-cols-[minmax(0,1fr)] items-start gap-5 lg:grid-cols-[220px_minmax(0,1fr)]">
-          <nav aria-label="Daftar environment">
+          <nav aria-label={t('page.listLabel')}>
             <ul className="grid gap-0.5">
               {list.map((e) => {
                 const active = e.id === selected?.id
@@ -119,7 +117,7 @@ export function EnvironmentsPage() {
                         {e.is_default && (
                           <>
                             <Star className="size-3.5 shrink-0 fill-current text-muted-foreground" aria-hidden />
-                            <span className="sr-only">(default)</span>
+                            <span className="sr-only">{t('page.defaultSr')}</span>
                           </>
                         )}
                       </span>
@@ -161,11 +159,11 @@ export function EnvironmentsPage() {
       <AlertDialog open={pendingSwitch != null} onOpenChange={(o) => !o && setPendingSwitch(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Buang perubahan variable?</AlertDialogTitle>
-            <AlertDialogDescription>Perubahan variable di {selected?.name} belum disimpan dan akan hilang jika kamu pindah environment.</AlertDialogDescription>
+            <AlertDialogTitle>{t('page.discardTitle')}</AlertDialogTitle>
+            <AlertDialogDescription>{t('page.discardDescription', { name: selected?.name ?? '' })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Lanjut edit</AlertDialogCancel>
+            <AlertDialogCancel>{t('page.keepEditing')}</AlertDialogCancel>
             <AlertDialogAction
               destructive
               onClick={() => {
@@ -174,7 +172,7 @@ export function EnvironmentsPage() {
                 setPendingSwitch(null)
               }}
             >
-              Buang perubahan
+              {t('page.discardConfirm')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -191,6 +189,7 @@ function EnvironmentDetail({ projectKey, env, allEnvs, canManage, onDirtyChange,
   onDirtyChange: (d: boolean) => void
   onDeleted: () => void
 }) {
+  const { t } = useTranslation('environments')
   const { update } = useEnvironmentMutations(projectKey)
   const [renameOpen, setRenameOpen] = React.useState(false)
   const [deleteOpen, setDeleteOpen] = React.useState(false)
@@ -199,8 +198,8 @@ function EnvironmentDetail({ projectKey, env, allEnvs, canManage, onDirtyChange,
     update.mutate(
       { id: env.id, is_default: true },
       {
-        onSuccess: () => toast.success(`${env.name} jadi environment default`),
-        onError: (err) => toast.error(`Gagal mengubah default: ${errorMessage(err)}`),
+        onSuccess: () => toast.success(t('detail.madeDefault', { name: env.name })),
+        onError: (err) => toast.error(t('detail.makeDefaultFailed', { message: errorMessage(err) })),
       },
     )
 
@@ -212,37 +211,39 @@ function EnvironmentDetail({ projectKey, env, allEnvs, canManage, onDirtyChange,
             <span className="truncate font-mono">{env.name}</span>
             {env.is_default && (
               <span className="inline-flex h-5 items-center gap-1 rounded-sm bg-secondary px-1.5 font-sans text-xs font-medium text-secondary-foreground">
-                <Star className="size-3 fill-current" aria-hidden /> Default
+                <Star className="size-3 fill-current" aria-hidden /> {t('detail.default')}
               </span>
             )}
           </h2>
           <p className="text-xs text-muted-foreground">
-            Diubah{' '}
-            <time dateTime={env.updated_at} title={formatDateTime(env.updated_at)}>
-              {relativeTime(env.updated_at, formatRelative)}
-            </time>
-            {env.is_default && ' · dipakai saat run tidak memilih environment'}
+            <Trans
+              t={t}
+              i18nKey="detail.updated"
+              values={{ time: relativeTime(env.updated_at, formatRelative) }}
+              components={{ time: <time dateTime={env.updated_at} title={formatDateTime(env.updated_at)} /> }}
+            />
+            {env.is_default && t('detail.defaultHint')}
           </p>
         </div>
         {canManage && (
           <div className="flex shrink-0 items-center gap-2">
             {!env.is_default && (
               <Button variant="outline" size="sm" onClick={makeDefault} loading={update.isPending}>
-                <Star /> Jadikan default
+                <Star /> {t('detail.makeDefault')}
               </Button>
             )}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="ghost" size="icon-sm" aria-label={`Aksi lain untuk ${env.name}`}>
+                <Button variant="ghost" size="icon-sm" aria-label={t('detail.moreActions', { name: env.name })}>
                   <MoreHorizontal />
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
                 <DropdownMenuItem onSelect={() => setRenameOpen(true)}>
-                  <Pencil /> Ganti nama
+                  <Pencil /> {t('detail.rename')}
                 </DropdownMenuItem>
                 <DropdownMenuItem destructive onSelect={() => setDeleteOpen(true)}>
-                  <Trash2 /> Hapus environment
+                  <Trash2 /> {t('detail.delete')}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

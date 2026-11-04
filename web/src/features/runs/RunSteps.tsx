@@ -1,5 +1,6 @@
 import { ChevronRight, Paperclip } from 'lucide-react'
 import * as React from 'react'
+import { useTranslation } from 'react-i18next'
 import type { Run, RunCase, RunStep } from '@/api/types'
 import { KeyBadge, ManualBadge, StepSummaryText } from '@/components/misc'
 import { StatusBadge, StatusIcon } from '@/components/status'
@@ -55,7 +56,11 @@ function CaseSection({ c, run, caseOpen, onToggleCase, manualSlot, ...rest }: Ca
   const bodyId = `case-body-${c.id}`
   const isSlot = manualSlot?.caseId === c.id
   const caseAttachments = c.attachments.filter((a) => !a.run_step_id)
-  const stepLabel = `${c.steps.filter((s) => s.status !== 'pending' && s.status !== 'running').length}/${c.steps.length} step`
+  const { t } = useTranslation('runs')
+  const stepLabel = t('steps.progress', {
+    done: String(c.steps.filter((s) => s.status !== 'pending' && s.status !== 'running').length),
+    count: c.steps.length,
+  })
 
   return (
     <section aria-labelledby={`case-title-${c.id}`} id={`case-${c.id}`} className="scroll-mt-16">
@@ -73,7 +78,7 @@ function CaseSection({ c, run, caseOpen, onToggleCase, manualSlot, ...rest }: Ca
           <span className="min-w-0 flex-1 basis-40 text-sm font-medium sm:truncate">{c.title}</span>
           <span className="flex items-center gap-2.5 max-sm:w-full max-sm:pl-[3.25rem]">
             <ManualBadge execution={c.execution} />
-            <span className="text-xs text-muted-foreground tabular sm:w-16 sm:text-right">{stepLabel}</span>
+            <span className="text-xs whitespace-nowrap text-muted-foreground tabular sm:w-20 sm:text-right">{stepLabel}</span>
             <StatusBadge status={isSlot ? 'awaiting_manual' : c.status} />
             <span className="text-xs text-muted-foreground tabular sm:w-14 sm:text-right">
               {isSlot ? '—' : c.status === 'running' ? '…' : formatDuration(c.duration_ms)}
@@ -89,7 +94,7 @@ function CaseSection({ c, run, caseOpen, onToggleCase, manualSlot, ...rest }: Ca
             <>
               {c.execution === 'manual' && c.executed_by && (
                 <p className="px-3 pt-2 text-xs text-muted-foreground">
-                  Dikerjakan oleh <span className="font-medium text-foreground">{c.executed_by.name}</span>
+                  {t('steps.executedBy')} <span className="font-medium text-foreground">{c.executed_by.name}</span>
                 </p>
               )}
               <ol className="py-1">
@@ -103,7 +108,7 @@ function CaseSection({ c, run, caseOpen, onToggleCase, manualSlot, ...rest }: Ca
               </ol>
               {caseAttachments.length > 0 && (
                 <div className="border-t border-border px-3 py-2">
-                  <AttachmentStrip c={c} list={caseAttachments} onOpenMedia={rest.onOpenMedia} label="Lampiran case" />
+                  <AttachmentStrip c={c} list={caseAttachments} onOpenMedia={rest.onOpenMedia} label={t('steps.caseAttachments')} />
                 </div>
               )}
             </>
@@ -194,6 +199,7 @@ function StepDetail({ s, shot, onOpenShot }: { s: RunStep; shot?: MediaItem; onO
   const ea = d && 'expected' in d && 'actual' in d ? { expected: String(d.expected ?? ''), actual: String(d.actual ?? '') } : null
   const http = d && 'request' in d ? (d as unknown as HttpDetails) : null
   const fail = isFailStep(s.status)
+  const { t } = useTranslation('runs')
 
   return (
     <div
@@ -206,8 +212,8 @@ function StepDetail({ s, shot, onOpenShot }: { s: RunStep; shot?: MediaItem; onO
       <div className="grid min-w-0 content-start gap-3">
         {ea && (
           <div className="grid gap-2 sm:grid-cols-2">
-            <ValueBox label="Expected" value={ea.expected} />
-            <ValueBox label="Actual" value={ea.actual} tone={fail ? 'failed' : undefined} />
+            <ValueBox label={t('steps.expected')} value={ea.expected} />
+            <ValueBox label={t('steps.actual')} value={ea.actual} tone={fail ? 'failed' : undefined} />
           </div>
         )}
         {s.error_message && (
@@ -218,13 +224,13 @@ function StepDetail({ s, shot, onOpenShot }: { s: RunStep; shot?: MediaItem; onO
           <dl className="grid gap-1 text-xs">
             {s.description && (
               <div className="flex gap-2">
-                <dt className="w-20 shrink-0 text-muted-foreground">Deskripsi</dt>
+                <dt className="w-20 shrink-0 text-muted-foreground">{t('steps.description')}</dt>
                 <dd className="min-w-0">{s.description}</dd>
               </div>
             )}
             {s.expected && (
               <div className="flex gap-2">
-                <dt className="w-20 shrink-0 text-muted-foreground">Expected</dt>
+                <dt className="w-20 shrink-0 text-muted-foreground">{t('steps.expected')}</dt>
                 <dd className="min-w-0">{s.expected}</dd>
               </div>
             )}
@@ -248,6 +254,7 @@ function ValueBox({ label, value, tone }: { label: string; value: string; tone?:
 function HttpDetail({ http }: { http: HttpDetails }) {
   const { request, response } = http
   const st = response?.status
+  const { t } = useTranslation('runs')
   return (
     <div className="grid gap-2">
       <p className="flex flex-wrap items-center gap-x-2 gap-y-1 font-mono text-xs">
@@ -260,8 +267,8 @@ function HttpDetail({ http }: { http: HttpDetails }) {
         )}
         {response?.time_ms != null && <span className="text-muted-foreground">{response.time_ms} ms</span>}
       </p>
-      {request.body !== undefined && <JsonBlock label="Request body" value={request.body} />}
-      {response?.body !== undefined && <JsonBlock label="Response body" value={response.body} defaultOpen />}
+      {request.body !== undefined && <JsonBlock label={t('steps.requestBody')} value={request.body} />}
+      {response?.body !== undefined && <JsonBlock label={t('steps.responseBody')} value={response.body} defaultOpen />}
     </div>
   )
 }
@@ -284,6 +291,7 @@ function JsonBlock({ label, value, defaultOpen }: { label: string; value: unknow
 function ManualStepReport({ c, s, onOpenMedia }: { c: RunCase; s: RunStep; onOpenMedia: CaseListProps['onOpenMedia'] }) {
   const atts = c.attachments.filter((a) => a.run_step_id === s.id)
   const bad = s.status === 'failed' || s.status === 'blocked'
+  const { t } = useTranslation('runs')
   return (
     <li id={`step-${s.id}`} className={cn('flex scroll-mt-28 items-start gap-2 px-3 py-2', bad && 'bg-status-failed-bg/40')}>
       <span className="w-4 shrink-0" aria-hidden />
@@ -293,12 +301,12 @@ function ManualStepReport({ c, s, onOpenMedia }: { c: RunCase; s: RunStep; onOpe
         <p className="text-sm break-words">{s.description || s.summary}</p>
         {s.expected && (
           <p className="text-xs text-muted-foreground">
-            <span className="font-medium">Expected:</span> {s.expected}
+            <span className="font-medium">{t('steps.expectedColon')}</span> {s.expected}
           </p>
         )}
         {s.actual_result && (
           <p className={cn('text-xs break-words whitespace-pre-wrap', bad ? 'text-status-failed' : 'text-foreground')}>
-            <span className="font-medium">Actual:</span> {s.actual_result}
+            <span className="font-medium">{t('steps.actualColon')}</span> {s.actual_result}
           </p>
         )}
         {atts.length > 0 && <AttachmentStrip c={c} list={atts} onOpenMedia={onOpenMedia} />}
@@ -309,6 +317,7 @@ function ManualStepReport({ c, s, onOpenMedia }: { c: RunCase; s: RunStep; onOpe
 
 export function AttachmentStrip({ c, list, onOpenMedia, label }: { c: RunCase; list: RunCase['attachments']; onOpenMedia: CaseListProps['onOpenMedia']; label?: string }) {
   const images = attachmentItems(c, list)
+  const { t } = useTranslation('runs')
   return (
     <div className="grid gap-1.5">
       {label && (
@@ -316,7 +325,7 @@ export function AttachmentStrip({ c, list, onOpenMedia, label }: { c: RunCase; l
           <Paperclip className="size-3.5" aria-hidden /> {label}
         </p>
       )}
-      <ul className="flex flex-wrap gap-2" aria-label={label ?? 'Lampiran'}>
+      <ul className="flex flex-wrap gap-2" aria-label={label ?? t('steps.attachments')}>
         {list.map((a) => {
           const i = images.findIndex((m) => m.id === a.id)
           return (
