@@ -25,9 +25,11 @@ done
 src="$RAW_DIR/end-to-end.webm"
 if [[ -f $src ]]; then
   font="/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-  ffmpeg -v error -y -ss 52 -i "$src" -frames:v 1 -vf "scale=1280:-1,\
+  secs=$(ffprobe -v error -show_entries format=duration -of csv=p=0 "$src" | cut -d. -f1)
+  label="$((secs / 60)) min $((secs % 60)) s"
+  ffmpeg -v error -y -ss "${POSTER_AT:-52}" -i "$src" -frames:v 1 -vf "scale=1280:-1,\
 drawbox=x=0:y=ih-110:w=iw:h=110:color=black@0.72:t=fill,\
-drawtext=fontfile=$font:text='▶  Watch the end-to-end demo (1 min 40 s)':fontcolor=white:fontsize=40:x=(w-text_w)/2:y=h-78" \
+drawtext=fontfile=$font:text='▶  Watch the end-to-end demo ($label)':fontcolor=white:fontsize=40:x=(w-text_w)/2:y=h-78" \
     "$OUT/end-to-end-poster.png"
   echo "$OUT/end-to-end-poster.png $(du -h "$OUT/end-to-end-poster.png" | cut -f1)"
 fi

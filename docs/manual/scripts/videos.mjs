@@ -106,7 +106,8 @@ async function addStep(h, action, fields) {
 
 const walkthroughs = {
   /* (e2e) the whole product in one take: sign in → environment → write a test case → run → report →
-     flow with a manual step → history/dashboard → API token for MCP → language switch */
+     flow with a manual step → email verification via Mailpit → history/dashboard → Admin storage →
+     API token for MCP → language switch */
   async 'end-to-end'() {
     const h = await recorder('end-to-end', { signedIn: false })
     const { page } = h
@@ -221,13 +222,38 @@ const walkthroughs = {
     await scrollTop()
     await h.beat(3000)
 
-    // 9. Run history + dashboard
+    // 9. Email verification test: sign up on the shop, poll Mailpit until the mail arrives,
+    //    extract the link from the raw (quoted-printable) email, open it
+    await h.click(nav.getByRole('link', { name: 'Test cases' }))
+    await settle(page, 1200)
+    await h.click(page.getByRole('link', { name: /Sign up and verify email/ }).first())
+    await page.waitForURL(/\/tests\/SHOP-T\d+/)
+    await settle(page, 2200)
+    await h.click(page.getByRole('button', { name: /^Run$/ }))
+    dialog = page.getByRole('dialog')
+    await h.beat(900)
+    await h.click(dialog.getByRole('button', { name: 'Run', exact: true }))
+    await page.waitForURL(/\/runs\/SHOP-R\d+/)
+    await waitForRun(page, page.url().match(/SHOP-R\d+/)[0])
+    await settle(page, 1200)
+    const poll = page.getByText(/poll ≤/).first()
+    await poll.scrollIntoViewIfNeeded().catch(() => {})
+    const pollBox = await poll.boundingBox().catch(() => null)
+    if (pollBox) await page.mouse.move(pollBox.x + 80, pollBox.y + pollBox.height / 2, { steps: 18 })
+    await h.beat(3200)
+    await scrollTop()
+
+    // 10. Run history + dashboard
     await h.click(nav.getByRole('link', { name: 'Runs' }))
     await settle(page, 2500)
     await h.click(nav.getByRole('link', { name: 'Dashboard' }))
     await settle(page, 2800)
 
-    // 10. API token & MCP setup for AI agents (no token is created on camera)
+    // 11. Admin → Storage: artifacts go to the S3 bucket (Garage); the secret is write-only
+    await h.click(page.getByRole('link', { name: /Admin · Storage/ }).first())
+    await settle(page, 3500)
+
+    // 12. API token & MCP setup for AI agents (no token is created on camera)
     await h.click(page.getByRole('link', { name: /API token/ }).first())
     await settle(page, 2000)
     const mcp = page.getByText(/claude mcp add/).first()
@@ -236,7 +262,7 @@ const walkthroughs = {
     if (box) await page.mouse.move(box.x + 60, box.y + box.height / 2, { steps: 18 })
     await h.beat(2800)
 
-    // 11. Switch the UI to Bahasa Indonesia and back
+    // 13. Switch the UI to Bahasa Indonesia and back
     const userMenu = () => page.getByRole('button', { name: /^(Account menu for|Menu akun) Rina Kusuma$/ })
     await h.click(userMenu())
     await h.beat(600)

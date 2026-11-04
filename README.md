@@ -11,15 +11,16 @@ and AI agents can do the whole loop through MCP.
 
 ## End-to-end demo
 
-One take through the whole product (1 min 40 s, no sound): sign in → environment variables and
+One take through the whole product (1 min 59 s, no sound): sign in → environment variables and
 secrets → write a test case in the step editor → run it with screenshots and video → read the
 report → run a flow that pauses for a manual check, work through it, and watch the flow finish on
-its own → run history and dashboard → API token and MCP setup for AI agents → switch the UI to
-Bahasa Indonesia and back.
+its own → run an email-verification test (sign up, poll Mailpit until the mail arrives, open the
+link) → run history and dashboard → Admin → Storage with artifacts in an S3 bucket (Garage) → API
+token and MCP setup for AI agents → switch the UI to Bahasa Indonesia and back.
 
 [![Watch the end-to-end demo](docs/manual/video/end-to-end-poster.png)](docs/manual/video/end-to-end.mp4)
 
-[▶ end-to-end.mp4](docs/manual/video/end-to-end.mp4) (1280×800, 1.6 MB) — recorded on a real
+[▶ end-to-end.mp4](docs/manual/video/end-to-end.mp4) (1280×800, 2.1 MB) — recorded on a real
 instance (Go backend, worker, Playwright runner) against the bundled demo shop.
 
 ## Features

@@ -24,7 +24,7 @@ node ../docs/manual/scripts/screenshots.mjs              # every screenshot
 node ../docs/manual/scripts/screenshots.mjs run-dialog   # only shots whose name contains "run-dialog"
 RAW_DIR=/tmp/qatlas-manual-raw node ../docs/manual/scripts/videos.mjs
 cd ..
-RAW_DIR=/tmp/qatlas-manual-raw docs/manual/scripts/encode.sh
+RAW_DIR=/tmp/qatlas-manual-raw POSTER_AT=92 docs/manual/scripts/encode.sh   # POSTER_AT = second of the end-to-end video used for the README poster
 ```
 
 `QATLAS_URL` points the scripts at another instance (default `http://127.0.0.1:8090`). The
