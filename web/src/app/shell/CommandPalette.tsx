@@ -1,5 +1,5 @@
 import { useNavigate, useParams } from '@tanstack/react-router'
-import { CircleUser, FolderKanban, Hand, KeyRound, LayoutDashboard, ListChecks, Play, Plus, Users, Workflow } from 'lucide-react'
+import { CircleUser, FolderKanban, Hand, HardDrive, KeyRound, LayoutDashboard, ListChecks, Play, Plus, Users, Workflow } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { useFlows, useTestCases } from '@/api/queries'
@@ -69,6 +69,7 @@ export function CommandPalette({ open, onOpenChange }: { open: boolean; onOpenCh
               <CommandItem onSelect={() => go('/projects')}><FolderKanban /> {t('items.allProjects')}</CommandItem>
               <CommandItem onSelect={() => go('/my-tasks')}><Hand /> {t('items.myTasks')}</CommandItem>
               {isAdmin && <CommandItem onSelect={() => go('/admin/users')}><Users /> {t('items.adminUsers')}</CommandItem>}
+              {isAdmin && <CommandItem onSelect={() => go('/admin/storage')}><HardDrive /> {t('items.adminStorage')}</CommandItem>}
               <CommandItem onSelect={() => go('/settings/profile')}><CircleUser /> {t('items.account')}</CommandItem>
               <CommandItem onSelect={() => go('/settings/tokens')}><KeyRound /> {t('items.tokensMcp')}</CommandItem>
             </CommandGroup>

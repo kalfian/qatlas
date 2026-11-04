@@ -197,15 +197,57 @@ The last 5 releases are kept (`--keep`), plus whatever `current`/`previous` poin
 
 ## Artifact storage: local or S3 (Garage)
 
-`QATLAS_STORAGE=local` (default) keeps screenshots, videos and attachments under
-`QATLAS_DATA_DIR/artifacts`. `QATLAS_STORAGE=s3` puts them in an S3-compatible bucket; the
-bucket stays private and downloads still go through `GET /api/v1/artifacts/{id}` (RBAC, HTTP
-Range for video seeking — translated into ranged GETs against the bucket). Storage keys are
-the same in both modes (`<project>/<run>/<artifact>.<ext>`, plus `QATLAS_S3_PREFIX/`).
+Screenshots, videos and attachments live either under `QATLAS_DATA_DIR/artifacts` (local, the
+default) or in an S3-compatible bucket. The bucket stays private: downloads still go through
+`GET /api/v1/artifacts/{id}` (RBAC, HTTP Range for video seeking — translated into ranged GETs
+against the bucket). Storage keys are the same everywhere (`<project>/<run>/<artifact>.<ext>`,
+plus the optional prefix).
+
+**Configure storage from Admin → Storage (recommended); env vars override.**
+
+- **Admin → Storage** (admins, signed-in session): choose local or S3, enter endpoint, region,
+  bucket, access key ID and secret, *Test* (connect / bucket / write / read / delete, with
+  timings), *Save*. Saving probes the bucket first (put + read + delete a `.qatlas-probe-…`
+  object) and refuses with the failing check — nothing is saved. The settings are stored in
+  the database (`system_settings`); the secret is AES-256-GCM encrypted with
+  `QATLAS_MASTER_KEY`, write-only (never returned; leave it empty to keep the stored one) and
+  never in the audit log (`settings.storage.update` records which fields changed and whether
+  the secret was replaced). Server and worker switch **without a restart**: the saving process
+  swaps its stores at once and `NOTIFY qatlas_settings` makes every other server/worker reload.
+  Uploads already in flight finish on the store they started with.
+- **Per-artifact backend:** every artifact row records where its file was written
+  (`artifacts.storage`). Downloads, retention and deletes use that backend, so switching never
+  strands older files — local files stay readable after switching to S3 and vice versa (S3
+  settings are kept when you switch back to local). An artifact on S3 while no S3 is configured
+  answers 503 `storage_unavailable`. Changing the bucket/endpoint of a configured S3 does
+  **not** move objects: migrate to local first, or copy the bucket yourself.
+- **Migrate from the UI:** *Migrate* copies every artifact stored on the other backend into the
+  active one in the background (worker job `storage_migrate`, queue `maintenance`), verifies
+  the size, flips each row, optionally deletes the source, and shows progress. One at a time
+  (409 while queued/running); re-running is safe.
+- **Environment override:** a non-empty `QATLAS_STORAGE` (`local` | `s3` + `QATLAS_S3_*` below)
+  wins over the database; Admin → Storage shows the env values read-only and Save answers 409
+  `env_override`. Remove `QATLAS_STORAGE` (and restart once) to manage storage in the UI. In
+  override mode `server`, `worker` and `all` still refuse to start when the configured store
+  fails its probe, e.g. `artifact storage check failed (QATLAS_STORAGE=s3): … Access Denied`.
+- **Broken database settings never block startup:** when the S3 selected in the UI fails its
+  probe at start, the process logs an error, stores new artifacts locally, re-checks every
+  minute and Admin → Storage shows the reason (`warning`) until it works again or is fixed.
+- `/readyz` returns `{"status":"ok","database":"ok","storage":"ok","storage_backend":"s3"}`
+  (the backend new artifacts go to), or 503 with `"storage":"error"` while it is unreachable.
+
+**Upgrading an instance that ran with `QATLAS_STORAGE=s3`:** artifact rows created before this
+version default to `local`. Keep `QATLAS_STORAGE=s3` in the environment for the first
+`qatlas migrate up` / start after the upgrade — it marks the existing rows as `s3` once (marker
+`artifacts_storage_backfill`). If that was missed: `UPDATE artifacts SET storage = 's3' WHERE
+storage = 'local';` (only when every file really is in the bucket; `qatlas artifacts check`
+verifies). Afterwards you may drop the env vars and configure the same bucket in the UI.
+
+Environment variables (override only):
 
 | Variable | Default | |
 |---|---|---|
-| `QATLAS_STORAGE` | `local` | `local` or `s3` |
+| `QATLAS_STORAGE` | unset (= Admin → Storage) | `local` or `s3`: pins the backend, UI read-only |
 | `QATLAS_S3_ENDPOINT` | — | scheme + host, no path: `https://garage.kalfian.work`, `http://garage:3900` |
 | `QATLAS_S3_REGION` | `us-east-1` | Garage: the `s3_region` of its `garage.toml` (usually `garage`) |
 | `QATLAS_S3_BUCKET` | — | must exist |
@@ -213,12 +255,7 @@ the same in both modes (`<project>/<run>/<artifact>.<ext>`, plus `QATLAS_S3_PREF
 | `QATLAS_S3_FORCE_PATH_STYLE` | `true` | path-style URLs (Garage, MinIO); `false` for AWS virtual-host style |
 | `QATLAS_S3_PREFIX` | empty | optional key prefix when the bucket is shared |
 
-At start `server`, `worker` and `all` check the bucket (HEAD bucket, then write and delete a
-`.qatlas-probe-…` object) and exit with a clear message when it is missing or not writable,
-e.g. `artifact storage check failed (QATLAS_STORAGE=s3): s3 bucket "qatlas" at https://…:
-Access Denied. (check QATLAS_S3_ACCESS_KEY / QATLAS_S3_SECRET_KEY …)`. `/readyz` returns
-`{"status":"ok","database":"ok","storage":"ok","storage_backend":"s3"}`, or 503 with
-`"storage":"error"` while the bucket is unreachable.
+The same fields exist in Admin → Storage.
 
 ### External Garage (e.g. `https://garage.kalfian.work`)
 
@@ -228,7 +265,9 @@ Access Denied. (check QATLAS_S3_ACCESS_KEY / QATLAS_S3_SECRET_KEY …)`. `/ready
    `garage key create qatlas-app` and `garage key info --secret-key qatlas-app`.
 3. Give the key **read** and **write** on the bucket (WebUI: the bucket's permissions / allow
    key; CLI: `garage bucket allow --read --write qatlas --key qatlas-app`). Owner is not needed.
-4. Set the variables in `/etc/qatlas/qatlas.env` (B) or `deploy/.env` (A):
+4. Admin → Storage → S3: endpoint `https://garage.kalfian.work`, region `garage`, bucket
+   `qatlas`, the access key ID and secret → *Test* → *Save*. (Or pin it via the environment
+   in `/etc/qatlas/qatlas.env` (B) / `deploy/.env` (A) and restart:)
 
    ```sh
    QATLAS_STORAGE=s3
@@ -239,8 +278,8 @@ Access Denied. (check QATLAS_S3_ACCESS_KEY / QATLAS_S3_SECRET_KEY …)`. `/ready
    QATLAS_S3_SECRET_KEY=…
    ```
 
-5. Move existing files (below), restart (`systemctl restart qatlas-server qatlas-worker` or
-   `docker compose -f deploy/docker-compose.yml up -d`) and check `curl -fsS http://127.0.0.1:8090/readyz`.
+5. Move existing files with Admin → Storage → *Migrate* (or the CLI below) and check
+   `curl -fsS http://127.0.0.1:8090/readyz`.
 
 ### Bundled Garage (docker-compose, profile `s3`)
 
@@ -252,35 +291,42 @@ config [`deploy/garage/garage.toml`](garage/garage.toml), volumes `garage-meta` 
 ```sh
 echo "GARAGE_RPC_SECRET=$(openssl rand -hex 32)" >> deploy/.env
 docker compose -f deploy/docker-compose.yml --profile s3 up -d garage
-deploy/garage/init.sh          # layout, bucket "qatlas", key "qatlas-app"; prints the QATLAS_S3_* lines
-$EDITOR deploy/.env            # paste them (endpoint http://garage:3900, region garage)
+deploy/garage/init.sh          # layout, bucket "qatlas", key "qatlas-app"; prints the values
 docker compose -f deploy/docker-compose.yml --profile s3 up -d
+# Admin → Storage → S3: endpoint http://garage:3900, region garage, bucket/key from init.sh
+# (or paste the printed QATLAS_S3_* lines into deploy/.env as an environment override)
 ```
 
 `init.sh` is idempotent (`deploy/garage/init.sh <bucket> <key-name>`, `GARAGE_CAPACITY=100G`);
 the secret key is printed only when the key is created (later: `docker compose -f
 deploy/docker-compose.yml exec garage /garage key info --secret-key qatlas-app`). Keep the
-`--profile s3` flag on every `up`, otherwise compose leaves Garage stopped and server/worker
-fail their storage check (they restart until it is back).
+`--profile s3` flag on every `up`, otherwise compose leaves Garage stopped: with the env
+override server/worker fail their storage check (they restart until it is back); with UI
+settings they fall back to local storage for new artifacts and show a warning.
 
 ### Moving existing artifacts (`qatlas artifacts migrate`)
 
+Admin → Storage → *Migrate* is the usual way. The CLI does the same in the foreground (useful
+for scripts and very large stores):
+
 ```sh
 qatlas artifacts migrate --from local --to s3 --dry-run    # list what would be copied
-qatlas artifacts migrate --from local --to s3              # copy; prints [n/total] per file + a summary
-# set QATLAS_STORAGE=s3 and restart server + worker, then run the migrate once more for
-# files written in between (already copied objects with the same size are skipped)
-qatlas artifacts check                                     # every non-expired artifact present in the active store?
-qatlas artifacts migrate --from local --to s3 --delete-local   # optional: remove the copied local files
+qatlas artifacts migrate --from local --to s3              # copy + switch each row; [n/total] per file + a summary
+qatlas artifacts check                                     # every non-expired artifact present in the store of its backend?
+qatlas artifacts migrate --from local --to s3 --delete-local   # optional: also remove the local copies
 ```
 
 With docker-compose run them as `docker compose -f deploy/docker-compose.yml exec server qatlas
 artifacts …` (the server container has the artifacts volume); with systemd as `sudo qatlas
-artifacts …`. The command reads the non-purged `artifacts` rows (orphan files without a row are
-not copied), uploads with the stored content type and verifies the size; the database is not
-modified. Local files are kept unless `--delete-local`. `--from s3 --to local` works for a
-rollback. Exit status 1 when an object failed (`migrate`) or is missing / has the wrong size
-(`check`); `check --store local|s3` checks a store other than the active one.
+artifacts …`. S3 settings come from `QATLAS_S3_*` when complete, otherwise from Admin → Storage
+(needs `QATLAS_MASTER_KEY`). The command reads the non-purged `artifacts` rows stored on
+`--from` (orphan files without a row are not copied), uploads with the stored content type,
+verifies the size and then points the row at `--to`, so downloads keep working throughout.
+Where *new* artifacts go is not changed (Admin → Storage or `QATLAS_STORAGE`). Local files are
+kept unless `--delete-local` (which also cleans up sources left by an earlier run).
+`--from s3 --to local` works for a rollback. Exit status 1 when an object failed (`migrate`) or
+is missing / has the wrong size / sits on an unconfigured backend (`check`; `--store local|s3`
+checks only the artifacts on that backend).
 
 ---
 

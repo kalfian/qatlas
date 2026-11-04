@@ -87,9 +87,9 @@ type Options struct {
 	// Requires Enqueuer.
 	Runs     bool
 	Enqueuer jobs.Enqueuer
-	// Store keeps run attachments (only needed with Runs); nil = local store
+	// Stores keep run attachments (only needed with Runs); nil = local store
 	// under QATLAS_DATA_DIR/artifacts.
-	Store artifacts.Store
+	Stores artifacts.Stores
 	// Out receives the progress report (nil = io.Discard).
 	Out io.Writer
 }
@@ -255,15 +255,15 @@ func Demo(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *s
 		s.adminToken = "adm_" + randomHex(12)
 	}
 	if opts.Runs {
-		store := opts.Store
-		if store == nil {
+		stores := opts.Stores
+		if stores == nil {
 			ls, err := artifacts.NewLocalStore(filepath.Join(cfg.DataDir, "artifacts"))
 			if err != nil {
 				return err
 			}
-			store = ls
+			stores = artifacts.Single(ls)
 		}
-		s.runs = runs.New(pool, opts.Enqueuer, store, nil, logger)
+		s.runs = runs.New(pool, opts.Enqueuer, stores, nil, logger)
 	}
 
 	if err := s.seedUsers(ctx, f.Users); err != nil {

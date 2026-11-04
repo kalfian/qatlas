@@ -17,7 +17,9 @@ import (
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivermigrate"
 
+	"github.com/kalfian/qatlas/backend/internal/artifacts"
 	"github.com/kalfian/qatlas/backend/internal/jobs"
+	"github.com/kalfian/qatlas/backend/internal/storage"
 )
 
 // Queues.
@@ -52,6 +54,21 @@ func (e *Enqueuer) EnqueueRun(ctx context.Context, tx pgx.Tx, runID uuid.UUID) e
 	}
 	return nil
 }
+
+// EnqueueStorageMigration inserts storage_migrate inside tx (queue maintenance,
+// one attempt: the job records its own failure and can be started again).
+func (e *Enqueuer) EnqueueStorageMigration(ctx context.Context, tx pgx.Tx, migrationID uuid.UUID) (int64, error) {
+	res, err := e.client.InsertTx(ctx, tx, jobs.StorageMigrateArgs{MigrationID: migrationID}, &river.InsertOpts{
+		Queue:       QueueMaintenance,
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("enqueue storage_migrate: %w", err)
+	}
+	return res.Job.ID, nil
+}
+
+var _ jobs.StorageMigrationEnqueuer = (*Enqueuer)(nil)
 
 // NewInsertOnlyClient is the River client of `qatlas server`: it inserts jobs but never
 // works them.
@@ -125,6 +142,23 @@ func (w *retentionWorker) Work(ctx context.Context, _ *river.Job[RetentionArgs])
 	}
 	w.log.Info("artifact retention done", "purged", n)
 	return nil
+}
+
+// storageMigrateWorker works jobs.StorageMigrateArgs (storage.RunMigration).
+type storageMigrateWorker struct {
+	river.WorkerDefaults[jobs.StorageMigrateArgs]
+	pool   *pgxpool.Pool
+	stores artifacts.Stores
+	log    *slog.Logger
+}
+
+// Timeout: copying a large artifact store can take hours.
+func (w *storageMigrateWorker) Timeout(*river.Job[jobs.StorageMigrateArgs]) time.Duration {
+	return 24 * time.Hour
+}
+
+func (w *storageMigrateWorker) Work(ctx context.Context, job *river.Job[jobs.StorageMigrateArgs]) error {
+	return storage.RunMigration(ctx, w.pool, w.stores, job.Args.MigrationID, w.log)
 }
 
 // ------------------------------------------------------------------ migrations

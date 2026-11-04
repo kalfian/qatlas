@@ -223,6 +223,71 @@ export interface paths {
         patch: operations["adminUpdateUser"];
         trace?: never;
     };
+    "/admin/settings/storage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Artifact storage configuration (admin, session only). Secrets are never returned. */
+        get: operations["adminGetStorageSettings"];
+        /**
+         * @description Saves the storage configuration in the database (secret encrypted with the master key) after a successful
+         *     connection probe (bucket exists, put + delete a probe object). Server and worker switch without a restart.
+         *     Omit `s3.secret_access_key` to keep the stored secret; it is required the first time. Refused with 409
+         *     `env_override` when `QATLAS_STORAGE` is set in the environment. 422 `validation_failed` details use the
+         *     paths `s3.<field>` (`s3.endpoint`, `s3.region`, `s3.bucket`, `s3.access_key_id`, `s3.secret_access_key`,
+         *     `s3.prefix`; `backend`, `s3` for a missing block) for input errors and `checks.<name>`
+         *     (`checks.connect|bucket|write|read|delete`) for the first failed probe check (earlier checks passed).
+         */
+        put: operations["adminUpdateStorageSettings"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/settings/storage/test": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Probes a storage configuration without saving it (omitted secret = the stored one). */
+        post: operations["adminTestStorageSettings"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/admin/settings/storage/migrate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * @description Starts a background job copying artifacts that live on another backend into the active one (idempotent).
+         *     Progress appears in `StorageSettings.migration`. Allowed under an environment override (moves artifacts into
+         *     the env backend). With nothing to move the migration is recorded as `done` with `total` 0 right away.
+         *     409 while a migration is queued or running, or while S3 is selected but unreachable (fallback, see `warning`).
+         */
+        post: operations["adminMigrateArtifacts"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/users/{id}/invite-link": {
         parameters: {
             query?: never;
@@ -918,6 +983,87 @@ export interface components {
             last_login_at: string | null;
             /** Format: date-time */
             created_at: string;
+        };
+        /** @enum {string} */
+        StorageBackend: "local" | "s3";
+        StorageSettings: {
+            active_backend: components["schemas"]["StorageBackend"];
+            /**
+             * @description Where the active configuration comes from; env wins when QATLAS_STORAGE is set
+             * @enum {string}
+             */
+            source: "default" | "database" | "env";
+            /** @description True when QATLAS_STORAGE is set in the environment (UI is read-only) */
+            env_override: boolean;
+            s3: {
+                /** @example https://garage.kalfian.work */
+                endpoint: string;
+                /** @example garage */
+                region: string;
+                /** @example qatlas-artifacts */
+                bucket: string;
+                access_key_id: string;
+                prefix: string;
+                force_path_style: boolean;
+                secret_set: boolean;
+                /** Format: date-time */
+                secret_updated_at: string | null;
+            };
+            /** @description Non-purged artifact counts per backend they are stored on */
+            artifacts: {
+                local: number;
+                s3: number;
+                bytes_local: number;
+                bytes_s3: number;
+            };
+            migration: components["schemas"]["StorageMigration"] | null;
+            /** Format: date-time */
+            updated_at: string | null;
+            updated_by: components["schemas"]["UserRef"] | null;
+            /** @description Why the configured storage is not (fully) in use, e.g. S3 selected in the database but unreachable at startup: new artifacts are stored locally until it works again (re-checked every minute) */
+            warning?: string | null;
+        };
+        StorageMigration: {
+            /** @enum {string} */
+            status: "queued" | "running" | "done" | "failed";
+            from: components["schemas"]["StorageBackend"];
+            to: components["schemas"]["StorageBackend"];
+            total: number;
+            copied: number;
+            failed: number;
+            /** Format: date-time */
+            started_at: string | null;
+            /** Format: date-time */
+            finished_at: string | null;
+            error: string | null;
+        };
+        StorageSettingsInput: {
+            backend: components["schemas"]["StorageBackend"];
+            s3?: {
+                endpoint: string;
+                /** @default us-east-1 */
+                region: string;
+                bucket: string;
+                access_key_id: string;
+                /** @description Omit to keep the stored secret */
+                secret_access_key?: string;
+                prefix?: string;
+                /** @default true */
+                force_path_style: boolean;
+            };
+        };
+        StorageTestResult: {
+            ok: boolean;
+            message: string;
+            latency_ms: number;
+            checks: {
+                /** @enum {string} */
+                name: "connect" | "bucket" | "write" | "read" | "delete";
+                ok: boolean;
+                message: string;
+                /** @description Duration of this check (0 when skipped) */
+                latency_ms?: number;
+            }[];
         };
         UserInvite: {
             user: components["schemas"]["User"];
@@ -1835,6 +1981,108 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+        };
+    };
+    adminGetStorageSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageSettings"];
+                };
+            };
+            403: components["responses"]["Error"];
+        };
+    };
+    adminUpdateStorageSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageSettings"];
+                };
+            };
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    adminTestStorageSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description Probe result */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageTestResult"];
+                };
+            };
+        };
+    };
+    adminMigrateArtifacts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: {
+            content: {
+                "application/json": {
+                    /**
+                     * @description Delete the source file after a verified copy
+                     * @default false
+                     */
+                    delete_source?: boolean;
+                };
+            };
+        };
+        responses: {
+            /** @description Started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageSettings"];
+                };
+            };
+            409: components["responses"]["Error"];
         };
     };
     adminRegenerateInvite: {

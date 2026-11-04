@@ -64,7 +64,7 @@ Script `deploy/install.sh` (Phase 2/3) menangani: buat user, salin file, install
 | `QATLAS_BASE_URL` | `https://qatlas.example.com` (untuk redirect OAuth & link invite) |
 | `QATLAS_MASTER_KEY` | 32 byte base64 — enkripsi secret environment (**wajib di-backup terpisah**) |
 | `QATLAS_DATA_DIR` | `/var/lib/qatlas` |
-| `QATLAS_STORAGE` | `local` (default) / `s3` (+ `QATLAS_S3_*`, lihat bagian berikut) |
+| `QATLAS_STORAGE` | kosong (default) = pakai **Admin → Storage**; `local` / `s3` (+ `QATLAS_S3_*`) = override dari env, lihat bagian berikut |
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS` | |
 | `WORKER_CONCURRENCY` | `2` |
 | `QATLAS_RUNNER_CMD` | perintah runner Node |
@@ -73,17 +73,28 @@ Nilai rahasia tidak di-commit; `.env.example` hanya berisi placeholder.
 
 ## Artifact storage: local vs S3 (Garage)
 
-| | `QATLAS_STORAGE=local` (default) | `QATLAS_STORAGE=s3` |
+**Atur storage dari Admin → Storage (direkomendasikan); variabel env meng-override.**
+
+- **Admin → Storage** (admin, sesi login): pilih local atau S3, isi endpoint, region, bucket, access key ID dan secret → *Test* (connect / bucket / write / read / delete beserta latensi) → *Save*. Save selalu mem-probe bucket dulu (put + read + delete objek `.qatlas-probe-…`); gagal → 422 dengan check yang gagal (`checks.<nama>`) dan **tidak ada yang disimpan**.
+- **Penyimpanan setting:** tabel `system_settings` (key `storage`); secret S3 dienkripsi AES-256-GCM dengan `QATLAS_MASTER_KEY` (sama seperti secret environment), **write-only** (tidak pernah dikembalikan API; kosongkan field untuk mempertahankan secret lama), tidak masuk audit log (`settings.storage.update` hanya mencatat field yang berubah + apakah secret diganti).
+- **Ganti tanpa restart:** proses yang menyimpan langsung menukar store-nya, lalu `NOTIFY qatlas_settings` membuat server/worker lain me-reload (listener LISTEN dengan reconnect; reload juga saat start). Upload yang sedang berjalan selesai di store tempat ia mulai.
+- **Backend per artifact:** tiap baris `artifacts` mencatat tempat file-nya ditulis (`artifacts.storage` = `local`|`s3`). Download, retention dan delete memakai backend baris itu, jadi file lama tetap terbaca setelah pindah backend (setting S3 tetap disimpan saat kembali ke local). Artifact di S3 sementara S3 tidak dikonfigurasi → 503 `storage_unavailable`. Mengganti bucket/endpoint S3 **tidak** memindahkan objek.
+- **Migrasi dari UI:** tombol *Migrate* menjalankan job worker `storage_migrate` (queue `maintenance`) yang menyalin artifact dari backend lain ke backend aktif, memverifikasi ukuran, mengubah baris, opsional menghapus sumber (`delete_source`), dan menampilkan progres (total/copied/failed). Hanya satu sekaligus (409); aman diulang; tanpa artifact untuk dipindah → langsung `done` dengan total 0.
+- **Override env:** `QATLAS_STORAGE` yang tidak kosong (`local` | `s3` + `QATLAS_S3_*`) menang atas database; Admin → Storage menampilkan nilai env (read-only), Save → 409 `env_override`. Hapus `QATLAS_STORAGE` dan restart sekali untuk mengelola dari UI.
+- **Setting DB rusak tidak menghalangi start:** bila S3 yang dipilih di UI gagal probe saat start, proses mencatat error, menyimpan artifact baru ke lokal, mengecek ulang tiap menit, dan Admin → Storage menampilkan alasannya (`warning`).
+- **Upgrade dari instance dengan `QATLAS_STORAGE=s3`:** baris artifact lama default `local`. Biarkan `QATLAS_STORAGE=s3` di env saat `qatlas migrate up` / start pertama setelah upgrade — baris lama ditandai `s3` sekali (marker `artifacts_storage_backfill`). Bila terlewat: `UPDATE artifacts SET storage = 's3' WHERE storage = 'local';` (cek dengan `qatlas artifacts check`).
+
+| | local (default) | S3 |
 |---|---|---|
-| Lokasi file | `QATLAS_DATA_DIR/artifacts/<project>/<run>/<artifact>.<ext>` | bucket `QATLAS_S3_BUCKET`, key `[QATLAS_S3_PREFIX/]<project>/<run>/<artifact>.<ext>` (format key sama) |
+| Lokasi file | `QATLAS_DATA_DIR/artifacts/<project>/<run>/<artifact>.<ext>` | bucket, key `[prefix/]<project>/<run>/<artifact>.<ext>` (format key sama) |
 | Server + worker beda CT | butuh direktori bersama (NFS/mount) | cukup akses jaringan ke endpoint S3 |
 | Backup | ikut mount point | sisi Garage (snapshot CT / data dir) |
 
-Variabel (`backend/.env.example`):
+Variabel env (hanya untuk override; field yang sama ada di Admin → Storage, `backend/.env.example`):
 
 | Variable | Default | Keterangan |
 |---|---|---|
-| `QATLAS_STORAGE` | `local` | `local` atau `s3` |
+| `QATLAS_STORAGE` | kosong (= Admin → Storage) | `local` atau `s3`: mengunci backend, UI read-only |
 | `QATLAS_S3_ENDPOINT` | — | URL dengan skema, tanpa path: `https://garage.kalfian.work` |
 | `QATLAS_S3_REGION` | `us-east-1` | Garage: nilai `s3_region` di `garage.toml` (biasanya `garage`) |
 | `QATLAS_S3_BUCKET` | — | bucket harus sudah ada |
@@ -92,18 +103,18 @@ Variabel (`backend/.env.example`):
 | `QATLAS_S3_PREFIX` | kosong | prefix key opsional bila bucket dipakai bersama |
 
 Perilaku:
-- **Validasi saat start.** Variabel yang kurang/salah format → `qatlas` berhenti dengan pesan per variabel. `server`, `worker` dan `all` memeriksa bucket (HEAD bucket + tulis & hapus satu objek probe `.qatlas-probe-…`); gagal → proses tidak start (`artifact storage check failed (QATLAS_STORAGE=s3): … bucket does not exist` / `Access Denied (check QATLAS_S3_ACCESS_KEY …)`).
-- **`/readyz`** melaporkan `database`, `storage` (`ok`/`error`) dan `storage_backend` (`local`/`s3`); storage tak terjangkau → 503 `artifact storage unreachable` (detail hanya di log).
+- **Validasi saat start (override env).** Variabel yang kurang/salah format → `qatlas` berhenti dengan pesan per variabel. Dengan `QATLAS_STORAGE` di env, `server`, `worker` dan `all` memeriksa store (bucket ada + tulis, baca & hapus satu objek probe `.qatlas-probe-…`); gagal → proses tidak start (`artifact storage check failed (QATLAS_STORAGE=s3): … bucket does not exist` / `Access Denied (check QATLAS_S3_ACCESS_KEY …)`). Setting dari UI tidak pernah menghalangi start (lihat di atas).
+- **`/readyz`** melaporkan `database`, `storage` (`ok`/`error`) dan `storage_backend` (backend untuk artifact baru: `local`/`s3`); storage tak terjangkau → 503 `artifact storage unreachable` (detail hanya di log).
 - **Download tetap lewat server.** Bucket tetap private; `GET /api/v1/artifacts/{id}` mengecek RBAC lalu men-stream objek. Range (seek video) diterjemahkan menjadi GET ber-`Range` ke S3 (paling banyak 8 MiB per request, dikunci ke ETag objek), jadi seek tidak mengunduh seluruh file. Header CSP sandbox, `ETag` (id artifact) dan `Last-Modified` sama seperti mode lokal.
 - **Upload** (screenshot/video dari worker, lampiran tester) dikirim dengan `Content-Type` artifact; ukuran tak diketahui ≤ 16 MiB → satu PUT, lebih besar → multipart.
-- **Retention** menghapus objek S3 seperti file lokal.
+- **Retention** menghapus objek dari backend masing-masing baris (S3 atau lokal); baris di backend yang tidak dikonfigurasi dibiarkan.
 
 ### Garage di CT terpisah (mis. `garage.kalfian.work`)
 
 1. Garage WebUI → **Buckets** → buat bucket (mis. `qatlas`).
 2. Garage WebUI → **Keys** → *Create key* (mis. `qatlas-app`) → salin **Access Key ID** (`GK…`) dan **Secret Key** (tampilkan dengan ikon mata / *show secret*). Lewat CLI: `garage key create qatlas-app`, lalu `garage key info --secret-key qatlas-app`.
 3. Beri key izin **Read** + **Write** ke bucket (WebUI: halaman bucket → *Permissions* / *Allow key*; CLI: `garage bucket allow --read --write qatlas --key qatlas-app`). Izin *Owner* tidak perlu.
-4. Isi env (`/etc/qatlas/qatlas.env` atau `deploy/.env`):
+4. Admin → Storage → S3: endpoint `https://garage.kalfian.work`, region `garage`, bucket `qatlas`, access key ID + secret → *Test* → *Save*. (Atau kunci lewat env di `/etc/qatlas/qatlas.env` / `deploy/.env` lalu restart:)
    ```
    QATLAS_STORAGE=s3
    QATLAS_S3_ENDPOINT=https://garage.kalfian.work
@@ -112,7 +123,7 @@ Perilaku:
    QATLAS_S3_ACCESS_KEY=GK…
    QATLAS_S3_SECRET_KEY=…
    ```
-5. Restart server + worker; cek `curl -fsS http://127.0.0.1:8090/readyz` → `"storage":"ok","storage_backend":"s3"`.
+5. Pindahkan file lama dengan Admin → Storage → *Migrate* (atau CLI di bawah); cek `curl -fsS http://127.0.0.1:8090/readyz` → `"storage":"ok","storage_backend":"s3"`.
 
 ### Garage di docker-compose (profile `s3`)
 
@@ -120,22 +131,23 @@ Perilaku:
 
 ```sh
 docker compose -f deploy/docker-compose.yml --profile s3 up -d garage
-deploy/garage/init.sh              # layout node tunggal, bucket qatlas, key qatlas-app → mencetak baris QATLAS_S3_*
-# salin baris itu ke deploy/.env (endpoint http://garage:3900), lalu:
+deploy/garage/init.sh              # layout node tunggal, bucket qatlas, key qatlas-app → mencetak nilainya
 docker compose -f deploy/docker-compose.yml --profile s3 up -d
+# isi di Admin → Storage (endpoint http://garage:3900, region garage), atau tempel baris QATLAS_S3_* ke deploy/.env sebagai override
 ```
 
 ### Pindah dari lokal ke S3
 
+Cara biasa: simpan S3 di Admin → Storage, lalu *Migrate*. CLI melakukan hal yang sama di foreground (untuk script / store sangat besar):
+
 ```sh
 qatlas artifacts migrate --from local --to s3 --dry-run   # daftar file yang akan disalin
-qatlas artifacts migrate --from local --to s3             # salin (idempotent; objek dengan ukuran sama dilewati)
-# set QATLAS_STORAGE=s3, restart server + worker; jalankan migrate sekali lagi untuk file yang masuk di sela waktu
-qatlas artifacts check                                    # setiap artifact (belum expired) ada di store aktif?
-qatlas artifacts migrate --from local --to s3 --delete-local   # opsional: hapus file lokal yang sudah tersalin
+qatlas artifacts migrate --from local --to s3             # salin + ubah baris (idempotent; objek dengan ukuran sama tidak disalin ulang)
+qatlas artifacts check                                    # setiap artifact (belum expired) ada di store backend-nya?
+qatlas artifacts migrate --from local --to s3 --delete-local   # opsional: hapus juga salinan lokal
 ```
 
-Migrasi membaca baris `artifacts` yang belum di-purge (file yatim tanpa baris DB tidak disalin), menyalin dengan `Content-Type` dari DB dan memverifikasi ukuran; database tidak diubah karena key sama. `--from s3 --to local` juga bisa (rollback). Exit status 1 bila ada objek gagal (`migrate`) atau hilang/beda ukuran (`check`).
+Migrasi membaca baris `artifacts` yang belum di-purge dan tersimpan di `--from` (file yatim tanpa baris DB tidak disalin), menyalin dengan `Content-Type` dari DB, memverifikasi ukuran, lalu mengubah `artifacts.storage` ke `--to` sehingga download tetap jalan selama migrasi. Setting S3 diambil dari `QATLAS_S3_*` bila lengkap, selain itu dari Admin → Storage. Backend untuk artifact *baru* tidak diubah (Admin → Storage / `QATLAS_STORAGE`). `--from s3 --to local` juga bisa (rollback). Exit status 1 bila ada objek gagal (`migrate`) atau hilang/beda ukuran/di backend yang tidak dikonfigurasi (`check`).
 
 ## Jaringan & TLS
 

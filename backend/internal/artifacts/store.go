@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/kalfian/qatlas/backend/internal/config"
 )
 
 // ErrNotFound is returned by Store.Open / Store.Delete when the object does not exist.
@@ -26,10 +28,10 @@ type Info struct {
 	ModTime time.Time
 }
 
-// Store is the blob storage behind artifacts: LocalStore (QATLAS_STORAGE=local)
-// or S3Store (QATLAS_STORAGE=s3). Keys are slash-separated relative paths
-// ("<project>/<run>/<artifact>.png") and identical in every store, so
-// `qatlas artifacts migrate` copies objects without touching the database.
+// Store is the blob storage behind artifacts: LocalStore or S3Store. Keys are
+// slash-separated relative paths ("<project>/<run>/<artifact>.png") and
+// identical in every store, so migrating an object only copies it and flips
+// artifacts.storage.
 type Store interface {
 	// Put stores r under key. size is the expected byte count, or -1 when unknown;
 	// a mismatch is an error and leaves nothing behind.
@@ -42,6 +44,82 @@ type Store interface {
 	Delete(ctx context.Context, key string) error
 }
 
+// Stores resolves the store of each storage backend. Every artifact row records
+// the backend it was written to (artifacts.storage); reads, deletes and
+// retention go to that backend's store, new artifacts to Writer. The
+// implementation behind the API, server and worker is storage.Registry (hot
+// swappable from Admin → Storage); StoreSet is a fixed one.
+type Stores interface {
+	// Writer is the backend and store for new artifacts. Callers take it once
+	// per upload, so an upload finishes on the store it started with even when
+	// the active backend changes meanwhile.
+	Writer() (backend string, store Store)
+	// For returns the store of backend ("local" | "s3"); an error wrapping
+	// ErrBackendUnavailable when that backend is not configured.
+	For(backend string) (Store, error)
+}
+
+// ErrBackendUnavailable is returned by Stores.For for a backend that is not
+// configured (e.g. an artifact stored in S3 after the S3 settings were removed).
+var ErrBackendUnavailable = errors.New("artifact storage backend is not configured")
+
+// Backends lists every storage backend name (artifacts.storage CHECK).
+var Backends = []string{config.StorageLocal, config.StorageS3}
+
+// StoreSet is a fixed Stores: Local and/or S3, writing to Active.
+type StoreSet struct {
+	Active string
+	Local  Store
+	S3     Store
+}
+
+var _ Stores = StoreSet{}
+
+// Single wraps one store as Stores (it is the writer and serves its own backend only).
+func Single(s Store) StoreSet {
+	set := StoreSet{Active: Backend(s)}
+	if set.Active == config.StorageS3 {
+		set.S3 = s
+	} else {
+		set.Active, set.Local = config.StorageLocal, s
+	}
+	return set
+}
+
+// Writer implements Stores.
+func (s StoreSet) Writer() (string, Store) {
+	st, _ := s.For(s.Active)
+	return s.Active, st
+}
+
+// For implements Stores.
+func (s StoreSet) For(backend string) (Store, error) {
+	var st Store
+	switch backend {
+	case config.StorageLocal:
+		st = s.Local
+	case config.StorageS3:
+		st = s.S3
+	default:
+		return nil, fmt.Errorf("%w: unknown backend %q", ErrBackendUnavailable, backend)
+	}
+	if st == nil {
+		return nil, fmt.Errorf("%w: %s", ErrBackendUnavailable, backend)
+	}
+	return st, nil
+}
+
+// available lists the backends stores can serve.
+func available(stores Stores) []string {
+	var out []string
+	for _, b := range Backends {
+		if _, err := stores.For(b); err == nil {
+			out = append(out, b)
+		}
+	}
+	return out
+}
+
 // Pinger is implemented by stores with a cheap reachability check (/readyz).
 type Pinger interface {
 	Ping(ctx context.Context) error
@@ -51,9 +129,9 @@ type Pinger interface {
 func Backend(s Store) string {
 	switch s.(type) {
 	case *LocalStore:
-		return "local"
+		return config.StorageLocal
 	case *S3Store:
-		return "s3"
+		return config.StorageS3
 	default:
 		return "custom"
 	}

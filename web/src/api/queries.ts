@@ -13,6 +13,8 @@ import type {
   RunOptions,
   RunStatus,
   RunTrigger,
+  StorageSettings,
+  StorageSettingsInput,
   SystemRole,
   TestCaseInput,
 } from './types'
@@ -24,6 +26,7 @@ export const qk = {
   tokens: ['me', 'tokens'] as const,
   myManualRuns: ['me', 'manual-runs'] as const,
   adminUsers: ['admin', 'users'] as const,
+  adminStorage: ['admin', 'storage'] as const,
   projects: ['projects'] as const,
   project: (key: string) => ['projects', key] as const,
   stats: (key: string, range: string) => ['projects', key, 'stats', range] as const,
@@ -185,6 +188,43 @@ export function useAdminInviteLink() {
   return useMutation({
     mutationFn: (id: string) => unwrap(api.POST('/admin/users/{id}/invite-link', { params: { path: { id } } })),
     onSuccess: () => qc.invalidateQueries({ queryKey: qk.adminUsers }),
+  })
+}
+
+/** Migrasi artifact sedang berjalan di server → GET storage di-poll tiap 2 detik. */
+export function storageMigrationActive(s: StorageSettings | undefined): boolean {
+  const st = s?.migration?.status
+  return st === 'queued' || st === 'running'
+}
+
+export function useStorageSettings() {
+  return useQuery({
+    queryKey: qk.adminStorage,
+    queryFn: () => unwrap(api.GET('/admin/settings/storage')),
+    refetchInterval: (q) => (storageMigrationActive(q.state.data) ? 2_000 : false),
+  })
+}
+
+export function useUpdateStorageSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: StorageSettingsInput) => unwrap(api.PUT('/admin/settings/storage', { body })),
+    onSuccess: (s) => qc.setQueryData(qk.adminStorage, s),
+  })
+}
+
+/** Probe tanpa menyimpan; `s3.secret_access_key` yang dihilangkan = secret tersimpan. */
+export function useTestStorageSettings() {
+  return useMutation({
+    mutationFn: (body: StorageSettingsInput) => unwrap(api.POST('/admin/settings/storage/test', { body })),
+  })
+}
+
+export function useMigrateArtifacts() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: { delete_source: boolean }) => unwrap(api.POST('/admin/settings/storage/migrate', { body })),
+    onSuccess: (s) => qc.setQueryData(qk.adminStorage, s),
   })
 }
 

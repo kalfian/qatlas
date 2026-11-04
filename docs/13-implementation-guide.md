@@ -35,6 +35,7 @@ backend/                       Go module `github.com/kalfian/qatlas/backend` (go
   internal/flows               flows
   internal/runs                run creation/snapshots, manual results, attachments, cancel/rerun, list/detail
   internal/artifacts           ArtifactStore (local FS, S3), GET /artifacts/{id} with Range
+  internal/storage             Admin → Storage settings (DB, encrypted secret), Registry hot swap, storage migration job
   internal/events              LISTEN/NOTIFY bus + SSE handler
   internal/worker              River jobs, runner supervisor (NDJSON), retention job
   internal/mcp                 MCP server (official go-sdk), tools call the same services

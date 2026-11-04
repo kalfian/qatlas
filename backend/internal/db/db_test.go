@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"io/fs"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
 
 	"github.com/kalfian/qatlas/backend/internal/db"
 	"github.com/kalfian/qatlas/backend/internal/db/testutil"
+	"github.com/kalfian/qatlas/backend/migrations"
 )
 
 func TestMigrationsRoundTripAndTx(t *testing.T) {
@@ -19,8 +21,15 @@ func TestMigrationsRoundTripAndTx(t *testing.T) {
 	if pending, err := db.HasPendingMigrations(ctx, pool); err != nil || pending {
 		t.Fatalf("pending=%v err=%v", pending, err)
 	}
-	if err := db.MigrateDown(ctx, pool, io.Discard); err != nil {
-		t.Fatalf("down: %v", err)
+	// Roll back every migration (each `migrate down` is one step).
+	files, err := fs.Glob(migrations.FS, "*.sql")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("migration files: %v %v", files, err)
+	}
+	for range files {
+		if err := db.MigrateDown(ctx, pool, io.Discard); err != nil {
+			t.Fatalf("down: %v", err)
+		}
 	}
 	var n int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM pg_tables WHERE schemaname = current_schema() AND tablename <> 'goose_db_version'`).Scan(&n); err != nil || n != 0 {
@@ -33,7 +42,7 @@ func TestMigrationsRoundTripAndTx(t *testing.T) {
 	// WithTx: rollback on error, commit on success.
 	id := db.NewID()
 	boom := errors.New("boom")
-	err := db.WithTx(ctx, pool, func(tx pgx.Tx) error {
+	err = db.WithTx(ctx, pool, func(tx pgx.Tx) error {
 		if _, err := tx.Exec(ctx, `INSERT INTO users (id, email, name) VALUES ($1, 'a@b.c', 'A')`, id); err != nil {
 			return err
 		}

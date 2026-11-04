@@ -42,6 +42,10 @@ type Config struct {
 	// Storage selects the artifact store: "local" (QATLAS_DATA_DIR/artifacts, the
 	// default) or "s3" (QATLAS_STORAGE).
 	Storage string
+	// StorageFromEnv is true when QATLAS_STORAGE is set in the environment: the
+	// environment then overrides the storage settings stored in the database
+	// (Admin → Storage becomes read-only). Unset, the database settings apply.
+	StorageFromEnv bool
 	// S3 configures the S3-compatible artifact store (QATLAS_S3_*). Required when
 	// Storage is "s3"; also used by `qatlas artifacts migrate --to s3`.
 	S3 S3Config
@@ -111,6 +115,7 @@ func load(getenv func(string) string) (*Config, error) {
 		RunnerCmd:          orDefault(get("QATLAS_RUNNER_CMD"), DefaultRunnerCmd),
 		RunTimeout:         DefaultRunTimeout,
 		Storage:            strings.ToLower(orDefault(get("QATLAS_STORAGE"), StorageLocal)),
+		StorageFromEnv:     get("QATLAS_STORAGE") != "",
 		S3: S3Config{
 			Endpoint:       strings.TrimRight(get("QATLAS_S3_ENDPOINT"), "/"),
 			Region:         orDefault(get("QATLAS_S3_REGION"), DefaultS3Region),
@@ -253,6 +258,10 @@ func (s S3Config) formatErrors() []error {
 	}
 	return errs
 }
+
+// ValidBucketName applies the S3 bucket naming rules (3-63 characters: a-z,
+// 0-9, '.', '-'; no leading/trailing '.'/'-', no "..").
+func ValidBucketName(b string) bool { return validBucket(b) }
 
 // validBucket applies the S3 bucket naming rules.
 func validBucket(b string) bool {

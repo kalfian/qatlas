@@ -96,8 +96,16 @@ func TestLoadStorage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Storage != StorageLocal || c.S3.Region != DefaultS3Region || !c.S3.ForcePathStyle {
-		t.Fatalf("storage defaults: %q %+v", c.Storage, c.S3)
+	if c.Storage != StorageLocal || c.StorageFromEnv || c.S3.Region != DefaultS3Region || !c.S3.ForcePathStyle {
+		t.Fatalf("storage defaults: %q %v %+v", c.Storage, c.StorageFromEnv, c.S3)
+	}
+	// Empty (docker-compose renders unset variables as "") is not an override.
+	if c, err := load(envMap(map[string]string{"QATLAS_STORAGE": "  "})); err != nil || c.StorageFromEnv {
+		t.Fatalf("empty QATLAS_STORAGE: %+v %v", c, err)
+	}
+	// An explicit QATLAS_STORAGE (even "local") is an environment override.
+	if c, err := load(envMap(map[string]string{"QATLAS_STORAGE": "local"})); err != nil || !c.StorageFromEnv || c.Storage != StorageLocal {
+		t.Fatalf("explicit local: %+v %v", c, err)
 	}
 
 	c, err = load(envMap(s3Env(map[string]string{"QATLAS_S3_PREFIX": "/qatlas/prod/", "QATLAS_STORAGE": "S3"})))
@@ -106,7 +114,7 @@ func TestLoadStorage(t *testing.T) {
 	}
 	want := S3Config{Endpoint: "https://garage.example.com", Region: "garage", Bucket: "qatlas-artifacts",
 		AccessKey: "GK0123456789abcdef01234567", SecretKey: "topsecretvalue", ForcePathStyle: true, Prefix: "qatlas/prod"}
-	if c.Storage != StorageS3 || c.S3 != want {
+	if c.Storage != StorageS3 || !c.StorageFromEnv || c.S3 != want {
 		t.Fatalf("s3 config: %q %+v", c.Storage, c.S3)
 	}
 	if err := c.S3.Validate(); err != nil {

@@ -26,6 +26,7 @@ import (
 	"github.com/kalfian/qatlas/backend/internal/artifacts"
 	"github.com/kalfian/qatlas/backend/internal/events"
 	"github.com/kalfian/qatlas/backend/internal/runs"
+	"github.com/kalfian/qatlas/backend/internal/storage"
 )
 
 // Config configures a worker process.
@@ -35,8 +36,10 @@ type Config struct {
 	MasterKey []byte
 	// DataDir is QATLAS_DATA_DIR (runner temp dirs live in DataDir/tmp).
 	DataDir string
-	// Store receives screenshots and videos (artifacts.LocalStore by default).
-	Store artifacts.Store
+	// Storage resolves the artifact stores: new screenshots and videos go to
+	// its writer, retention and storage migrations use each row's backend
+	// (storage.Registry, hot-swapped from Admin → Storage).
+	Storage artifacts.Stores
 	// RunnerCmd is QATLAS_RUNNER_CMD; RunnerDir its working directory ("" = cwd).
 	RunnerCmd string
 	RunnerDir string
@@ -70,8 +73,8 @@ func New(cfg Config) (*Worker, error) {
 	if cfg.Pool == nil {
 		return nil, errors.New("worker: pool is required")
 	}
-	if cfg.Store == nil {
-		return nil, errors.New("worker: artifact store is required")
+	if cfg.Storage == nil {
+		return nil, errors.New("worker: artifact storage is required")
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -102,7 +105,7 @@ func New(cfg Config) (*Worker, error) {
 	exec := NewExecutor(ExecutorConfig{
 		Pool:        cfg.Pool,
 		Runner:      sup,
-		Store:       cfg.Store,
+		Stores:      cfg.Storage,
 		MasterKey:   cfg.MasterKey,
 		DataDir:     cfg.DataDir,
 		RunTimeout:  cfg.RunTimeout,
@@ -116,13 +119,16 @@ func New(cfg Config) (*Worker, error) {
 	if err := river.AddWorkerSafely(workers, &runExecuteWorker{exec: exec, timeout: jobTimeout}); err != nil {
 		return nil, err
 	}
-	store := cfg.Store
+	stores := cfg.Storage
 	if err := river.AddWorkerSafely(workers, &retentionWorker{
 		purge: func(ctx context.Context) (int, error) {
-			return artifacts.Purge(ctx, cfg.Pool, store, time.Now(), cfg.Logger)
+			return artifacts.Purge(ctx, cfg.Pool, stores, time.Now(), cfg.Logger)
 		},
 		log: log,
 	}); err != nil {
+		return nil, err
+	}
+	if err := river.AddWorkerSafely(workers, &storageMigrateWorker{pool: cfg.Pool, stores: stores, log: cfg.Logger}); err != nil {
 		return nil, err
 	}
 
@@ -169,6 +175,11 @@ func (w *Worker) Run(ctx context.Context) error {
 		return fmt.Errorf("startup recovery: %w", err)
 	} else if n > 0 {
 		w.log.Warn("marked runs interrupted by a previous worker as error", "count", n)
+	}
+	if n, err := storage.RecoverMigrations(ctx, w.cfg.Pool); err != nil {
+		w.log.Warn("storage migration recovery failed", "err", err)
+	} else if n > 0 {
+		w.log.Warn("marked storage migrations interrupted by a previous worker as failed", "count", n)
 	}
 
 	w.sup.Start()

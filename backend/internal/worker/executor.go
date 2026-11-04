@@ -33,9 +33,10 @@ type SecretsFunc func(ctx context.Context, q db.Querier, envID uuid.UUID, key []
 
 // ExecutorConfig configures run execution.
 type ExecutorConfig struct {
-	Pool      *pgxpool.Pool
-	Runner    *Supervisor
-	Store     artifacts.Store
+	Pool   *pgxpool.Pool
+	Runner *Supervisor
+	// Stores receive screenshots and videos (the writer at upload time).
+	Stores    artifacts.Stores
 	MasterKey []byte
 	// DataDir is QATLAS_DATA_DIR; runner artifact dirs are DataDir/tmp/<run_id>.
 	DataDir string
@@ -837,11 +838,11 @@ func (h *segHandler) saveArtifact(ctx context.Context, q db.Querier, c *segCase,
 		h.log.Warn("refusing artifact outside the artifact dir", "path", path)
 		return uuid.Nil, false
 	}
-	if h.e.cfg.Store == nil {
+	if h.e.cfg.Stores == nil {
 		return uuid.Nil, false
 	}
 	caseID := c.id
-	a, err := artifacts.SaveFile(ctx, q, h.e.cfg.Store, h.rc.run.ProjectID, h.rc.run.ID, &caseID, stepID, kind, name, mime, clean)
+	a, err := artifacts.SaveFile(ctx, q, h.e.cfg.Stores, h.rc.run.ProjectID, h.rc.run.ID, &caseID, stepID, kind, name, mime, clean)
 	if err != nil {
 		h.log.Warn("could not save artifact", "kind", kind, "path", path, "err", err)
 		return uuid.Nil, false

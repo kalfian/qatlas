@@ -9,14 +9,17 @@ import type {
   RunCreate,
   RunOptions,
   RunStatus,
+  StorageSettingsInput,
   SystemRole,
   TestCaseInput,
 } from '@/api/types'
 import { can, type ProjectAction } from '@/lib/permissions'
 import { validateSteps } from '@/lib/steps'
 import {
+  activeStorageBackend,
   currentUser,
   db,
+  storageState,
   isFinal,
   newId,
   nowIso,
@@ -47,6 +50,7 @@ import {
 import { junitFilename, runToJUnit } from './junit'
 import { DEFAULT_RUN_OPTIONS } from './seed'
 import { completeManualCase, createRun } from './simulator'
+import { probeFailureDetails, probeStorage, saveStorage, startMigration, toStorageSettings, validateStorageInput } from './storage'
 
 const API = '/api/v1'
 
@@ -336,6 +340,38 @@ export const handlers = [
     const expires_at = new Date(Date.now() + 72 * 3600_000).toISOString()
     db().invites.push({ token, user_id: u.id, kind: u.status === 'invited' ? 'invite' : 'reset_password', expires_at, used_at: null })
     return HttpResponse.json({ user: toUser(u), invite_url: `${location.origin}/invite/${token}`, expires_at })
+  })),
+
+  // ---------- admin: artifact storage (lihat mocks/storage.ts untuk aturan simulasi)
+  http.get(`${API}/admin/settings/storage`, r(() => {
+    requireAdmin()
+    return HttpResponse.json(toStorageSettings())
+  }, { mutate: true, latency: 60 })),
+  http.put(`${API}/admin/settings/storage`, r(async ({ request }) => {
+    const admin = requireAdmin()
+    const st = storageState()
+    if (st.env_override) fail(409, 'env_override', 'Storage is set by environment variables (QATLAS_STORAGE); remove them to manage it here')
+    const input = await body<StorageSettingsInput>(request)
+    const invalid = validateStorageInput(input, st.s3.secret !== null)
+    if (invalid.length) fail(422, 'validation_failed', 'Storage settings are invalid', invalid)
+    const probe = probeStorage(input, st.s3.secret)
+    await delay(probe.latency_ms * 3)
+    if (!probe.ok) fail(422, 'storage_check_failed', `Storage check failed: ${probe.message}`, probeFailureDetails(probe))
+    saveStorage(input, admin.id)
+    return HttpResponse.json(toStorageSettings())
+  }, { mutate: true })),
+  http.post(`${API}/admin/settings/storage/test`, r(async ({ request }) => {
+    requireAdmin()
+    const input = await body<StorageSettingsInput>(request)
+    const result = probeStorage(input, storageState().s3.secret)
+    await delay(result.latency_ms * 3)
+    return HttpResponse.json(result)
+  })),
+  http.post(`${API}/admin/settings/storage/migrate`, m(async ({ request }) => {
+    requireAdmin()
+    const b = await body<{ delete_source?: boolean }>(request)
+    if (!startMigration(b.delete_source === true)) fail(409, 'conflict', 'An artifact migration is already running')
+    return HttpResponse.json(toStorageSettings(), { status: 202 })
   })),
 
   // ---------- projects
@@ -939,6 +975,7 @@ export const handlers = [
       uploaded_by: user.id,
       created_at: nowIso(),
       expired: false,
+      storage: activeStorageBackend(),
     }
     db().artifacts.push(art)
     c.attachment_ids.push(art.id)

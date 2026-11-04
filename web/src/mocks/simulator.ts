@@ -1,6 +1,7 @@
 import type { RunOptions, RunTrigger, Step, StepStatus } from '@/api/types'
 import { getAction, summarizeStep } from '@/lib/steps'
 import {
+  activeStorageBackend,
   db,
   isFinal,
   newId,
@@ -525,6 +526,7 @@ function addArtifact(run: DbRun, c: DbRunCase, step: DbRunStep | null, kind: DbA
     uploaded_by: null,
     created_at: at,
     expired: false,
+    storage: activeStorageBackend(),
   }
   db().artifacts.push(a)
   return a

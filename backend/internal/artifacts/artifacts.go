@@ -44,6 +44,9 @@ type Artifact struct {
 	Expired   bool       `json:"expired"`
 	RunStepID *uuid.UUID `json:"run_step_id"`
 	CreatedAt time.Time  `json:"created_at"`
+	// Storage is the backend the object was written to (artifacts.storage);
+	// internal, not part of the API.
+	Storage string `json:"-"`
 }
 
 // URLFor is the API download URL of an artifact.
@@ -85,16 +88,17 @@ type Meta struct {
 	UploadedBy *uuid.UUID // tester attachments
 }
 
-// Save uploads file to store and inserts the artifacts row (expires_at =
-// now + the project's artifact_retention_days). The worker uses it for
-// screenshots / videos; afterwards it sets run_steps.screenshot_artifact_id or
+// Save uploads file to the active store (stores.Writer) and inserts the
+// artifacts row with that backend (expires_at = now + the project's
+// artifact_retention_days). The worker uses it for screenshots / videos;
+// afterwards it sets run_steps.screenshot_artifact_id or
 // run_cases.video_artifact_id itself.
 //
 // q may be a transaction; if the INSERT fails the uploaded object is deleted.
-// If the caller's transaction later rolls back, the caller should Delete the
-// object (Artifact.ID → StorageKey) — or let it be orphaned.
-func Save(ctx context.Context, q db.Querier, store Store, projectID, runID uuid.UUID, caseID, stepID *uuid.UUID, kind, name, mime string, file io.Reader) (Artifact, error) {
-	return SaveWith(ctx, q, store, Meta{
+// If the caller's transaction later rolls back, the caller should Discard the
+// returned artifact — or let the object be orphaned.
+func Save(ctx context.Context, q db.Querier, stores Stores, projectID, runID uuid.UUID, caseID, stepID *uuid.UUID, kind, name, mime string, file io.Reader) (Artifact, error) {
+	return SaveWith(ctx, q, stores, Meta{
 		ProjectID: projectID, RunID: runID, RunCaseID: caseID, RunStepID: stepID,
 		Kind: kind, Name: name, MIME: mime,
 	}, file, -1)
@@ -102,7 +106,7 @@ func Save(ctx context.Context, q db.Querier, store Store, projectID, runID uuid.
 
 // SaveFile is Save for a file on disk (runner artifact_dir). name defaults to
 // the file's base name.
-func SaveFile(ctx context.Context, q db.Querier, store Store, projectID, runID uuid.UUID, caseID, stepID *uuid.UUID, kind, name, mime, path string) (Artifact, error) {
+func SaveFile(ctx context.Context, q db.Querier, stores Stores, projectID, runID uuid.UUID, caseID, stepID *uuid.UUID, kind, name, mime, path string) (Artifact, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return Artifact{}, err
@@ -115,14 +119,14 @@ func SaveFile(ctx context.Context, q db.Querier, store Store, projectID, runID u
 	if name == "" {
 		name = filepath.Base(path)
 	}
-	return SaveWith(ctx, q, store, Meta{
+	return SaveWith(ctx, q, stores, Meta{
 		ProjectID: projectID, RunID: runID, RunCaseID: caseID, RunStepID: stepID,
 		Kind: kind, Name: name, MIME: mime,
 	}, f, st.Size())
 }
 
 // SaveWith is the general form of Save; size is the expected byte count or -1.
-func SaveWith(ctx context.Context, q db.Querier, store Store, m Meta, file io.Reader, size int64) (Artifact, error) {
+func SaveWith(ctx context.Context, q db.Querier, stores Stores, m Meta, file io.Reader, size int64) (Artifact, error) {
 	if !slices.Contains(kinds, m.Kind) {
 		return Artifact{}, fmt.Errorf("unknown artifact kind %q", m.Kind)
 	}
@@ -133,25 +137,42 @@ func SaveWith(ctx context.Context, q db.Querier, store Store, m Meta, file io.Re
 	if m.Name == "" {
 		m.Name = m.Kind
 	}
+	// The writer is taken once: the upload finishes (and is recorded) on this
+	// store even if the active backend is switched meanwhile.
+	backend, store := stores.Writer()
+	if store == nil {
+		return Artifact{}, fmt.Errorf("store artifact: %w: %s", ErrBackendUnavailable, backend)
+	}
 	id := db.NewID()
 	key := StorageKey(m.ProjectID, m.RunID, id, m.Name)
 	cr := &countingReader{r: file}
 	if err := store.Put(ctx, key, cr, size, m.MIME); err != nil {
 		return Artifact{}, fmt.Errorf("store artifact: %w", err)
 	}
-	a := Artifact{ID: id, Kind: m.Kind, Name: m.Name, URL: URLFor(id), MIME: m.MIME, SizeBytes: cr.n, RunStepID: m.RunStepID}
+	a := Artifact{ID: id, Kind: m.Kind, Name: m.Name, URL: URLFor(id), MIME: m.MIME, SizeBytes: cr.n, RunStepID: m.RunStepID, Storage: backend}
 	err := q.QueryRow(ctx, `
-		INSERT INTO artifacts (id, project_id, run_id, run_case_id, run_step_id, kind, name, storage_key, mime, size_bytes, uploaded_by, expires_at)
-		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, now() + make_interval(days => p.artifact_retention_days)
+		INSERT INTO artifacts (id, project_id, run_id, run_case_id, run_step_id, kind, name, storage_key, mime, size_bytes, uploaded_by, storage, expires_at)
+		SELECT $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, now() + make_interval(days => p.artifact_retention_days)
 		FROM projects p WHERE p.id = $2
 		RETURNING created_at`,
-		id, m.ProjectID, m.RunID, m.RunCaseID, m.RunStepID, m.Kind, m.Name, key, m.MIME, cr.n, m.UploadedBy).Scan(&a.CreatedAt)
+		id, m.ProjectID, m.RunID, m.RunCaseID, m.RunStepID, m.Kind, m.Name, key, m.MIME, cr.n, m.UploadedBy, backend).Scan(&a.CreatedAt)
 	if err != nil {
 		_ = store.Delete(context.WithoutCancel(ctx), key)
 		return Artifact{}, fmt.Errorf("insert artifact: %w", err)
 	}
 	a.CreatedAt = a.CreatedAt.UTC()
 	return a, nil
+}
+
+// Discard deletes the object of an artifact returned by Save whose row was
+// rolled back (best effort; errors are ignored).
+func Discard(ctx context.Context, stores Stores, projectID, runID uuid.UUID, a Artifact) {
+	if a.ID == uuid.Nil || a.Storage == "" {
+		return
+	}
+	if store, err := stores.For(a.Storage); err == nil {
+		_ = store.Delete(context.WithoutCancel(ctx), StorageKey(projectID, runID, a.ID, a.Name))
+	}
 }
 
 var unsafeExt = regexp.MustCompile(`[^a-z0-9]`)
@@ -186,35 +207,40 @@ func (c *countingReader) Read(p []byte) (int, error) {
 // artifact_retention_days (as of now) and marks them purged (Artifact.expired).
 // Rows stay so run reports can show "artifact expired". Retention is evaluated
 // against the project's current setting, so changing it applies to existing
-// artifacts too. Returns the number of artifacts purged. Safe to run concurrently
-// (rows are locked with SKIP LOCKED).
-func Purge(ctx context.Context, b db.TxBeginner, store Store, now time.Time, logger *slog.Logger) (int, error) {
+// artifacts too. Each object is deleted from the store of its row's backend;
+// rows on a backend that is not configured are left alone. Returns the number
+// of artifacts purged. Safe to run concurrently (rows are locked with SKIP
+// LOCKED).
+func Purge(ctx context.Context, b db.TxBeginner, stores Stores, now time.Time, logger *slog.Logger) (int, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
+	backends := available(stores)
 	total := 0
 	for {
 		purged, failed := 0, 0
 		err := db.WithTx(ctx, b, func(tx pgx.Tx) error {
 			rows, err := tx.Query(ctx, `
-				SELECT a.id, a.storage_key
+				SELECT a.id, a.storage_key, a.storage
 				FROM artifacts a JOIN projects p ON p.id = a.project_id
 				WHERE a.purged_at IS NULL
 				  AND a.created_at + make_interval(days => p.artifact_retention_days) <= $1
+				  AND a.storage = ANY ($2)
 				ORDER BY a.created_at
 				LIMIT 200
-				FOR UPDATE OF a SKIP LOCKED`, now)
+				FOR UPDATE OF a SKIP LOCKED`, now, backends)
 			if err != nil {
 				return err
 			}
 			type item struct {
-				id  uuid.UUID
-				key string
+				id      uuid.UUID
+				key     string
+				backend string
 			}
 			var items []item
 			for rows.Next() {
 				var it item
-				if err := rows.Scan(&it.id, &it.key); err != nil {
+				if err := rows.Scan(&it.id, &it.key, &it.backend); err != nil {
 					rows.Close()
 					return err
 				}
@@ -226,8 +252,12 @@ func Purge(ctx context.Context, b db.TxBeginner, store Store, now time.Time, log
 			}
 			var done []uuid.UUID
 			for _, it := range items {
-				if err := store.Delete(ctx, it.key); err != nil && !errors.Is(err, ErrNotFound) {
-					logger.WarnContext(ctx, "artifact purge: delete failed", "artifact_id", it.id, "err", err)
+				store, err := stores.For(it.backend)
+				if err == nil {
+					err = store.Delete(ctx, it.key)
+				}
+				if err != nil && !errors.Is(err, ErrNotFound) {
+					logger.WarnContext(ctx, "artifact purge: delete failed", "artifact_id", it.id, "storage", it.backend, "err", err)
 					failed++
 					continue
 				}

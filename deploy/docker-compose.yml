@@ -22,9 +22,11 @@ x-qatlas-env: &qatlas-env
   QATLAS_TRUST_PROXY: ${QATLAS_TRUST_PROXY:-false}
   QATLAS_LOG_LEVEL: ${QATLAS_LOG_LEVEL:-info}
   QATLAS_TZ: ${QATLAS_TZ:-}
-  # Artifact storage: local (the artifacts volume) or s3 (QATLAS_S3_*; the bundled
-  # Garage is http://garage:3900 with `--profile s3`, or any external S3).
-  QATLAS_STORAGE: ${QATLAS_STORAGE:-local}
+  # Artifact storage is configured in Admin → Storage (stored in the database).
+  # A non-empty QATLAS_STORAGE (local | s3 + QATLAS_S3_*) overrides it and makes
+  # that page read-only; empty = use the UI settings. The bundled Garage is
+  # http://garage:3900 with `--profile s3`.
+  QATLAS_STORAGE: ${QATLAS_STORAGE:-}
   QATLAS_S3_ENDPOINT: ${QATLAS_S3_ENDPOINT:-}
   QATLAS_S3_REGION: ${QATLAS_S3_REGION:-}
   QATLAS_S3_BUCKET: ${QATLAS_S3_BUCKET:-}
@@ -162,8 +164,8 @@ services:
     logging: *logging
 
   # Optional single-node Garage (S3) for artifacts. Enabled with `--profile s3`;
-  # initialise once with deploy/garage/init.sh, then set QATLAS_STORAGE=s3 and
-  # QATLAS_S3_ENDPOINT=http://garage:3900. Not published on the host; add
+  # initialise once with deploy/garage/init.sh, then enter its values in
+  # Admin → Storage (endpoint http://garage:3900). Not published on the host; add
   # ports: ["127.0.0.1:3900:3900", "127.0.0.1:3903:3903"] in an override for
   # host access (aws cli, Garage WebUI).
   garage:

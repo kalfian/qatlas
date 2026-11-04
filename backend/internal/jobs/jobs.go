@@ -27,3 +27,18 @@ type Enqueuer interface {
 type NoopEnqueuer struct{}
 
 func (NoopEnqueuer) EnqueueRun(context.Context, pgx.Tx, uuid.UUID) error { return nil }
+
+// StorageMigrateArgs asks the worker to copy artifacts into the active storage
+// backend (Admin → Storage → Migrate); MigrationID is a storage_migrations row.
+type StorageMigrateArgs struct {
+	MigrationID uuid.UUID `json:"migration_id"`
+}
+
+// Kind is the River job kind.
+func (StorageMigrateArgs) Kind() string { return "storage_migrate" }
+
+// StorageMigrationEnqueuer is implemented by enqueuers that can start storage
+// migrations (the River enqueuer of the worker package). It returns the job id.
+type StorageMigrationEnqueuer interface {
+	EnqueueStorageMigration(ctx context.Context, tx pgx.Tx, migrationID uuid.UUID) (int64, error)
+}

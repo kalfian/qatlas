@@ -60,7 +60,9 @@ access=$(garage key info --key-id "$keyname" | tail -n 1)
 
 cat <<ENV
 
-# --- add to deploy/.env, then: docker compose -f deploy/docker-compose.yml up -d
+# --- enter these in Admin → Storage (recommended: endpoint, region, bucket, access key ID,
+# --- secret), or pin them via the environment: add to deploy/.env, then
+# --- docker compose -f deploy/docker-compose.yml up -d
 QATLAS_STORAGE=s3
 QATLAS_S3_ENDPOINT=http://garage:3900
 QATLAS_S3_REGION=garage

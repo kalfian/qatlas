@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -15,6 +14,7 @@ import (
 	"github.com/kalfian/qatlas/backend/internal/config"
 	"github.com/kalfian/qatlas/backend/internal/db"
 	"github.com/kalfian/qatlas/backend/internal/server"
+	"github.com/kalfian/qatlas/backend/internal/storage"
 	"github.com/kalfian/qatlas/backend/internal/worker"
 )
 
@@ -50,45 +50,54 @@ func connectWorkerPool(ctx context.Context, cfg *config.Config) (*pgxpool.Pool, 
 	return db.ConnectConfig(ctx, pc)
 }
 
-func newWorker(cfg *config.Config, pool *pgxpool.Pool, store artifacts.Store, logger *slog.Logger) (*worker.Worker, error) {
+func newWorker(cfg *config.Config, pool *pgxpool.Pool, reg *storage.Registry, logger *slog.Logger) (*worker.Worker, error) {
 	return worker.New(worker.Config{
 		Pool:        pool,
 		Logger:      logger,
 		MasterKey:   cfg.MasterKey,
 		DataDir:     cfg.DataDir,
-		Store:       store,
+		Storage:     reg,
 		RunnerCmd:   cfg.RunnerCmd,
 		Concurrency: cfg.WorkerConcurrency,
 		RunTimeout:  cfg.RunTimeout,
 	})
 }
 
-// artifactStore opens the store selected by QATLAS_STORAGE and verifies that it
-// is reachable and writable; server, worker and all refuse to start otherwise.
-func artifactStore(ctx context.Context, cfg *config.Config, logger *slog.Logger) (artifacts.Store, error) {
-	store, err := openStore(cfg, cfg.Storage)
-	if err != nil {
-		return nil, err
+// openStorage builds the artifact storage registry of server / worker / all:
+// QATLAS_STORAGE in the environment wins and must pass its probe (the process
+// refuses to start otherwise); without it the settings from Admin → Storage
+// apply, and a broken S3 configuration there only falls back to local storage
+// for new artifacts (logged loudly, shown in the UI). It also consumes the
+// one-time backfill of migration 0002. The caller Starts and Closes it.
+func openStorage(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*storage.Registry, error) {
+	if _, err := storage.Backfill(ctx, pool, cfg, logger); err != nil {
+		logger.Warn("artifact storage backfill failed", "err", err)
 	}
-	vctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	if err := artifacts.Verify(vctx, store); err != nil {
-		return nil, fmt.Errorf("artifact storage check failed (QATLAS_STORAGE=%s): %w", cfg.Storage, err)
-	}
-	logger.Info("artifact storage ready", "storage", describeStore(store))
-	return store, nil
+	return storage.New(ctx, storage.Options{Pool: pool, Config: cfg, Logger: logger})
 }
 
-// openStore builds a store of the given kind (local | s3) without contacting it.
-func openStore(cfg *config.Config, kind string) (artifacts.Store, error) {
+// openStore builds a store of the given kind (local | s3) without contacting
+// it, for the artifacts CLI. S3 settings come from QATLAS_S3_* when complete,
+// else from Admin → Storage (pool may be nil: environment only).
+func openStore(ctx context.Context, cfg *config.Config, pool *pgxpool.Pool, kind string) (artifacts.Store, error) {
 	switch kind {
 	case config.StorageLocal:
 		return artifacts.NewLocalStore(filepath.Join(cfg.DataDir, "artifacts"))
 	case config.StorageS3:
-		if err := cfg.S3.Validate(); err != nil {
-			return nil, fmt.Errorf("S3 artifact storage is not configured:\n%w", err)
+		envErr := cfg.S3.Validate()
+		if envErr == nil {
+			return artifacts.NewS3Store(cfg.S3)
 		}
-		return artifacts.NewS3Store(cfg.S3)
+		if pool != nil {
+			s3cfg, ok, err := storage.StoredS3Config(ctx, pool, cfg.MasterKey)
+			if err != nil {
+				return nil, fmt.Errorf("S3 settings from Admin → Storage: %w", err)
+			}
+			if ok {
+				return artifacts.NewS3Store(s3cfg)
+			}
+		}
+		return nil, fmt.Errorf("S3 artifact storage is not configured (Admin → Storage, or QATLAS_S3_*):\n%w", envErr)
 	default:
 		return nil, fmt.Errorf("unknown artifact storage %q (local | s3)", kind)
 	}
@@ -115,11 +124,13 @@ func runWorker(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 		return err
 	}
 	defer pool.Close()
-	store, err := artifactStore(ctx, cfg, logger)
+	reg, err := openStorage(ctx, cfg, pool, logger)
 	if err != nil {
 		return err
 	}
-	w, err := newWorker(cfg, pool, store, logger)
+	reg.Start() // reload when Admin → Storage changes (LISTEN qatlas_settings)
+	defer reg.Close()
+	w, err := newWorker(cfg, pool, reg, logger)
 	if err != nil {
 		return err
 	}
@@ -137,19 +148,21 @@ func runAll(ctx context.Context, cfg *config.Config, logger *slog.Logger) error 
 	}
 	defer pool.Close()
 	warnPendingMigrations(ctx, pool, logger)
-	store, err := artifactStore(ctx, cfg, logger)
+	reg, err := openStorage(ctx, cfg, pool, logger)
 	if err != nil {
 		return err
 	}
-	w, err := newWorker(cfg, pool, store, logger)
+	reg.Start() // one registry for server and worker
+	defer reg.Close()
+	w, err := newWorker(cfg, pool, reg, logger)
 	if err != nil {
 		return err
 	}
 	srv, err := server.New(server.Deps{
 		Config: cfg, Pool: pool, Logger: logger,
-		Enqueuer:      worker.NewEnqueuer(w.Client()),
-		ArtifactStore: store,
-		Version:       version,
+		Enqueuer: worker.NewEnqueuer(w.Client()),
+		Storage:  reg,
+		Version:  version,
 	})
 	if err != nil {
 		return err

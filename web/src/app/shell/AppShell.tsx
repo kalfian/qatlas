@@ -4,6 +4,7 @@ import {
   CircleUser,
   FlaskConical,
   FolderKanban,
+  HardDrive,
   Hand,
   KeyRound,
   Languages,
@@ -178,7 +179,12 @@ function Sidebar() {
         <NavLink
           item={{ to: '/my-tasks', label: t('items.myTasks'), icon: Hand, badge: taskCount, ariaLabel: taskCount ? t('myTasksPending', { count: taskCount }) : undefined }}
         />
-        {isAdmin && <NavLink item={{ to: '/admin/users', label: t('items.adminUsers'), icon: Users }} />}
+        {isAdmin && (
+          <>
+            <NavLink item={{ to: '/admin/users', label: t('items.adminUsers'), icon: Users }} />
+            <NavLink item={{ to: '/admin/storage', label: t('items.adminStorage'), icon: HardDrive }} />
+          </>
+        )}
       </nav>
       <div className="mt-auto flex flex-col gap-0.5 border-t border-sidebar-border p-2">
         <NavLink item={{ to: '/settings/profile', label: t('items.account'), icon: CircleUser }} />
@@ -253,6 +259,7 @@ const SECTION_KEYS = {
   'my-tasks': 'myTasks',
   admin: 'admin',
   users: 'users',
+  storage: 'storage',
   profile: 'profile',
   tokens: 'tokens',
 } as const

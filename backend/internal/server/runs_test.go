@@ -702,7 +702,7 @@ func testAttachmentsAndArtifacts(t *testing.T, f *rnFixture, stored func(a artif
 
 	// Retention: purge files older than artifact_retention_days → expired / 410.
 	rnExec(t, e, `UPDATE artifacts SET created_at = now() - interval '31 days'`)
-	n, err := artifacts.Purge(e.ctx, e.pool, e.srv.Artifacts.Store(), time.Now(), nil)
+	n, err := artifacts.Purge(e.ctx, e.pool, e.srv.Artifacts.Stores(), time.Now(), nil)
 	if err != nil || n != 1 {
 		t.Fatalf("purge: %d %v", n, err)
 	}
@@ -712,7 +712,7 @@ func testAttachmentsAndArtifacts(t *testing.T, f *rnFixture, stored func(a artif
 	if got = f.get(f.cE, run.Key); !got.Cases[0].Attachments[0].Expired {
 		t.Fatal("artifact not marked expired")
 	}
-	if n, _ := artifacts.Purge(e.ctx, e.pool, e.srv.Artifacts.Store(), time.Now(), nil); n != 0 {
+	if n, _ := artifacts.Purge(e.ctx, e.pool, e.srv.Artifacts.Stores(), time.Now(), nil); n != 0 {
 		t.Fatal("purge is not idempotent")
 	}
 	if stored != nil {

@@ -386,7 +386,7 @@ func TestMCPRunReportAndLimits(t *testing.T) {
 	}
 	rows.Close()
 	failed := stepIDs["s2"]
-	shot, err := artifacts.Save(e.ctx, e.pool, e.srv.Artifacts.Store(), f.shop, runID, &caseID, &failed, artifacts.KindScreenshot, "s2.png", "image/png", bytes.NewReader(fakePNG))
+	shot, err := artifacts.Save(e.ctx, e.pool, e.srv.Artifacts.Stores(), f.shop, runID, &caseID, &failed, artifacts.KindScreenshot, "s2.png", "image/png", bytes.NewReader(fakePNG))
 	if err != nil {
 		t.Fatal(err)
 	}

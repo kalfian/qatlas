@@ -211,6 +211,43 @@ export interface DbArtifact {
   uploaded_by: string | null
   created_at: string
   expired: boolean
+  /** Backend tempat file ini disimpan (Admin → Storage). Data lama tanpa field ini = 'local'. */
+  storage?: 'local' | 's3'
+}
+
+/** Konfigurasi storage artifact (Admin → Storage). Secret hanya ada di mock; API tidak pernah mengembalikannya. */
+export interface DbStorage {
+  backend: 'local' | 's3'
+  source: 'default' | 'database'
+  s3: {
+    endpoint: string
+    region: string
+    bucket: string
+    access_key_id: string
+    prefix: string
+    force_path_style: boolean
+    secret: string | null
+    secret_updated_at: string | null
+  }
+  updated_at: string | null
+  updated_by: string | null
+  /** Simulasi QATLAS_STORAGE di environment server (dev toolbar). */
+  env_override: boolean
+  migration: {
+    status: 'queued' | 'running' | 'done' | 'failed'
+    from: 'local' | 's3'
+    to: 'local' | 's3'
+    total: number
+    copied: number
+    failed: number
+    moved: number
+    started_at: string
+    finished_at: string | null
+    error: string | null
+    delete_source: boolean
+    /** Gagal di tengah jalan (bucket bernama *quota*): simulasi kuota penuh. */
+    fail_at: number | null
+  } | null
 }
 
 export interface MockState {
@@ -229,6 +266,8 @@ export interface MockState {
   runs: DbRun[]
   artifacts: DbArtifact[]
   sim: { speed: number }
+  /** Opsional agar data localStorage lama (STATE_VERSION sama) tetap terpakai; dibuat saat pertama dibaca. */
+  storage?: DbStorage
 }
 
 /** Naikkan saat bentuk/isi seed berubah → data lama di localStorage di-seed ulang. v4: seed demo berbahasa Inggris. */
@@ -299,6 +338,33 @@ export function resetDb() {
 }
 
 /* ------------------------------------------------------------------ helper */
+
+export function storageState(): DbStorage {
+  const s = db()
+  s.storage ??= {
+    backend: 'local',
+    source: 'default',
+    s3: { endpoint: '', region: '', bucket: '', access_key_id: '', prefix: '', force_path_style: true, secret: null, secret_updated_at: null },
+    updated_at: null,
+    updated_by: null,
+    env_override: false,
+    migration: null,
+  }
+  return s.storage
+}
+
+/** Konfigurasi S3 yang "di-set lewat environment variable" saat env override aktif di dev toolbar. */
+export const ENV_STORAGE = {
+  backend: 's3' as const,
+  s3: { endpoint: 'https://garage.kalfian.work', region: 'garage', bucket: 'qatlas-artifacts', access_key_id: 'GK7d0c51b4e2a9f3c8d6e1b207', prefix: 'qatlas/', force_path_style: true },
+}
+
+/** Backend tujuan artifact baru (dipakai simulator & upload lampiran). */
+export function activeStorageBackend(): 'local' | 's3' {
+  const s = db().storage
+  if (!s) return 'local'
+  return s.env_override ? ENV_STORAGE.backend : s.backend
+}
 
 export function nowIso(): string {
   return new Date().toISOString()

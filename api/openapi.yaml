@@ -251,6 +251,65 @@ paths:
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '400': { $ref: '#/components/responses/Error' }
+  /admin/settings/storage:
+    get:
+      tags: [admin]
+      operationId: adminGetStorageSettings
+      description: Artifact storage configuration (admin, session only). Secrets are never returned.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/StorageSettings' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [admin]
+      operationId: adminUpdateStorageSettings
+      description: |
+        Saves the storage configuration in the database (secret encrypted with the master key) after a successful
+        connection probe (bucket exists, put + delete a probe object). Server and worker switch without a restart.
+        Omit `s3.secret_access_key` to keep the stored secret; it is required the first time. Refused with 409
+        `env_override` when `QATLAS_STORAGE` is set in the environment. 422 `validation_failed` details use the
+        paths `s3.<field>` (`s3.endpoint`, `s3.region`, `s3.bucket`, `s3.access_key_id`, `s3.secret_access_key`,
+        `s3.prefix`; `backend`, `s3` for a missing block) for input errors and `checks.<name>`
+        (`checks.connect|bucket|write|read|delete`) for the first failed probe check (earlier checks passed).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StorageSettingsInput' }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/StorageSettings' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+  /admin/settings/storage/test:
+    post:
+      tags: [admin]
+      operationId: adminTestStorageSettings
+      description: Probes a storage configuration without saving it (omitted secret = the stored one).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StorageSettingsInput' }
+      responses:
+        '200': { description: Probe result, content: { application/json: { schema: { $ref: '#/components/schemas/StorageTestResult' } } } }
+  /admin/settings/storage/migrate:
+    post:
+      tags: [admin]
+      operationId: adminMigrateArtifacts
+      description: |
+        Starts a background job copying artifacts that live on another backend into the active one (idempotent).
+        Progress appears in `StorageSettings.migration`. Allowed under an environment override (moves artifacts into
+        the env backend). With nothing to move the migration is recorded as `done` with `total` 0 right away.
+        409 while a migration is queued or running, or while S3 is selected but unreachable (fallback, see `warning`).
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                delete_source: { type: boolean, default: false, description: Delete the source file after a verified copy }
+      responses:
+        '202': { description: Started, content: { application/json: { schema: { $ref: '#/components/schemas/StorageSettings' } } } }
+        '409': { $ref: '#/components/responses/Error' }
   /admin/users/{id}/invite-link:
     parameters:
       - { $ref: '#/components/parameters/Id' }
@@ -1071,6 +1130,93 @@ components:
         google_linked: { type: boolean }
         last_login_at: { type: [string, 'null'], format: date-time }
         created_at: { type: string, format: date-time }
+    StorageBackend: { type: string, enum: [local, s3] }
+    StorageSettings:
+      type: object
+      required: [active_backend, source, env_override, s3, artifacts, migration, updated_at, updated_by]
+      properties:
+        active_backend: { $ref: '#/components/schemas/StorageBackend' }
+        source: { type: string, enum: [default, database, env], description: 'Where the active configuration comes from; env wins when QATLAS_STORAGE is set' }
+        env_override: { type: boolean, description: 'True when QATLAS_STORAGE is set in the environment (UI is read-only)' }
+        s3:
+          type: object
+          required: [endpoint, region, bucket, access_key_id, prefix, force_path_style, secret_set, secret_updated_at]
+          properties:
+            endpoint: { type: string, example: 'https://garage.kalfian.work' }
+            region: { type: string, example: garage }
+            bucket: { type: string, example: qatlas-artifacts }
+            access_key_id: { type: string }
+            prefix: { type: string }
+            force_path_style: { type: boolean }
+            secret_set: { type: boolean }
+            secret_updated_at: { type: [string, 'null'], format: date-time }
+        artifacts:
+          description: Non-purged artifact counts per backend they are stored on
+          type: object
+          required: [local, s3, bytes_local, bytes_s3]
+          properties:
+            local: { type: integer }
+            s3: { type: integer }
+            bytes_local: { type: integer }
+            bytes_s3: { type: integer }
+        migration:
+          oneOf:
+            - $ref: '#/components/schemas/StorageMigration'
+            - { type: 'null' }
+        updated_at: { type: [string, 'null'], format: date-time }
+        updated_by:
+          oneOf:
+            - $ref: '#/components/schemas/UserRef'
+            - { type: 'null' }
+        warning:
+          type: [string, 'null']
+          description: 'Why the configured storage is not (fully) in use, e.g. S3 selected in the database but unreachable at startup: new artifacts are stored locally until it works again (re-checked every minute)'
+    StorageMigration:
+      type: object
+      required: [status, from, to, total, copied, failed, started_at, finished_at, error]
+      properties:
+        status: { type: string, enum: [queued, running, done, failed] }
+        from: { $ref: '#/components/schemas/StorageBackend' }
+        to: { $ref: '#/components/schemas/StorageBackend' }
+        total: { type: integer }
+        copied: { type: integer }
+        failed: { type: integer }
+        started_at: { type: [string, 'null'], format: date-time }
+        finished_at: { type: [string, 'null'], format: date-time }
+        error: { type: [string, 'null'] }
+    StorageSettingsInput:
+      type: object
+      required: [backend]
+      properties:
+        backend: { $ref: '#/components/schemas/StorageBackend' }
+        s3:
+          type: object
+          required: [endpoint, bucket, access_key_id]
+          properties:
+            endpoint: { type: string }
+            region: { type: string, default: us-east-1 }
+            bucket: { type: string }
+            access_key_id: { type: string }
+            secret_access_key: { type: string, writeOnly: true, description: 'Omit to keep the stored secret' }
+            prefix: { type: string }
+            force_path_style: { type: boolean, default: true }
+    StorageTestResult:
+      type: object
+      required: [ok, message, latency_ms, checks]
+      properties:
+        ok: { type: boolean }
+        message: { type: string }
+        latency_ms: { type: integer }
+        checks:
+          type: array
+          items:
+            type: object
+            required: [name, ok, message]
+            properties:
+              name: { type: string, enum: [connect, bucket, write, read, delete] }
+              ok: { type: boolean }
+              message: { type: string }
+              latency_ms: { type: integer, description: 'Duration of this check (0 when skipped)' }
     UserInvite:
       type: object
       required: [user, invite_url, expires_at]

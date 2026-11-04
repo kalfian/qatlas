@@ -20,25 +20,27 @@ import (
 
 // Service serves artifact files.
 type Service struct {
-	pool  *pgxpool.Pool
-	store Store
+	pool   *pgxpool.Pool
+	stores Stores
 }
 
 // New builds the service.
-func New(pool *pgxpool.Pool, store Store) *Service {
-	return &Service{pool: pool, store: store}
+func New(pool *pgxpool.Pool, stores Stores) *Service {
+	return &Service{pool: pool, stores: stores}
 }
 
-// Store returns the underlying blob store (shared with runs and the worker).
-func (s *Service) Store() Store { return s.store }
+// Stores returns the blob stores (shared with runs and the worker).
+func (s *Service) Stores() Stores { return s.stores }
 
 // Routes mounts GET /artifacts/{id}.
 func (s *Service) Routes(r chi.Router) {
 	r.Get("/artifacts/{id}", httpx.Handle(s.handleGet))
 }
 
-// Open checks that actor may view the artifact's project and opens the file.
-// Errors: 404 unknown / inaccessible, 403 role or token scope, 410 purged.
+// Open checks that actor may view the artifact's project and opens the file
+// from the store of the backend it was written to. Errors: 404 unknown /
+// inaccessible, 403 role or token scope, 410 purged, 503 storage_unavailable
+// when that backend is not configured anymore.
 func (s *Service) Open(ctx context.Context, actor *auth.Actor, id string) (Artifact, io.ReadSeekCloser, Info, error) {
 	notFound := httpx.NotFound("Artifact not found")
 	aid, err := uuid.Parse(id)
@@ -50,11 +52,11 @@ func (s *Service) Open(ctx context.Context, actor *auth.Actor, id string) (Artif
 		key        string
 	)
 	row := s.pool.QueryRow(ctx, `
-		SELECT `+Columns+`, p.key, a.storage_key
+		SELECT `+Columns+`, p.key, a.storage_key, a.storage
 		FROM artifacts a JOIN projects p ON p.id = a.project_id
 		WHERE a.id = $1`, aid)
 	var r Row
-	err = row.Scan(&r.ID, &r.Kind, &r.Name, &r.MIME, &r.SizeBytes, &r.Expired, &r.RunStepID, &r.CreatedAt, &r.RunCaseID, &projectKey, &key)
+	err = row.Scan(&r.ID, &r.Kind, &r.Name, &r.MIME, &r.SizeBytes, &r.Expired, &r.RunStepID, &r.CreatedAt, &r.RunCaseID, &projectKey, &key, &r.Storage)
 	if db.IsNoRows(err) {
 		return Artifact{}, nil, Info{}, notFound
 	}
@@ -73,7 +75,11 @@ func (s *Service) Open(ctx context.Context, actor *auth.Actor, id string) (Artif
 	if r.Expired {
 		return r.Artifact, nil, Info{}, httpx.Expired("This artifact has expired and was removed by the retention policy")
 	}
-	f, info, err := s.store.Open(ctx, key)
+	store, err := s.stores.For(r.Storage)
+	if err != nil {
+		return r.Artifact, nil, Info{}, unavailable(r.Storage)
+	}
+	f, info, err := store.Open(ctx, key)
 	if errors.Is(err, ErrNotFound) {
 		return r.Artifact, nil, Info{}, httpx.NotFound("Artifact file is missing")
 	}
@@ -112,6 +118,18 @@ func (s *Service) handleGet(w http.ResponseWriter, r *http.Request) error {
 	// ServeContent handles Range / If-Range / If-None-Match / HEAD.
 	http.ServeContent(w, r, a.Name, a.CreatedAt, f)
 	return nil
+}
+
+// CodeStorageUnavailable is the error code of artifacts whose storage backend
+// is not configured (503).
+const CodeStorageUnavailable = "storage_unavailable"
+
+func unavailable(backend string) *httpx.APIError {
+	msg := "The storage backend of this artifact is not configured"
+	if backend == "s3" {
+		msg = "This artifact is stored in S3, but S3 storage is not configured on this server anymore. An admin can configure it again in Admin → Storage."
+	}
+	return httpx.NewError(http.StatusServiceUnavailable, CodeStorageUnavailable, msg)
 }
 
 // inlineSafe reports content types the browser may render in place.

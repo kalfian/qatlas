@@ -57,6 +57,7 @@ export interface SettingsSearch {
  * Yang tetap di bundle awal hanya definisi route: validateSearch, beforeLoad (auth, redirect), dan pending UI.
  */
 const AdminUsersPage = lazyRouteComponent(() => import('@/features/admin/AdminUsersPage'), 'AdminUsersPage')
+const AdminStoragePage = lazyRouteComponent(() => import('@/features/admin/StoragePage'), 'StoragePage')
 const ProfilePage = lazyRouteComponent(() => import('@/features/account/ProfilePage'), 'ProfilePage')
 const TokensPage = lazyRouteComponent(() => import('@/features/account/TokensPage'), 'TokensPage')
 const InvitePage = lazyRouteComponent(() => import('@/features/auth/InvitePage'), 'InvitePage')
@@ -133,15 +134,13 @@ const indexRoute = createRoute({
 
 const projectsRoute = createRoute({ getParentRoute: () => appRoute, path: '/projects', component: ProjectsPage })
 const myTasksRoute = createRoute({ getParentRoute: () => appRoute, path: '/my-tasks', component: MyTasksPage })
-const adminUsersRoute = createRoute({
-  getParentRoute: () => appRoute,
-  path: '/admin/users',
-  beforeLoad: ({ context }) => {
-    const me = (context as unknown as { me: Me }).me
-    if (me.user.system_role !== 'admin') throw redirect({ to: '/' })
-  },
-  component: AdminUsersPage,
-})
+/** Halaman admin sistem: non-admin dialihkan ke beranda (link-nya juga tidak tampil di sidebar). */
+function requireAdmin({ context }: { context: unknown }) {
+  const me = (context as { me: Me }).me
+  if (me.user.system_role !== 'admin') throw redirect({ to: '/' })
+}
+const adminUsersRoute = createRoute({ getParentRoute: () => appRoute, path: '/admin/users', beforeLoad: requireAdmin, component: AdminUsersPage })
+const adminStorageRoute = createRoute({ getParentRoute: () => appRoute, path: '/admin/storage', beforeLoad: requireAdmin, component: AdminStoragePage })
 const profileRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings/profile', component: ProfilePage })
 const tokensRoute = createRoute({ getParentRoute: () => appRoute, path: '/settings/tokens', component: TokensPage })
 
@@ -211,6 +210,7 @@ const routeTree = rootRoute.addChildren([
     projectsRoute,
     myTasksRoute,
     adminUsersRoute,
+    adminStorageRoute,
     profileRoute,
     tokensRoute,
     projectRoute.addChildren([
@@ -249,7 +249,7 @@ declare module '@tanstack/react-router' {
 
 /**
  * Route ID untuk getRouteApi / useSearch({ from }):
- *  /login, /invite/$token, /_app/projects, /_app/my-tasks, /_app/admin/users, /_app/settings/profile, /_app/settings/tokens,
+ *  /login, /invite/$token, /_app/projects, /_app/my-tasks, /_app/admin/users, /_app/admin/storage, /_app/settings/profile, /_app/settings/tokens,
  *  /_app/p/$key, /_app/p/$key/, /_app/p/$key/tests, /_app/p/$key/tests/$caseKey, /_app/p/$key/flows,
  *  /_app/p/$key/flows/$flowKey, /_app/p/$key/runs, /_app/p/$key/runs/$runKey, /_app/p/$key/environments, /_app/p/$key/settings
  */

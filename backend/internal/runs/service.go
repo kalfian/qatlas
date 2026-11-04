@@ -34,21 +34,21 @@ var errNoRun = pgx.ErrNoRows
 type Service struct {
 	pool   *pgxpool.Pool
 	enq    jobs.Enqueuer
-	store  artifacts.Store
+	stores artifacts.Stores
 	hub    *events.Hub
 	logger *slog.Logger
 }
 
 // New builds the service. enq inserts run_execute jobs in the caller's
-// transaction; store keeps attachments; hub may be nil (no SSE / WaitForChange).
-func New(pool *pgxpool.Pool, enq jobs.Enqueuer, store artifacts.Store, hub *events.Hub, logger *slog.Logger) *Service {
+// transaction; stores keep attachments; hub may be nil (no SSE / WaitForChange).
+func New(pool *pgxpool.Pool, enq jobs.Enqueuer, stores artifacts.Stores, hub *events.Hub, logger *slog.Logger) *Service {
 	if enq == nil {
 		enq = jobs.NoopEnqueuer{}
 	}
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Service{pool: pool, enq: enq, store: store, hub: hub, logger: logger}
+	return &Service{pool: pool, enq: enq, stores: stores, hub: hub, logger: logger}
 }
 
 // Hub returns the events hub (may be nil).
@@ -574,7 +574,7 @@ func (s *Service) AddAttachment(ctx context.Context, actor *auth.Actor, runKey, 
 		}
 		body := &limitedReader{r: in.Body, left: MaxAttachmentBytes}
 		uid := actor.User.ID
-		saved, err = artifacts.SaveWith(ctx, tx, s.store, artifacts.Meta{
+		saved, err = artifacts.SaveWith(ctx, tx, s.stores, artifacts.Meta{
 			ProjectID: p.ID, RunID: r.ID, RunCaseID: &cid, RunStepID: stepID,
 			Kind: artifacts.KindAttachment, Name: in.Name, MIME: in.MIME, UploadedBy: &uid,
 		}, body, -1)
@@ -587,9 +587,7 @@ func (s *Service) AddAttachment(ctx context.Context, actor *auth.Actor, runKey, 
 		return events.Notify(ctx, tx, events.Event{Type: events.RunUpdated, RunKey: r.Key, RunCaseID: cid.String(), Status: r.Status})
 	})
 	if err != nil {
-		if saved.ID != uuid.Nil {
-			_ = s.store.Delete(context.WithoutCancel(ctx), artifacts.StorageKey(projectID, runID, saved.ID, saved.Name))
-		}
+		artifacts.Discard(ctx, s.stores, projectID, runID, saved)
 		return artifacts.Artifact{}, err
 	}
 	return saved, nil

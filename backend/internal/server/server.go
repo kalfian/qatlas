@@ -30,6 +30,7 @@ import (
 	"github.com/kalfian/qatlas/backend/internal/mcp"
 	"github.com/kalfian/qatlas/backend/internal/projects"
 	"github.com/kalfian/qatlas/backend/internal/runs"
+	"github.com/kalfian/qatlas/backend/internal/storage"
 	"github.com/kalfian/qatlas/backend/internal/testcases"
 	"github.com/kalfian/qatlas/backend/internal/users"
 	"github.com/kalfian/qatlas/backend/internal/web"
@@ -43,7 +44,13 @@ type Deps struct {
 	// Enqueuer inserts run_execute jobs (River insert-only client from the
 	// worker package). nil → jobs.NoopEnqueuer: automated runs stay queued.
 	Enqueuer jobs.Enqueuer
-	// ArtifactStore keeps run files. nil → LocalStore under DataDir/artifacts.
+	// Storage resolves the artifact stores (storage.Registry built by cmd, shared
+	// with the worker in `qatlas all`; its owner starts and closes it). nil →
+	// the server builds its own from Config + database settings and runs its
+	// reload listener until Close; with ArtifactStore set, a fixed registry.
+	Storage *storage.Registry
+	// ArtifactStore (tests) fixes the store for new artifacts: a static
+	// registry with it as writer plus the local store, like an env override.
 	ArtifactStore artifacts.Store
 	// Version is the build version reported by /healthz ("" → "dev").
 	Version string
@@ -56,9 +63,12 @@ type Server struct {
 	Auth      *auth.Service
 	Users     *users.Service
 	Events    *events.Hub
+	Storage   *storage.Registry
 	Artifacts *artifacts.Service
 	Runs      *runs.Service
 	MCP       *mcp.Server
+
+	ownsStorage bool
 }
 
 // New builds services and the router.
@@ -67,22 +77,36 @@ func New(deps Deps) (*Server, error) {
 	s.Auth = auth.New(deps.Pool, deps.Config, deps.Logger)
 	s.Users = users.New(deps.Pool, s.Auth)
 
-	store := deps.ArtifactStore
-	if store == nil {
+	reg := deps.Storage
+	if reg == nil {
 		ls, err := artifacts.NewLocalStore(filepath.Join(deps.Config.DataDir, "artifacts"))
 		if err != nil {
 			return nil, err
 		}
-		store = ls
+		if deps.ArtifactStore != nil {
+			reg = storage.NewStatic(ls, deps.ArtifactStore)
+		} else {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			reg, err = storage.New(ctx, storage.Options{Pool: deps.Pool, Config: deps.Config, Logger: deps.Logger, Local: ls})
+			cancel()
+			if err != nil {
+				return nil, err
+			}
+			reg.Start()
+			s.ownsStorage = true
+		}
 	}
+	s.Storage = reg
 	enq := deps.Enqueuer
 	if enq == nil {
 		deps.Logger.Warn("no job enqueuer configured: automated runs stay queued until a worker enqueuer is wired")
 		enq = jobs.NoopEnqueuer{}
 	}
 	s.Events = events.NewHub(deps.Pool.Config().ConnConfig, deps.Logger)
-	s.Artifacts = artifacts.New(deps.Pool, store)
-	s.Runs = runs.New(deps.Pool, enq, store, s.Events, deps.Logger)
+	s.Artifacts = artifacts.New(deps.Pool, reg)
+	s.Runs = runs.New(deps.Pool, enq, reg, s.Events, deps.Logger)
+	migEnq, _ := enq.(jobs.StorageMigrationEnqueuer)
+	storageSvc := storage.NewService(deps.Pool, reg, deps.Config, migEnq, deps.Logger)
 	s.MCP = mcp.New(mcp.Deps{
 		Pool: deps.Pool, Logger: deps.Logger, Auth: s.Auth, Runs: s.Runs, Artifacts: s.Artifacts,
 		Environments: environments.New(deps.Pool, deps.Config.MasterKey), BaseURL: deps.Config.BaseURL,
@@ -123,6 +147,7 @@ func New(deps Deps) (*Server, error) {
 			flows.New(deps.Pool).Routes(r)
 			s.Runs.Routes(r) // includes the SSE stream /runs/{runKey}/events: no timeout/compress middleware here
 			s.Artifacts.Routes(r)
+			storageSvc.Routes(r) // /admin/settings/storage (admin, session only)
 			// Later packages mount here, e.g.:
 			//   projects.New(deps.Pool, …).Routes(r)
 			//   testcases.New(deps.Pool, …).Routes(r)
@@ -147,8 +172,14 @@ func New(deps Deps) (*Server, error) {
 func (s *Server) Handler() http.Handler { return s.handler }
 
 // Close releases background resources (the events LISTEN connection and open
-// SSE subscriptions). ListenAndServe calls it on shutdown.
-func (s *Server) Close() { s.Events.Close() }
+// SSE subscriptions, the storage listener when the server owns the registry).
+// ListenAndServe calls it on shutdown.
+func (s *Server) Close() {
+	s.Events.Close()
+	if s.ownsStorage {
+		s.Storage.Close()
+	}
+}
 
 // readyz reports whether the database and the artifact store are reachable:
 // 200 {"status":"ok","database":"ok","storage":"ok","storage_backend":"s3"}, or
@@ -157,8 +188,8 @@ func (s *Server) Close() { s.Events.Close() }
 func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	store := s.Artifacts.Store()
-	body := map[string]string{"status": "ok", "database": "ok", "storage": "ok", "storage_backend": artifacts.Backend(store)}
+	backend, store := s.Storage.Writer()
+	body := map[string]string{"status": "ok", "database": "ok", "storage": "ok", "storage_backend": backend}
 	var problems []string
 	if err := s.deps.Pool.Ping(ctx); err != nil {
 		body["database"] = "error"

@@ -41,6 +41,7 @@ Urutan sengaja **frontend dulu**: Phase 1 membangun seluruh user journey di FE d
 - [x] DSL: `{{fn.totp …}}` (2FA TOTP), `save_regex` + `regex_decode`, polling di `http_request` (runner 42 tes, validasi TS = Go)
 - [x] Demo: alur daftar + verifikasi email (Mailpit v1.33.0) dan login TOTP di toko demo; SHOP-T20–T22 lolos dengan runner asli
 - [x] Frontend: code-splitting (login 524 → 215 KB gzip, dashboard 253 KB) + gzip aset statis di server Go
+- [x] Pengaturan storage dari UI (DB terenkripsi, ganti tanpa restart, migrasi dari UI)
 
 ```mermaid
 flowchart LR

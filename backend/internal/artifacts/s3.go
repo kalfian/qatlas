@@ -41,14 +41,23 @@ type S3Store struct {
 	readChunk int64
 }
 
+// S3Option tunes NewS3Store.
+type S3Option func(*minio.Options)
+
+// WithMaxRetries bounds minio-go's retries of a failing request (default 10).
+// Probes use 1 so an unreachable endpoint fails fast.
+func WithMaxRetries(n int) S3Option {
+	return func(o *minio.Options) { o.MaxRetries = n }
+}
+
 // NewS3Store builds the client. It does not contact the server; call Verify
-// (or Ping) to check the bucket.
-func NewS3Store(cfg config.S3Config) (*S3Store, error) {
-	return newS3Store(cfg, nil)
+// (or Ping, Probe) to check the bucket.
+func NewS3Store(cfg config.S3Config, opts ...S3Option) (*S3Store, error) {
+	return newS3Store(cfg, nil, opts...)
 }
 
 // newS3Store allows tests to observe requests (transport nil = minio default).
-func newS3Store(cfg config.S3Config, transport http.RoundTripper) (*S3Store, error) {
+func newS3Store(cfg config.S3Config, transport http.RoundTripper, opts ...S3Option) (*S3Store, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
@@ -60,13 +69,17 @@ func newS3Store(cfg config.S3Config, transport http.RoundTripper) (*S3Store, err
 	if cfg.ForcePathStyle {
 		lookup = minio.BucketLookupPath
 	}
-	client, err := minio.New(u.Host, &minio.Options{
+	mo := &minio.Options{
 		Creds:        credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure:       u.Scheme == "https",
 		Region:       cfg.Region,
 		BucketLookup: lookup,
 		Transport:    transport,
-	})
+	}
+	for _, o := range opts {
+		o(mo)
+	}
+	client, err := minio.New(u.Host, mo)
 	if err != nil {
 		return nil, fmt.Errorf("S3 client: %w", err)
 	}
@@ -102,6 +115,23 @@ func (s *S3Store) Ping(ctx context.Context) error {
 		return fmt.Errorf("%s: bucket does not exist (create it first, e.g. `garage bucket create %s`)", s, s.bucket)
 	}
 	return nil
+}
+
+// checkBucket separates "cannot talk to the server" (reached=false) from
+// "the server answered, but the bucket is missing or not accessible".
+func (s *S3Store) checkBucket(ctx context.Context) (reached bool, err error) {
+	ok, err := s.client.BucketExists(ctx, s.bucket)
+	if err != nil {
+		resp := minio.ToErrorResponse(err)
+		if resp.StatusCode == 0 && resp.Code == "" {
+			return false, fmt.Errorf("cannot reach %s: %w", s.endpoint, err)
+		}
+		return true, describeS3Error(err)
+	}
+	if !ok {
+		return true, fmt.Errorf("bucket %q does not exist (create it first, e.g. `garage bucket create %s`)", s.bucket, s.bucket)
+	}
+	return true, nil
 }
 
 // Put uploads r with the given content type. With a known size the upload is

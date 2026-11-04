@@ -7,7 +7,7 @@
 //	qatlas user create-admin --email … --name … [--password …]
 //	qatlas mcp-stdio --url U --token T  MCP stdio proxy to a server's /mcp
 //	qatlas seed demo [flags]            load the demo data set (internal/seed)
-//	qatlas artifacts migrate|check      copy artifact files local ↔ S3 / verify the active store
+//	qatlas artifacts migrate|check      move artifact files local ↔ S3 / verify every artifact's store
 //	qatlas version                      print the build version
 package main
 
@@ -34,6 +34,7 @@ import (
 	"github.com/kalfian/qatlas/backend/internal/mcp"
 	"github.com/kalfian/qatlas/backend/internal/seed"
 	"github.com/kalfian/qatlas/backend/internal/server"
+	"github.com/kalfian/qatlas/backend/internal/storage"
 	"github.com/kalfian/qatlas/backend/internal/worker"
 )
 
@@ -56,9 +57,10 @@ Commands:
                                           folders, test cases and flows (skips existing projects);
                                           see "qatlas seed demo --help"
   artifacts migrate --from local --to s3 [--dry-run] [--delete-local]
-                                          copy artifact files between stores (QATLAS_S3_*);
-                                          idempotent, see "qatlas artifacts --help"
-  artifacts check [--store local|s3]      verify every non-expired artifact exists in the store
+                                          move artifact files between stores (S3 settings from
+                                          QATLAS_S3_* or Admin → Storage); idempotent, see
+                                          "qatlas artifacts --help" (or migrate from the UI)
+  artifacts check [--store local|s3]      verify every non-expired artifact exists in its store
   mcp-stdio --url URL --token TOKEN       MCP stdio proxy to URL/mcp for stdio-only MCP clients
                                           (or QATLAS_URL / QATLAS_TOKEN)
   version                                 print the version (also --version)
@@ -136,16 +138,19 @@ func runServer(ctx context.Context, cfg *config.Config, logger *slog.Logger) err
 	}
 	defer pool.Close()
 	warnPendingMigrations(ctx, pool, logger)
-	store, err := artifactStore(ctx, cfg, logger)
+	reg, err := openStorage(ctx, cfg, pool, logger)
 	if err != nil {
 		return err
 	}
-	// Insert-only River client: the server enqueues run_execute, a worker works it.
+	reg.Start() // reload when Admin → Storage changes (LISTEN qatlas_settings)
+	defer reg.Close()
+	// Insert-only River client: the server enqueues run_execute (and
+	// storage_migrate), a worker works it.
 	client, err := worker.NewInsertOnlyClient(pool, logger)
 	if err != nil {
 		return err
 	}
-	srv, err := server.New(server.Deps{Config: cfg, Pool: pool, Logger: logger, Enqueuer: worker.NewEnqueuer(client), ArtifactStore: store, Version: version})
+	srv, err := server.New(server.Deps{Config: cfg, Pool: pool, Logger: logger, Enqueuer: worker.NewEnqueuer(client), Storage: reg, Version: version})
 	if err != nil {
 		return err
 	}
@@ -166,7 +171,15 @@ func runMigrate(ctx context.Context, cfg *config.Config, args []string) error {
 		if err := db.MigrateUp(ctx, pool, os.Stdout); err != nil {
 			return err
 		}
-		return worker.MigrateRiverUp(ctx, pool, os.Stdout)
+		if err := worker.MigrateRiverUp(ctx, pool, os.Stdout); err != nil {
+			return err
+		}
+		if n, err := storage.Backfill(ctx, pool, cfg, nil); err != nil {
+			return fmt.Errorf("artifact storage backfill: %w", err)
+		} else if n > 0 {
+			fmt.Printf("marked %d existing artifacts as stored in S3 (QATLAS_STORAGE=s3)\n", n)
+		}
+		return nil
 	case "down":
 		return db.MigrateDown(ctx, pool, os.Stdout)
 	case "status":
@@ -327,9 +340,11 @@ func runSeed(ctx context.Context, cfg *config.Config, logger *slog.Logger, args 
 			return err
 		}
 		opts.Enqueuer = worker.NewEnqueuer(client)
-		if opts.Store, err = artifactStore(ctx, cfg, logger); err != nil {
+		reg, err := openStorage(ctx, cfg, pool, logger)
+		if err != nil {
 			return err
 		}
+		opts.Stores = reg
 	}
 	return seed.Demo(ctx, pool, cfg, logger, opts)
 }

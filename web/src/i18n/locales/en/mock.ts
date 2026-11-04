@@ -12,6 +12,10 @@ export default {
     ruleFail: 'A step parameter containing the word <code>fail</code> → the step fails.',
     ruleVoucher: '<code>testid=grand-total</code> reads <code>Rp 90.000</code> in the fake app (the voucher test fails on purpose).',
     ruleFlaky: 'Tests tagged <code>flaky</code> fail randomly ~40% of the time.',
+    ruleStorage:
+      'Storage: an endpoint containing <code>fail</code> or the secret <code>wrong</code> fails the connection check; a bucket containing <code>quota</code> stops an artifact move at 60%.',
+    storageEnv: 'Storage set by environment variables',
+    storageEnvHint: 'Simulates QATLAS_STORAGE on the server: Admin → Storage turns read-only.',
     reset: 'Reset demo data',
     resetDone: 'Demo data reset',
     switchFailed: "Couldn't switch user",

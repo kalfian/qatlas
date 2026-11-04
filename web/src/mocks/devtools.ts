@@ -1,4 +1,5 @@
-import { db, persist } from './db'
+import { db, persist, storageState } from './db'
+import { setStorageEnvOverride } from './storage'
 import { DEMO_PASSWORD } from './constants'
 
 /** Utilitas khusus mode mock (dipakai dev toolbar). Tidak ada padanannya di API asli. */
@@ -13,5 +14,10 @@ export const mockDevtools = {
     db().sim.speed = speed
     persist()
     window.dispatchEvent(new Event('qatlas:sim-speed'))
+  },
+  storageEnv: () => storageState().env_override,
+  setStorageEnv(on: boolean) {
+    setStorageEnvOverride(on)
+    persist()
   },
 }

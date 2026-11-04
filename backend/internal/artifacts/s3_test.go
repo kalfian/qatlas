@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -361,20 +362,28 @@ func TestS3MigrateCheckAndPurge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	set := StoreSet{Active: "local", Local: local, S3: s3s}
 	projectID, runID := artifactFixture(t, ctx, pool)
 
-	save := func(store Store, name, mime, body string) Artifact {
-		a, err := SaveWith(ctx, pool, store, Meta{ProjectID: projectID, RunID: runID, Kind: KindScreenshot, Name: name, MIME: mime},
+	save := func(name, mime, body string) Artifact {
+		a, err := SaveWith(ctx, pool, set, Meta{ProjectID: projectID, RunID: runID, Kind: KindScreenshot, Name: name, MIME: mime},
 			strings.NewReader(body), int64(len(body)))
-		if err != nil {
-			t.Fatal(err)
+		if err != nil || a.Storage != "local" {
+			t.Fatalf("save: %+v %v", a, err)
 		}
 		return a
 	}
-	shot := save(local, "shot.png", "image/png", "png-bytes")
-	video := save(local, "run.webm", "video/webm", strings.Repeat("v", 5000))
-	gone := save(local, "gone.txt", "text/plain", "lost")
-	expired := save(local, "old.png", "image/png", "old")
+	backendOf := func(a Artifact) string {
+		var b string
+		if err := pool.QueryRow(ctx, `SELECT storage FROM artifacts WHERE id = $1`, a.ID).Scan(&b); err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	shot := save("shot.png", "image/png", "png-bytes")
+	video := save("run.webm", "video/webm", strings.Repeat("v", 5000))
+	gone := save("gone.txt", "text/plain", "lost")
+	expired := save("old.png", "image/png", "old")
 	if _, err := pool.Exec(ctx, `UPDATE artifacts SET purged_at = now() WHERE id = $1`, expired.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -383,31 +392,38 @@ func TestS3MigrateCheckAndPurge(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Dry run writes nothing.
+	// Dry run writes nothing and switches no row.
 	var out bytes.Buffer
 	res, err := Migrate(ctx, pool, local, s3s, MigrateOptions{DryRun: true, Out: &out})
-	if err != nil || res.Total != 3 || res.Copied != 2 || res.Missing != 1 || res.Bytes != 5009 || len(keys()) != 0 {
+	if err != nil || res.Total != 3 || res.Copied != 2 || res.Missing != 1 || res.Bytes != 5009 || len(keys()) != 0 || backendOf(shot) != "local" {
 		t.Fatalf("dry run: %+v %v keys=%v\n%s", res, err, keys(), out.String())
 	}
 	if !strings.Contains(out.String(), "would copy "+keyOf(shot)) || !strings.Contains(out.String(), "MISSING "+keyOf(gone)) {
 		t.Fatalf("dry run output:\n%s", out.String())
 	}
 
-	// Check against the (still empty) S3 store reports everything missing.
+	// Check visits every row in its own store: only the lost file is missing.
 	out.Reset()
-	cres, err := Check(ctx, pool, s3s, &out)
-	if err != nil || cres.Total != 3 || cres.Missing != 3 {
-		t.Fatalf("check before: %+v %v", cres, err)
+	cres, err := Check(ctx, pool, set, "", &out)
+	if err != nil || cres.Total != 3 || cres.OK != 2 || cres.Missing != 1 || !strings.Contains(out.String(), gone.ID.String()) {
+		t.Fatalf("check before: %+v %v\n%s", cres, err, out.String())
+	}
+	if cres, err := Check(ctx, pool, set, "s3", nil); err != nil || cres.Total != 0 {
+		t.Fatalf("check s3 before: %+v %v", cres, err)
 	}
 
-	// Real run copies with content type; local files stay.
+	// Real run copies with content type and switches the copied rows; local files stay.
 	out.Reset()
-	res, err = Migrate(ctx, pool, local, s3s, MigrateOptions{Out: &out})
-	if err != nil || res.Copied != 2 || res.Skipped != 0 || res.Missing != 1 || res.Deleted != 0 {
-		t.Fatalf("migrate: %+v %v\n%s", res, err, out.String())
+	var progress []MigrateResult
+	res, err = Migrate(ctx, pool, local, s3s, MigrateOptions{Out: &out, Progress: func(r MigrateResult) { progress = append(progress, r) }})
+	if err != nil || res.Copied != 2 || res.Skipped != 0 || res.Missing != 1 || res.Deleted != 0 || len(progress) != 3 || progress[2].Moved() != 2 {
+		t.Fatalf("migrate: %+v %v %+v\n%s", res, err, progress, out.String())
 	}
 	if !strings.Contains(out.String(), "[3/3] progress: 2 copied, 0 skipped, 1 missing, 0 failed") {
 		t.Fatalf("progress output:\n%s", out.String())
+	}
+	if backendOf(shot) != "s3" || backendOf(video) != "s3" || backendOf(gone) != "local" || backendOf(expired) != "local" {
+		t.Fatalf("rows: %s %s %s %s", backendOf(shot), backendOf(video), backendOf(gone), backendOf(expired))
 	}
 	oi, err := s3s.client.StatObject(ctx, s3s.bucket, s3s.prefix+"/"+keyOf(video), minio.StatObjectOptions{})
 	if err != nil || oi.ContentType != "video/webm" || oi.Size != 5000 {
@@ -417,49 +433,62 @@ func TestS3MigrateCheckAndPurge(t *testing.T) {
 		t.Fatalf("local file removed without --delete-local: %v", err)
 	}
 
-	// Idempotent: everything present is skipped; --delete-local removes sources.
+	// Re-run: only the lost row is still on local; --delete-local also removes
+	// the sources left behind by the first run.
 	res, err = Migrate(ctx, pool, local, s3s, MigrateOptions{DeleteSource: true})
-	if err != nil || res.Copied != 0 || res.Skipped != 2 || res.Deleted != 2 {
+	if err != nil || res.Total != 1 || res.Copied != 0 || res.Missing != 1 || res.Deleted != 2 {
 		t.Fatalf("re-run: %+v %v", res, err)
 	}
 	if _, err := local.Stat(ctx, keyOf(shot)); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("local file kept with --delete-local: %v", err)
 	}
-	res, err = Migrate(ctx, pool, local, s3s, MigrateOptions{DeleteSource: true})
-	if err != nil || res.Copied != 0 || res.Skipped != 2 || res.Missing != 1 {
+	if res, err = Migrate(ctx, pool, local, s3s, MigrateOptions{DeleteSource: true}); err != nil || res.Deleted != 0 || res.Missing != 1 {
 		t.Fatalf("after delete: %+v %v", res, err)
 	}
 
 	// A different-size object in the destination is replaced.
+	if _, err := pool.Exec(ctx, `UPDATE artifacts SET storage = 'local' WHERE id = $1`, shot.ID); err != nil {
+		t.Fatal(err)
+	}
 	if err := s3s.Put(ctx, keyOf(shot), strings.NewReader("stale"), 5, "image/png"); err != nil {
 		t.Fatal(err)
 	}
 	if err := local.Put(ctx, keyOf(shot), strings.NewReader("png-bytes"), 9, ""); err != nil {
 		t.Fatal(err)
 	}
-	if res, err := Migrate(ctx, pool, local, s3s, MigrateOptions{}); err != nil || res.Copied != 1 {
+	if res, err := Migrate(ctx, pool, local, s3s, MigrateOptions{}); err != nil || res.Copied != 1 || backendOf(shot) != "s3" {
 		t.Fatalf("replace: %+v %v", res, err)
 	}
 	if info, _ := s3s.Stat(ctx, keyOf(shot)); info.Size != 9 {
 		t.Fatalf("not replaced: %+v", info)
 	}
 
-	// Check: only the lost file is missing; a size mismatch is reported.
-	out.Reset()
-	cres, err = Check(ctx, pool, s3s, &out)
-	if err != nil || cres.Total != 3 || cres.OK != 2 || cres.Missing != 1 || !strings.Contains(out.String(), gone.ID.String()) {
-		t.Fatalf("check: %+v %v\n%s", cres, err, out.String())
+	// Already in the destination but missing in the source: the row is just switched.
+	if _, err := pool.Exec(ctx, `UPDATE artifacts SET storage = 'local' WHERE id = $1`, video.ID); err != nil {
+		t.Fatal(err)
 	}
+	if res, err := Migrate(ctx, pool, local, s3s, MigrateOptions{}); err != nil || res.Skipped != 1 || backendOf(video) != "s3" {
+		t.Fatalf("already moved: %+v %v", res, err)
+	}
+
+	// Check: size mismatches and rows on an unconfigured backend are reported.
 	if _, err := pool.Exec(ctx, `UPDATE artifacts SET size_bytes = 1 WHERE id = $1`, shot.ID); err != nil {
 		t.Fatal(err)
 	}
-	if cres, _ = Check(ctx, pool, s3s, nil); cres.Mismatch != 1 {
-		t.Fatalf("mismatch not reported: %+v", cres)
+	out.Reset()
+	if cres, _ = Check(ctx, pool, set, "", &out); cres.Mismatch != 1 || cres.OK != 1 || cres.Missing != 1 {
+		t.Fatalf("mismatch not reported: %+v\n%s", cres, out.String())
+	}
+	if cres, _ = Check(ctx, pool, Single(local), "", nil); cres.Unavailable != 2 {
+		t.Fatalf("unconfigured backend not reported: %+v", cres)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE artifacts SET size_bytes = 9 WHERE id = $1`, shot.ID); err != nil {
+		t.Fatal(err)
 	}
 
-	// Reverse direction works too (s3 → local).
+	// Reverse direction works too (s3 → local), rows follow.
 	local2, _ := NewLocalStore(t.TempDir())
-	if res, err := Migrate(ctx, pool, s3s, local2, MigrateOptions{}); err != nil || res.Copied != 2 {
+	if res, err := Migrate(ctx, pool, s3s, local2, MigrateOptions{}); err != nil || res.Copied != 2 || backendOf(video) != "local" {
 		t.Fatalf("s3 → local: %+v %v", res, err)
 	}
 	if f, _, err := local2.Open(ctx, keyOf(video)); err != nil {
@@ -471,18 +500,29 @@ func TestS3MigrateCheckAndPurge(t *testing.T) {
 			t.Fatalf("s3 → local content %d bytes", len(b))
 		}
 	}
+	if _, err := Migrate(ctx, pool, local2, local, MigrateOptions{}); err == nil {
+		t.Fatal("local → local accepted")
+	}
 
-	// Purge with the S3 store deletes the objects and marks rows purged; a
-	// missing object (gone) does not block it.
+	// Purge deletes each object from its row's store; rows on a backend that is
+	// not configured are left alone.
+	set2 := StoreSet{Active: "local", Local: local2, S3: s3s}
+	stray := save("stray.png", "image/png", "x")
+	if _, err := pool.Exec(ctx, `UPDATE artifacts SET storage = 's3' WHERE id = $1`, stray.ID); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := pool.Exec(ctx, `UPDATE artifacts SET created_at = now() - interval '31 days'`); err != nil {
 		t.Fatal(err)
 	}
-	n, err := Purge(ctx, pool, s3s, time.Now(), nil)
+	n, err := Purge(ctx, pool, Single(local2), time.Now(), nil)
 	if err != nil || n != 3 {
-		t.Fatalf("purge: %d %v", n, err)
+		t.Fatalf("purge local rows: %d %v", n, err)
 	}
-	if got := keys(); len(got) != 0 {
-		t.Fatalf("objects left after purge: %v", got)
+	if _, err := local2.Stat(ctx, keyOf(video)); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("local object left after purge: %v", err)
+	}
+	if n, err := Purge(ctx, pool, set2, time.Now(), nil); err != nil || n != 1 {
+		t.Fatalf("purge s3 row: %d %v", n, err)
 	}
 	var left int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM artifacts WHERE purged_at IS NULL`).Scan(&left); err != nil || left != 0 {
@@ -500,8 +540,8 @@ func TestS3SaveWithUnknownSize(t *testing.T) {
 	s, keys := newS3(t)
 	projectID, runID := artifactFixture(t, ctx, pool)
 	body := strings.Repeat("x", 1234)
-	a, err := SaveWith(ctx, pool, s, Meta{ProjectID: projectID, RunID: runID, Kind: KindAttachment, Name: "notes.txt", MIME: "text/plain"}, strings.NewReader(body), -1)
-	if err != nil || a.SizeBytes != 1234 {
+	a, err := SaveWith(ctx, pool, Single(s), Meta{ProjectID: projectID, RunID: runID, Kind: KindAttachment, Name: "notes.txt", MIME: "text/plain"}, strings.NewReader(body), -1)
+	if err != nil || a.SizeBytes != 1234 || a.Storage != "s3" {
 		t.Fatalf("save: %+v %v", a, err)
 	}
 	oi, err := s.client.StatObject(ctx, s.bucket, s.prefix+"/"+StorageKey(projectID, runID, a.ID, a.Name), minio.StatObjectOptions{})
@@ -509,11 +549,74 @@ func TestS3SaveWithUnknownSize(t *testing.T) {
 		t.Fatalf("object: %+v %v", oi, err)
 	}
 	// A failing INSERT removes the uploaded object again.
-	_, err = SaveWith(ctx, pool, s, Meta{ProjectID: db.NewID(), RunID: runID, Kind: KindAttachment, Name: "x.txt"}, strings.NewReader("x"), -1)
+	_, err = SaveWith(ctx, pool, Single(s), Meta{ProjectID: db.NewID(), RunID: runID, Kind: KindAttachment, Name: "x.txt"}, strings.NewReader("x"), -1)
 	if err == nil {
 		t.Fatal("insert for unknown project succeeded")
 	}
 	if got := keys(); len(got) != 1 {
 		t.Fatalf("orphan object kept: %v", got)
+	}
+}
+
+// Probe reports connect / bucket / write / read / delete separately and never
+// leaves its probe object behind.
+func TestProbe(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	names := func(cs []ProbeCheck) string {
+		var b strings.Builder
+		for _, c := range cs {
+			fmt.Fprintf(&b, "%s=%v ", c.Name, c.OK)
+		}
+		return strings.TrimSpace(b.String())
+	}
+
+	local, _ := NewLocalStore(t.TempDir())
+	if cs := Probe(ctx, local); names(cs) != "connect=true bucket=true write=true read=true delete=true" || ProbeError(cs) != nil {
+		t.Fatalf("local: %+v", cs)
+	}
+
+	cfg := s3test.Config(t)
+	good, err := NewS3Store(cfg, WithMaxRetries(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cs := Probe(ctx, good); names(cs) != "connect=true bucket=true write=true read=true delete=true" {
+		t.Fatalf("s3: %+v", cs)
+	}
+	if keys := s3test.Keys(t, cfg); len(keys) != 0 {
+		t.Fatalf("probe object left: %v", keys)
+	}
+
+	missing := cfg
+	missing.Bucket = "qatlas-probe-missing"
+	s, _ := NewS3Store(missing, WithMaxRetries(1))
+	cs := Probe(ctx, s)
+	if names(cs) != "connect=true bucket=false write=false read=false delete=false" ||
+		!strings.Contains(cs[1].Message, "does not exist") || !strings.Contains(cs[2].Message, "Skipped") {
+		t.Fatalf("missing bucket: %+v", cs)
+	}
+	if err := ProbeError(cs); err == nil || !strings.HasPrefix(err.Error(), "bucket: ") {
+		t.Fatalf("probe error: %v", err)
+	}
+
+	wrong := cfg
+	wrong.SecretKey = strings.Repeat("0", 64)
+	s, _ = NewS3Store(wrong, WithMaxRetries(1))
+	cs = Probe(ctx, s)
+	if names(cs) != "connect=true bucket=false write=false read=false delete=false" || strings.Contains(fmt.Sprint(cs), wrong.SecretKey) {
+		t.Fatalf("wrong secret: %+v", cs)
+	}
+
+	down := cfg
+	down.Endpoint = "http://127.0.0.1:1"
+	s, _ = NewS3Store(down, WithMaxRetries(1))
+	start := time.Now()
+	cs = Probe(ctx, s)
+	if names(cs) != "connect=false bucket=false write=false read=false delete=false" || !strings.Contains(cs[0].Message, "cannot reach") {
+		t.Fatalf("unreachable: %+v", cs)
+	}
+	if d := time.Since(start); d > 15*time.Second {
+		t.Fatalf("unreachable endpoint took %s", d)
 	}
 }

@@ -61,7 +61,7 @@ fixtures — extend it rather than writing a second harness).
 
 | Package | Role |
 |---|---|
-| `cmd/qatlas` | subcommands `server`, `worker`, `all`, `migrate up\|down\|status`, `user create-admin`, `seed demo`, `artifacts migrate\|check`, `mcp-stdio --url --token` (stdio→HTTP MCP proxy), `version` (`-X main.version=…`, also in `/healthz`) |
+| `cmd/qatlas` | subcommands `server`, `worker`, `all`, `migrate up\|down\|status` (+ storage backfill), `user create-admin`, `seed demo`, `artifacts migrate\|check`, `mcp-stdio --url --token` (stdio→HTTP MCP proxy), `version` (`-X main.version=…`, also in `/healthz`) |
 | `internal/seed` | `qatlas seed demo`: loads `demo.json` (exported from `web/src/mocks/seed.ts`) through the real services (keys, revisions, validation, audit, encrypted secrets); idempotent per project key, `--reset`, async `--runs` |
 | `migrations` | embedded goose SQL. `0001_init.sql` = full schema (all docs/03 entities). Add `0002_….sql`; never edit a shipped file. River's tables are **not** goose files (see "Worker") |
 | `internal/config` | env config + validation (`Load`, `RequireDatabase`, `RequireMasterKey`) |
@@ -74,7 +74,8 @@ fixtures — extend it rather than writing a second harness).
 | `internal/runs` | so far only the `RunSummary` read model (`QuerySummaries`) |
 | `internal/mcp` | MCP server at `/mcp` (official go-sdk, Streamable HTTP, stateless, API tokens only): 19 tools calling the same services, resource `qatlas://docs/step-dsl` + test case template, prompts `write_test_case` / `triage_failed_run`, per-token limit of 3 queued/running MCP runs, `mcp.tool_call` audit entries; `stdio.go` = `qatlas mcp-stdio`. Spec: docs/07-mcp.md |
 | `internal/server` | router + graceful shutdown; `internal/web` serves `QATLAS_WEB_DIR` with SPA fallback |
-| `internal/artifacts` | `Store` (`Put`/`Open`/`Stat`/`Delete`, same keys everywhere): `LocalStore` (`QATLAS_DATA_DIR/artifacts`) and `S3Store` (minio-go; `QATLAS_STORAGE=s3`, `QATLAS_S3_*`; `Open` = lazy ranged GETs ≤ 8 MiB pinned to the ETag, so `http.ServeContent` Range works without downloading the whole object), `Verify` (startup probe), `Save`/`SaveFile`/`SaveWith`, `Purge`, `Migrate`/`Check` (`qatlas artifacts migrate\|check`), `GET /artifacts/{id}` (RBAC + Range + CSP sandbox); `s3test` = Garage container for tests |
+| `internal/artifacts` | `Store` (`Put`/`Open`/`Stat`/`Delete`, same keys everywhere): `LocalStore` (`QATLAS_DATA_DIR/artifacts`) and `S3Store` (minio-go; `Open` = lazy ranged GETs ≤ 8 MiB pinned to the ETag, so `http.ServeContent` Range works without downloading the whole object). `Stores` resolves a backend's store (`Writer` for new files, `For(row.storage)` for reads/deletes; `StoreSet`/`Single` = fixed sets). `Probe` (connect/bucket/write/read/delete) and `Verify`, `Save`/`SaveFile`/`SaveWith` (record `artifacts.storage`), `Purge`, `Migrate`/`Check` (per-row backend; CLI + UI job), `GET /artifacts/{id}` (RBAC + Range + CSP sandbox, 503 `storage_unavailable`); `s3test` = Garage container for tests |
+| `internal/storage` | Admin → Storage: settings in `system_settings` (S3 secret sealed with the master key, write-only), `Registry` (atomic store swap, LISTEN `qatlas_settings` + reload, S3 fallback re-check), `/admin/settings/storage` GET/PUT + `/test` + `/migrate`, `RunMigration` (River `storage_migrate`), `Backfill` (one-time `artifacts.storage` backfill for former `QATLAS_STORAGE=s3` installs) |
 | `internal/worker` | River (`NewEnqueuer`, `NewInsertOnlyClient`, River migrations), runner `Supervisor` (NDJSON), `Executor` (run_execute), startup recovery, artifact retention job |
 
 ## Worker
@@ -107,6 +108,22 @@ fixtures — extend it rather than writing a second harness).
   to `error` ("The worker restarted while the run was executing").
 - **Retention:** River periodic job `artifact_retention` (daily + on start, queue
   `maintenance`) calls `artifacts.Purge`.
+- **Storage migration:** `storage_migrate` (queue `maintenance`, one attempt, 24 h timeout)
+  runs `storage.RunMigration`; it holds an advisory lock, so `storage.RecoverMigrations`
+  (worker start, before each new migration) fails rows left `running` by a dead worker.
+
+## Artifact storage
+
+Configure storage from **Admin → Storage** (recommended); env vars override. Precedence:
+non-empty `QATLAS_STORAGE` → environment (`source: env`, PUT 409 `env_override`, startup probe
+must pass); else the database row (`source: database`); else local (`source: default`). The
+local store always exists. `server`, `worker` and `all` build one `storage.Registry`
+(`all` shares it), call `Start()` (LISTEN + retry loop) and pass it everywhere a store is
+needed; uploads take `Writer()` once, reads use the row's `artifacts.storage`. A PUT probes
+first, saves in one tx with the audit row + `pg_notify('qatlas_settings','storage')`, then
+installs the stores locally; other processes reload on the notification (skipped when
+`updated_at` is unchanged). A DB-configured S3 that fails its probe at startup only
+falls back to local for new writes (`warning` in GET, re-probed every minute).
 
 ## Adding a package (the pattern)
 

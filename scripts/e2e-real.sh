@@ -17,6 +17,11 @@
 # E2E_PG_HOSTPORT (127.0.0.1:55432), E2E_PG_USER / E2E_PG_PASSWORD (qatlas),
 # API_PORT (8090), DEMO_PORT (8099), WEB_PORT (5320), MAILPIT_BIN_DIR (where the pinned Mailpit
 # is downloaded once; default ~/.local/state/qatlas-demo/bin, shared with scripts/demo-server.sh).
+#
+# J13 (Admin → Storage, web/e2e/storage.spec.ts) is skipped unless an S3-compatible bucket is given:
+# E2E_S3_ENDPOINT, E2E_S3_BUCKET, E2E_S3_ACCESS_KEY_ID, E2E_S3_SECRET_ACCESS_KEY (+ optional E2E_S3_REGION,
+# default us-east-1). It writes probe objects and copies the demo artifacts into that bucket (use a
+# throwaway bucket), then switches the server back to local disk.
 
 set -Eeuo pipefail
 

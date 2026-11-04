@@ -385,7 +385,7 @@ func TestWorkerEndToEnd(t *testing.T) {
 	mustExec(t, pool, `UPDATE run_cases SET status = 'running', started_at = now() WHERE id = $1`, staleRun.cases[0])
 
 	w, err := New(Config{
-		Pool: pool, Logger: logger, MasterKey: f.key, DataDir: dataDir, Store: store,
+		Pool: pool, Logger: logger, MasterKey: f.key, DataDir: dataDir, Storage: artifacts.Single(store),
 		RunnerCmd:   nodeBin + " " + runnerMain,
 		Concurrency: 2, RunTimeout: 2 * time.Minute,
 		CancelPoll: 100 * time.Millisecond, CancelGrace: 3 * time.Second,

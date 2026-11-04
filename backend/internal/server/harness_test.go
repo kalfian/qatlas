@@ -29,6 +29,7 @@ var testMasterKey = []byte("qatlas-test-master-key-32-bytes!")
 type testEnv struct {
 	t    *testing.T
 	pool *pgxpool.Pool
+	cfg  *config.Config
 	srv  *Server
 	http *httptest.Server
 	ctx  context.Context
@@ -40,6 +41,19 @@ func newEnv(t *testing.T, opts ...func(*Deps)) *testEnv {
 	t.Helper()
 	pool := testutil.DB(t)
 	cfg := &config.Config{HTTPAddr: ":0", BaseURL: testBaseURL, DataDir: t.TempDir(), WorkerConcurrency: 1, MasterKey: testMasterKey}
+	return startEnv(t, pool, cfg, opts...)
+}
+
+// sibling starts a second API server on the same database and data directory
+// (another process of the same installation, e.g. for cross-process NOTIFY).
+func (e *testEnv) sibling(opts ...func(*Deps)) *testEnv {
+	e.t.Helper()
+	cfg := *e.cfg
+	return startEnv(e.t, e.pool, &cfg, opts...)
+}
+
+func startEnv(t *testing.T, pool *pgxpool.Pool, cfg *config.Config, opts ...func(*Deps)) *testEnv {
+	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	deps := Deps{Config: cfg, Pool: pool, Logger: logger}
 	for _, o := range opts {
@@ -52,7 +66,7 @@ func newEnv(t *testing.T, opts ...func(*Deps)) *testEnv {
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
 	t.Cleanup(srv.Close) // runs first (LIFO): ends open SSE streams so hs.Close does not wait on them
-	return &testEnv{t: t, pool: pool, srv: srv, http: hs, ctx: context.Background()}
+	return &testEnv{t: t, pool: pool, cfg: cfg, srv: srv, http: hs, ctx: context.Background()}
 }
 
 // client is a browser-like client (cookie jar + CSRF header) or a Bearer client.

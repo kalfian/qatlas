@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Segmented } from '@/components/ui/segmented'
+import { Switch } from '@/components/ui/switch'
 import { mockDevtools } from '@/mocks/devtools'
 
 /** Toolbar khusus mode mock: ganti user, kecepatan simulasi, reset data. */
@@ -19,6 +20,7 @@ export function DevToolbar() {
   const navigate = useNavigate()
   const [open, setOpen] = React.useState(false)
   const [speed, setSpeed] = React.useState(String(mockDevtools.speed()))
+  const [storageEnv, setStorageEnv] = React.useState(() => mockDevtools.storageEnv())
   const me = qc.getQueryData<{ user: { id: string } }>(qk.me)
 
   const switchUser = async (id: string) => {
@@ -99,10 +101,30 @@ export function DevToolbar() {
               className="w-full"
             />
           </div>
+          {me && (
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <Label htmlFor="mock-storage-env">{t('toolbar.storageEnv')}</Label>
+                <p id="mock-storage-env-hint" className="mt-1 text-xs text-muted-foreground">
+                  {t('toolbar.storageEnvHint')}
+                </p>
+              </div>
+              <Switch
+                id="mock-storage-env"
+                aria-describedby="mock-storage-env-hint"
+                checked={storageEnv}
+                onCheckedChange={(on) => {
+                  setStorageEnv(on)
+                  mockDevtools.setStorageEnv(on)
+                  void qc.invalidateQueries({ queryKey: qk.adminStorage })
+                }}
+              />
+            </div>
+          )}
           <div className="space-y-1 text-xs text-muted-foreground">
             <p className="font-medium text-foreground">{t('toolbar.rulesTitle')}</p>
             <ul className="list-disc space-y-0.5 pl-4">
-              {(['ruleFail', 'ruleVoucher', 'ruleFlaky'] as const).map((rule) => (
+              {(['ruleFail', 'ruleVoucher', 'ruleFlaky', 'ruleStorage'] as const).map((rule) => (
                 <li key={rule}>
                   <Trans t={t} i18nKey={`toolbar.${rule}`} components={{ code: <code className="font-mono" /> }} />
                 </li>
