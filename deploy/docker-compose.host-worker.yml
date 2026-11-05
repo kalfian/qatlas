@@ -1,0 +1,23 @@
+# Override: run the worker (Playwright runner) on the HOST network.
+#
+# Use this when the apps under test are only reachable through a VPN or route that lives on the
+# Docker host (e.g. an OpenVPN `tun0`, WireGuard, Tailscale subnet routes, split DNS). The worker
+# then sees exactly the host's routes and DNS, like a browser on that machine would.
+#
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.host-worker.yml \
+#     --env-file deploy/.env up -d --build
+#
+# Consequences:
+# - The worker can no longer resolve the `postgres` service name, so Postgres is published on
+#   127.0.0.1:${QATLAS_DB_HOST_PORT} (loopback only) and the worker connects there.
+# - The worker publishes no ports itself (it only makes outbound connections + talks to the runner).
+# - Artifacts are still shared with the server through the same volume (or use S3 storage).
+services:
+  postgres:
+    ports:
+      - "127.0.0.1:${QATLAS_DB_HOST_PORT:-55434}:5432"
+
+  worker:
+    network_mode: host
+    environment:
+      QATLAS_DATABASE_URL: postgres://qatlas:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@127.0.0.1:${QATLAS_DB_HOST_PORT:-55434}/qatlas?sslmode=disable

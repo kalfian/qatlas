@@ -90,6 +90,22 @@ the email cases (SHOP-T21/T22), and `--qa-totp-seed` must match the demo target'
 for the TOTP case (SHOP-T20; both default to the public demo seed). `qatlas seed demo --help` lists
 every flag.
 
+### Targets reachable only through the host's VPN
+
+If the apps under test are only reachable through a VPN or route on the Docker host (OpenVPN
+`tun0`, WireGuard, Tailscale subnet routes, split DNS), run the worker on the host network with
+the override `deploy/docker-compose.host-worker.yml`:
+
+```sh
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.host-worker.yml \
+  --env-file deploy/.env up -d --build
+```
+
+The worker then uses the host's routes and resolver, like a browser on that machine. Because it can
+no longer resolve the `postgres` service name, Postgres is published on loopback only
+(`127.0.0.1:${QATLAS_DB_HOST_PORT:-55434}`) and the worker connects there. Pick a free port with
+`QATLAS_DB_HOST_PORT` in `.env` if 55434 is taken.
+
 ### Upgrade / rollback
 
 ```sh
