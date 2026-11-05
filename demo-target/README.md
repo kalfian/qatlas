@@ -22,6 +22,8 @@ Use with the SHOP environment: `BASE_URL=http://localhost:8099`, `API_URL=http:/
 `QA_TOTP_SEED=TOKOKU2FADEMOSEEDQATLASTOTPDEMOA` (`qatlas seed demo` sets
 `BASE_URL`/`API_URL`/`MAILPIT_URL`/`QA_PASSWORD`/`QA_TOTP_SEED` for you — `--target-url`,
 `--mailpit-url`, `--qa-totp-seed`; pass `--admin-token` = `DEMO_ADMIN_TOKEN` for SHOP-T17).
+PAY environment: `API_URL=http://localhost:8099/api/v2`, secret `API_KEY=demo_pay_key_123`
+(`qatlas seed demo` sets both — `--target-url`, `--pay-api-key`).
 `scripts/demo-server.sh` and `scripts/e2e-real.sh` also start Mailpit for the sign-up cases
 (SHOP-T21, SHOP-T22).
 
@@ -36,6 +38,10 @@ Use with the SHOP environment: `BASE_URL=http://localhost:8099`, `API_URL=http:/
 | `DEMO_SMTP_HOST` / `DEMO_SMTP_PORT` | `127.0.0.1` / `1025` | SMTP server for sign-up emails, e.g. [Mailpit](https://mailpit.axllent.org) (no TLS, no AUTH) |
 | `DEMO_PUBLIC_URL` | `http://localhost:<port>` | base URL of the link in the verification email (must be reachable by the runner's browser) |
 | `DEMO_MAIL_DELAY_MS` | `1500` | the sign-up email is delivered this long after the "Check your email" page, like a mail queue (`0` = before the page) |
+| `DEMO_API_KEY` | `demo_pay_key_123` | `X-Api-Key` of the Tokoku Pay API (`/api/v2`; **demo-only, public**) — `qatlas seed demo --pay-api-key` |
+| `DEMO_REFUND_DELAY_MS` | `2000` | a refund is `pending` this long after it was created, then `succeeded` (for polling demos) |
+| `DEMO_WEBHOOK_SECRET` | `whsec_demo_123` | HMAC-SHA256 key of the signatures returned by `POST /api/v2/test/webhooks` |
+| `DEMO_RATE_LIMIT` | `600` | API reads (GET) per client (bearer token, API key or address) per minute; over it → `429` |
 
 ## Pages
 
@@ -86,15 +92,61 @@ expects Rp 81.000 and fails).
 
 ## JSON API
 
+Two small REST APIs for API-testing demos (the SHOP "API" cases SHOP-T15…T17, SHOP-T23…T27, flow
+SHOP-F4, and the PAY project). English responses, JSON everywhere (except `GET /api/v2/health`).
+
+- Every response (pages too) has `X-Request-Id` (`req_…`; a sane incoming `X-Request-Id` is echoed).
+- API reads (`GET`) have `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset` (seconds);
+  over `DEMO_RATE_LIMIT` per minute → `429 rate_limited` + `Retry-After`.
+- Errors: `{"error":{"code","message","details?"}}`; `details` = `[{path, message}]`, one per invalid
+  field (422). Unknown endpoint → 404 `not_found`; known path, wrong method → 405
+  `method_not_allowed` + `Allow`; malformed JSON / not an object → 400 `bad_request`.
+- Missing/invalid bearer token → `401 unauthenticated` with `WWW-Authenticate: Bearer realm="tokoku"`
+  (invalid/expired token: `…, error="invalid_token", …`).
+
+### `/api/v1` — Tokoku shop
+
 | Endpoint | Result |
 |---|---|
-| `GET /api/v1/products?limit=&q=&category=` (or `kategori=`) | `200 {data:[{id,slug,name,price,stock,category}], meta:{total,limit}}` |
-| `GET /api/v1/products/{id or slug}` | `200 {data}` / 404 |
-| `POST /api/v1/auth/login {email,password,totp?}` | `201 {data:{token,user}}` / `401 {error:{code:"invalid_credentials"}}`; TOTP users also need `totp` (`401 totp_required` / `invalid_totp`) |
-| `POST /api/v1/orders {sku:"PBT-L",qty}` + `Authorization: Bearer <token>` | `201 {data:{id,status,total}}` / 401 / 422 |
-| `GET /api/v1/orders/{id}` | `200 {data}` / 404 |
 | `GET /api/health` | `200 {ok:true}` |
+| `POST /api/v1/auth/login {email,password,totp?}` | `201 {data:{token,token_type:"Bearer",expires_in:3600,user:{email,name}}}`; wrong credentials `401 invalid_credentials`; missing fields `422`; TOTP users also need `totp` (`401 totp_required` / `invalid_totp`) |
+| `GET /api/v1/me` + Bearer | `200 {data:{email,name,role,two_factor}}` / `401` + `WWW-Authenticate` |
+| `GET /api/v1/products?limit=&offset=&category=&q=` | `200 {data:[{id,slug,name,price,stock,category}], meta:{total,limit,offset,count,next_offset}}` (`limit` 1–100, default 20; `kategori=` also works). With a Bearer token your own products are listed too |
+| `GET /api/v1/products/{id or slug}` | `200 {data}` / `404 {error:{code:"not_found"}}` |
+| `POST /api/v1/products {name,price,stock?,category?}` + Bearer | `201 {data}` + `Location: /api/v1/products/prd_…`; invalid → `422 validation_failed` with `details` (`name` required ≤ 120 chars, `price` integer 1–100000000, `stock` integer 0–100000, `category` one of the categories) |
+| `PATCH /api/v1/products/{id}` + Bearer | `200 {data}` (only the given fields, same validation); catalog products → `403 forbidden` |
+| `DELETE /api/v1/products/{id}` + Bearer | `204`; afterwards `GET` → `404` |
+| `POST /api/v1/orders {sku:"PBT-L",qty}` + Bearer | `201 {data:{id,status,total}}` + `Location` / `401` / `422` |
+| `GET /api/v1/orders/{id}` | `200 {data}` / `404` |
+| `GET /api/v1/slow?ms=` | waits `ms` (capped at 10000), then `200 {data:{requested_ms,delayed_ms,max_ms}}` — for `expect_response_time` |
 
-Bearer tokens: `DEMO_ADMIN_TOKEN` or any token returned by the login endpoint. SKUs are
-`<code>-<size>` with sizes `S`/`M`/`L`/`XL`; codes `PBT`, `PWT`, `PFS`, `LBL`, `BBC`, `CVT` (`en`)
-or `KPH`, `KPP`, `KFK`, `BLN`, `TPB`, `TSK` (`id`).
+Bearer tokens: `DEMO_ADMIN_TOKEN` or a token from the login endpoint (valid 1 hour). Products
+created through the API live in memory **per token** (other tokens, and requests without a token,
+get 404), so parallel test runs don't collide; at most 100 per token. Everything resets on restart.
+SKUs are `<code>-<size>` with sizes `S`/`M`/`L`/`XL`; codes `PBT`, `PWT`, `PFS`, `LBL`, `BBC`, `CVT`
+(`en`) or `KPH`, `KPP`, `KFK`, `BLN`, `TPB`, `TSK` (`id`).
+
+### `/api/v2` — Tokoku Pay
+
+Every endpoint except `/api/v2/health` needs `X-Api-Key: <DEMO_API_KEY>` (missing → `401
+missing_api_key`, wrong → `401 invalid_api_key`). Amounts are integers in the smallest unit.
+
+| Endpoint | Result |
+|---|---|
+| `GET /api/v2/health` | `200` `ok` (text/plain, no key needed) |
+| `POST /api/v2/payment-intents {amount,currency,description?}` | `201 {data:{id:"pi_…",object,amount,currency,status:"requires_payment",amount_refunded,amount_refundable,…}}` + `Location`; `currency` one of `IDR`/`USD`/`SGD`, else `422` |
+| `GET /api/v2/payment-intents/{id}` | `200 {data}` / `404` |
+| `POST /api/v2/payment-intents/{id}/confirm` | `200 {data:{status:"succeeded",confirmed_at,…}}` (idempotent) |
+| `POST /api/v2/refunds {payment_intent,amount?,reason?}` | `201 {data:{id:"re_…",status:"pending",succeeded_at:null,…}}` + `Location`; becomes `succeeded` (with `succeeded_at`) `DEMO_REFUND_DELAY_MS` later. Without `amount` = everything left. Intent not paid → `409 invalid_state`; more than what is left → `422 amount_exceeds_refundable`, `details[0].path = "amount"` |
+| `GET /api/v2/refunds/{id}` | `200 {data}` (status computed on read) / `404` |
+| `POST /api/v2/test/webhooks {event}` | `200 {delivered:true,event,id,signature:"t=<unix>,v1=<hex>",payload}` — nothing is sent; `v1` = HMAC-SHA256(`DEMO_WEBHOOK_SECRET`, `"<t>.<payload>"`). `event` one of `payment.succeeded`, `payment.failed`, `refund.succeeded`, `refund.failed`, else `422` |
+
+Polling a refund in a test case: `poll_until: "$.data.succeeded_at"` (null while pending), see
+[docs/manual](../docs/manual/README.md#api-testing).
+
+```bash
+B=http://localhost:8099/api
+TOKEN=$(curl -s -XPOST $B/v1/auth/login -d '{"email":"qa.bot@tokoku.id","password":"Qa-Staging-2026!"}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).data.token')
+curl -i -XPOST $B/v1/products -H "Authorization: Bearer $TOKEN" -d '{"name":"QA Mug","price":45000}'
+curl -i -XPOST $B/v2/payment-intents -H 'X-Api-Key: demo_pay_key_123' -d '{"amount":90000,"currency":"IDR"}'
+```

@@ -112,7 +112,7 @@ func TestDemoSeed(t *testing.T) {
 		SELECT p.key || '/' || e.name || ':' || e.is_default || ':' || e.variables::text
 		FROM environments e JOIN projects p ON p.id = e.project_id ORDER BY p.key, e.created_at`)
 	want := []string{
-		`PAY/sandbox:true:{"API_URL": "https://sandbox.pay.tokoku.id"}`,
+		`PAY/sandbox:true:{"API_URL": "http://demo.test:8099/api/v2"}`,
 		`SHOP/staging:true:{"API_URL": "http://demo.test:8099/api", "BASE_URL": "http://demo.test:8099", "MAILPIT_URL": "http://mail.test:8025"}`,
 		`SHOP/production:false:{"API_URL": "https://api.tokoku.id", "BASE_URL": "https://tokoku.id"}`,
 	}
@@ -146,7 +146,7 @@ func TestDemoSeed(t *testing.T) {
 	if v := secret("SHOP", "staging", "ADMIN_TOKEN"); v != "adm_test" {
 		t.Fatalf("ADMIN_TOKEN = %q", v)
 	}
-	if v := secret("PAY", "sandbox", "API_KEY"); !strings.HasPrefix(v, "sk_sandbox_") || len(v) < 30 {
+	if v := secret("PAY", "sandbox", "API_KEY"); v != DefaultPayAPIKey {
 		t.Fatalf("API_KEY = %q", v)
 	}
 
@@ -174,7 +174,7 @@ func TestDemoSeed(t *testing.T) {
 	if err := Demo(ctx, pool, cfg, nil, Options{Reset: true, Out: &out}); err != nil {
 		t.Fatalf("reset: %v\n%s", err, out.String())
 	}
-	if got := countAll(); got != "4/2/26/0" {
+	if got := countAll(); got != "4/2/31/0" {
 		t.Fatalf("after reset: %s", got)
 	}
 	if !strings.Contains(out.String(), "project SHOP deleted (--reset)") || !strings.Contains(out.String(), "project SHOP created") {
@@ -182,8 +182,105 @@ func TestDemoSeed(t *testing.T) {
 	}
 }
 
+func TestDemoSeedNoUsers(t *testing.T) {
+	pool := testutil.DB(t)
+	ctx := context.Background()
+	cfg := testConfig(t)
+	f, err := loadFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	insertUser := func(email, role, status string) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, `INSERT INTO users (id, email, name, password_hash, system_role, status)
+			VALUES ($1, $2, $3, NULL, $4, $5)`, uuid.New(), email, email, role, status); err != nil {
+			t.Fatal(err)
+		}
+	}
+	count := func(sql string) int {
+		t.Helper()
+		var n int
+		if err := pool.QueryRow(ctx, sql).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	insertUser("boss@example.com", "admin", "active")
+	insertUser("qa.lead@example.com", "member", "active")
+	insertUser("gone@example.com", "member", "disabled")
+
+	// Refuses an unknown or disabled owner and writes nothing.
+	var out bytes.Buffer
+	for _, owner := range []string{"nobody@example.com", "gone@example.com"} {
+		err := Demo(ctx, pool, cfg, nil, Options{NoUsers: true, Owner: owner, Out: &out})
+		if err == nil || !strings.Contains(err.Error(), owner) || !strings.Contains(err.Error(), "nothing was seeded") {
+			t.Fatalf("owner %s: %v", owner, err)
+		}
+	}
+	if n := count(`SELECT count(*) FROM projects`); n != 0 {
+		t.Fatalf("%d projects after a refused seed", n)
+	}
+
+	// A member owner: the oldest admin creates the projects, the owner is the only (maintainer) member.
+	out.Reset()
+	if err := Demo(ctx, pool, cfg, nil, Options{NoUsers: true, Owner: " QA.Lead@example.com ", TargetURL: "http://demo-target:8099", Out: &out}); err != nil {
+		t.Fatalf("seed: %v\n%s", err, out.String())
+	}
+	if strings.Contains(out.String(), "invite link:") || strings.Contains(out.String(), "@tokoku.id") {
+		t.Fatalf("output mentions demo users or invites:\n%s", out.String())
+	}
+	users := queryStrings(t, pool, `SELECT email FROM users ORDER BY email`)
+	if got := strings.Join(users, ","); got != "boss@example.com,gone@example.com,qa.lead@example.com" {
+		t.Fatalf("users: %s", got)
+	}
+	if n := count(`SELECT count(*) FROM invites`); n != 0 {
+		t.Fatalf("%d invites", n)
+	}
+	if got := strings.Join(queryStrings(t, pool, `
+		SELECT p.key || ':' || u.email || ':' || pm.role FROM project_members pm
+		JOIN projects p ON p.id = pm.project_id JOIN users u ON u.id = pm.user_id ORDER BY p.key, u.email`), ","); got !=
+		"PAY:qa.lead@example.com:maintainer,SHOP:qa.lead@example.com:maintainer" {
+		t.Fatalf("members: %s", got)
+	}
+	wantCases, wantFlows := 0, 0
+	for _, p := range f.Projects {
+		wantCases += len(p.TestCases)
+		wantFlows += len(p.Flows)
+	}
+	if got, want := fmt.Sprintf("%d/%d/%d", count(`SELECT count(*) FROM projects`), count(`SELECT count(*) FROM test_cases`), count(`SELECT count(*) FROM flows`)),
+		fmt.Sprintf("2/%d/%d", wantCases, wantFlows); got != want {
+		t.Fatalf("projects/cases/flows = %s, want %s", got, want)
+	}
+	if got := strings.Join(queryStrings(t, pool, `SELECT p.key || ':' || (e.variables->>'API_URL') FROM environments e
+		JOIN projects p ON p.id = e.project_id WHERE e.is_default ORDER BY p.key`), ","); got !=
+		"PAY:http://demo-target:8099/api/v2,SHOP:http://demo-target:8099/api" {
+		t.Fatalf("default environments: %s", got)
+	}
+
+	// An admin owner keeps the creator membership; --reset recreates the projects for it.
+	out.Reset()
+	if err := Demo(ctx, pool, cfg, nil, Options{NoUsers: true, Owner: "boss@example.com", Reset: true, Out: &out}); err != nil {
+		t.Fatalf("reset seed: %v\n%s", err, out.String())
+	}
+	if got := strings.Join(queryStrings(t, pool, `
+		SELECT p.key || ':' || u.email || ':' || pm.role FROM project_members pm
+		JOIN projects p ON p.id = pm.project_id JOIN users u ON u.id = pm.user_id ORDER BY p.key, u.email`), ","); got !=
+		"PAY:boss@example.com:maintainer,SHOP:boss@example.com:maintainer" {
+		t.Fatalf("members after reset: %s", got)
+	}
+	if n := count(`SELECT count(*) FROM users`); n != 3 {
+		t.Fatalf("%d users", n)
+	}
+}
+
 func TestDemoSeedValidation(t *testing.T) {
 	cfg := testConfig(t)
+	if err := Demo(context.Background(), nil, cfg, nil, Options{NoUsers: true}); err == nil || !strings.Contains(err.Error(), "--owner") {
+		t.Fatalf("no-users without owner: %v", err)
+	}
+	if err := Demo(context.Background(), nil, cfg, nil, Options{Owner: "x@example.com"}); err == nil || !strings.Contains(err.Error(), "--no-users") {
+		t.Fatalf("owner without no-users: %v", err)
+	}
 	if err := Demo(context.Background(), nil, cfg, nil, Options{Password: "short"}); err == nil || !strings.Contains(err.Error(), "--password") {
 		t.Fatalf("short password: %v", err)
 	}

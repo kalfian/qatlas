@@ -33,7 +33,7 @@ diterjemahkan, mis. **Add step** = **Tambah step**, **Save** = **Simpan**, **My 
 3. [Mengelola user (admin)](#3-mengelola-user-admin)
 4. [Project dan member](#4-project-dan-member)
 5. [Environment dan secret](#5-environment-dan-secret)
-6. [Menulis test case](#6-menulis-test-case)
+6. [Menulis test case](#6-menulis-test-case) (termasuk [API testing](#api-testing))
 7. [Test case manual](#7-test-case-manual)
 8. [Flow](#8-flow)
 9. [Menjalankan test](#9-menjalankan-test)
@@ -303,6 +303,163 @@ kode yang dikirim lewat email tanpa campur tangan orang:
 menjalankannya di samping toko demo (UI di `http://127.0.0.1:8025`), dan environment `staging`
 punya `MAILPIT_URL` serta secret `QA_TOTP_SEED`. Untuk aplikasimu sendiri, arahkan `MAILPIT_URL`
 ke instance Mailpit/MailHog-mu dan simpan seed 2FA akun test sebagai secret.
+
+### API testing
+
+Test case tidak harus memakai browser: step **HTTP request** mengirim request, dan assertion HTTP
+memeriksa response **terakhir**. Browser hanya dijalankan bila test case juga punya step UI, jadi
+test case yang murni API berjalan cepat. Toko demo sekaligus menyediakan REST API kecil (`/api/v1`,
+Tokoku shop) dan API pembayaran (`/api/v2`, Tokoku Pay, `X-Api-Key`); daftar endpoint-nya ada di
+[demo-target/README.md](../../demo-target/README.md#json-api).
+
+| Step | Fungsi |
+|---|---|
+| `http_request` | `method`, `url`, `headers`, `query` (di-encode otomatis), `body` + `body_type` (`json`, `text`, `form`), `save` (nama → JSONPath ke `vars`), `save_regex`, polling (`poll_timeout_ms`, `poll_interval_ms`, `poll_until`) |
+| `expect_status` | `value` = kode status |
+| `expect_json` | `path` (JSONPath: `$.data.id`, `$.items[0].name`, `$['x-y']`), `op` = `eq` / `neq` / `contains` / `exists` / `gt` / `lt` / `matches` (regex), `value` |
+| `expect_header` | `name` (tidak peka huruf besar/kecil), `value`, `match` = `contains` / `equals` / `regex` |
+| `expect_response_time` | `max_ms` |
+
+Nilai dibandingkan secara longgar, seperti orang membacanya: `"45000"` sama dengan angka `45000`,
+`"true"` sama dengan `true`. Report menampilkan setiap request (method, URL beserta query, status,
+waktu, body response) dan expected vs actual untuk setiap assertion. `save` hanya membaca body
+JSON; untuk id resource baru, simpan dari body (`$.data.id`), bukan dari header `Location`.
+
+Contoh di bawah adalah test case demo SHOP-T23 sampai SHOP-T27 (folder **API**, environment
+`staging`, `API_URL` = `<demo target>/api`), flow **SHOP-F4 API regression** (semua test case API
+berurutan, masing-masing dengan sesi sendiri) serta PAY-T1 sampai PAY-T3 (environment `sandbox`,
+`API_URL` = `<demo target>/api/v2`, secret `API_KEY`). JSON-nya sama dengan yang tampil di
+**Form / JSON** → JSON.
+
+**1. Login sekali, pakai ulang token-nya (SHOP-T23).** `save` menyalin `$.data.token` ke
+`vars.token`; request berikutnya mengirimnya sebagai header. Password diambil dari secret, jadi
+report menampilkan `••••`.
+
+```json
+[
+  { "id": "s3l", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/v1/auth/login", "body_type": "json",
+    "body": "{\"email\":\"{{vars.email}}\",\"password\":\"{{secret.QA_PASSWORD}}\"}", "save": { "token": "$.data.token" } },
+  { "id": "s3m", "action": "expect_status", "value": 201 },
+  { "id": "s3n", "action": "expect_json", "path": "$.data.expires_in", "op": "gt", "value": "0" },
+  { "id": "s3o", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/v1/me",
+    "headers": { "Authorization": "Bearer {{vars.token}}" } },
+  { "id": "s3p", "action": "expect_status", "value": 200 },
+  { "id": "s3q", "action": "expect_json", "path": "$.data.email", "op": "eq", "value": "{{vars.email}}" }
+]
+```
+
+**2. Siklus CRUD lengkap (SHOP-T24).** Buat → baca → ubah → hapus, lalu pastikan datanya sudah
+hilang. Nama unik per run (`{{fn.random_int 1000 9999}}`) memisahkan run satu dengan lainnya; API
+demo juga menyimpan produk per token, jadi run paralel tidak saling melihat datanya.
+
+```json
+[
+  { "id": "s3u", "action": "set_variable", "name": "product_name", "value": "QA Mug {{fn.random_int 1000 9999}}" },
+  { "id": "s3v", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/v1/products", "body_type": "json",
+    "headers": { "Authorization": "Bearer {{vars.token}}" },
+    "body": "{\"name\":\"{{vars.product_name}}\",\"price\":45000,\"stock\":3,\"category\":\"accessories\"}",
+    "save": { "product_id": "$.data.id" } },
+  { "id": "s3w", "action": "expect_status", "value": 201 },
+  { "id": "s3x", "action": "expect_header", "name": "Location", "value": "^/api/v1/products/prd_[0-9a-f]+$", "match": "regex" },
+  { "id": "s42", "action": "http_request", "method": "PATCH", "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+    "body_type": "json", "headers": { "Authorization": "Bearer {{vars.token}}" }, "body": "{\"price\":39000,\"stock\":10}" },
+  { "id": "s44", "action": "expect_json", "path": "$.data.price", "op": "eq", "value": "39000" },
+  { "id": "s45", "action": "http_request", "method": "DELETE", "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+    "headers": { "Authorization": "Bearer {{vars.token}}" } },
+  { "id": "s46", "action": "expect_status", "value": 204 },
+  { "id": "s47", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+    "headers": { "Authorization": "Bearer {{vars.token}}" } },
+  { "id": "s48", "action": "expect_status", "value": 404 },
+  { "id": "s49", "action": "expect_json", "path": "$.error.code", "op": "eq", "value": "not_found" }
+]
+```
+
+(Login di awal, pembacaan ulang setelah create, dan beberapa assertion tidak ditampilkan di sini.)
+
+**3. Negative test (SHOP-T25, SHOP-T26).** Response error bukan berarti step gagal: periksa status
+yang diharapkan dan body error-nya. Input tidak valid menghasilkan `422` dengan satu entri per
+field; token yang tidak ada atau asal-asalan menghasilkan `401` dengan tantangan `WWW-Authenticate`.
+
+```json
+[
+  { "id": "s4c", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/v1/products", "body_type": "json",
+    "headers": { "Authorization": "Bearer {{vars.token}}" }, "body": "{\"name\":\"\",\"price\":-5}" },
+  { "id": "s4d", "action": "expect_status", "value": 422 },
+  { "id": "s4e", "action": "expect_json", "path": "$.error.details[0].path", "op": "eq", "value": "name" },
+  { "id": "s4f", "action": "expect_json", "path": "$.error.details[1].path", "op": "eq", "value": "price" }
+]
+```
+
+```json
+[
+  { "id": "s4h", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/v1/me" },
+  { "id": "s4i", "action": "expect_status", "value": 401 },
+  { "id": "s4j", "action": "expect_header", "name": "WWW-Authenticate", "value": "Bearer", "match": "contains" },
+  { "id": "s4k", "action": "expect_json", "path": "$.error.code", "op": "eq", "value": "unauthenticated" }
+]
+```
+
+**4. Query parameter, header, dan response time (SHOP-T27).** Taruh parameter di `query`, bukan di
+URL: nilainya di-encode otomatis (`+`, spasi, `@`). `expect_response_time` mengukur request
+terakhir; `expect_header` dengan `match: regex` memeriksa format sebuah header.
+
+```json
+[
+  { "id": "s4o", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/v1/products",
+    "query": { "limit": "2", "offset": "2" } },
+  { "id": "s4p", "action": "expect_status", "value": 200 },
+  { "id": "s4q", "action": "expect_json", "path": "$.meta.total", "op": "gt", "value": "0" },
+  { "id": "s4t", "action": "expect_json", "path": "$.data[1].id", "op": "exists" },
+  { "id": "s4u", "action": "expect_response_time", "max_ms": 800 },
+  { "id": "s4v", "action": "expect_header", "name": "X-RateLimit-Remaining", "value": "^\\d+$", "match": "regex" }
+]
+```
+
+Untuk melihat kegagalan response time, arahkan salinannya ke `{{env.API_URL}}/v1/slow` dengan
+`query` `{ "ms": "1200" }`: step gagal dengan `Expected response time <= 800 ms, took 1203 ms`.
+
+**5. Menunggu hasil asinkron: polling refund (PAY-T3).** Refund dimulai sebagai `pending` dan selesai
+sekitar 2 detik kemudian. Daripada `wait` dengan durasi tetap, lakukan polling: request dikirim
+ulang sampai statusnya 2xx dan `poll_until` menunjuk nilai yang bukan `null` — di sini
+`succeeded_at`, yang tetap `null` selama refund masih pending. Setelah itu coba refund melebihi sisa
+dana dan harapkan `422`.
+
+```json
+[
+  { "id": "rf4", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/refunds", "body_type": "json",
+    "headers": { "X-Api-Key": "{{secret.API_KEY}}" },
+    "body": "{\"payment_intent\":\"{{vars.intent_id}}\",\"amount\":10000}", "save": { "refund_id": "$.data.id" } },
+  { "id": "rf5", "action": "expect_status", "value": 201 },
+  { "id": "rf6", "action": "expect_json", "path": "$.data.status", "op": "eq", "value": "pending" },
+  { "id": "rf7", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/refunds/{{vars.refund_id}}",
+    "headers": { "X-Api-Key": "{{secret.API_KEY}}" },
+    "poll_timeout_ms": 15000, "poll_interval_ms": 500, "poll_until": "$.data.succeeded_at" },
+  { "id": "rf8", "action": "expect_json", "path": "$.data.status", "op": "eq", "value": "succeeded" },
+  { "id": "rf9", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/refunds", "body_type": "json",
+    "headers": { "X-Api-Key": "{{secret.API_KEY}}" },
+    "body": "{\"payment_intent\":\"{{vars.intent_id}}\",\"amount\":90000}" },
+  { "id": "rf10", "action": "expect_status", "value": 422 },
+  { "id": "rf11", "action": "expect_json", "path": "$.error.details[0].path", "op": "eq", "value": "amount" }
+]
+```
+
+Report menampilkan jumlah percobaan pada step polling, dan ringkasannya diakhiri `(poll ≤15s)`.
+Pola yang sama dipakai untuk menunggu job, export, atau email (lihat [2FA dan email](#2fa-dan-email)).
+PAY-T1 menunjukkan alur dua langkah (buat payment intent, lalu
+`POST …/{{vars.intent_id}}/confirm`), dan PAY-T2 memeriksa tanda tangan webhook dengan
+`"op": "matches", "value": "^t=\\d+,v1=[0-9a-f]{64}$"`.
+
+**Tips**
+
+- Di JSON, backslash regex ditulis dua kali (`"^\\d+$"`); di form cukup sekali (`^\d+$`).
+- Simpan API key dan token sebagai **secret** environment (`{{secret.API_KEY}}`): nilainya dimask
+  `••••` di ringkasan, report, log, dan output MCP.
+- Test case di flow dengan **Shared session** mati (seperti SHOP-F4) mulai dengan variable runtime
+  kosong, jadi setiap test case API login sendiri. Dengan shared session, variable yang disimpan
+  (mis. `token`) terbawa ke test case berikutnya.
+- Satu test case boleh mencampur keduanya: buat data lewat API, lalu periksa di browser (SHOP-T17).
+- Untuk mencoba test case ini di instance sendiri tanpa user demo, lihat
+  [deploy/README.md](../../deploy/README.md#try-the-demo-projects-on-your-own-instance).
 
 ### Mode JSON
 

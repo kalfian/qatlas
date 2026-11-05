@@ -28,7 +28,7 @@ from a real instance: Go backend, worker, Playwright runner, and the demo shop.
 3. [Managing users (admin)](#3-managing-users-admin)
 4. [Projects and members](#4-projects-and-members)
 5. [Environments and secrets](#5-environments-and-secrets)
-6. [Writing test cases](#6-writing-test-cases)
+6. [Writing test cases](#6-writing-test-cases) (incl. [API testing](#api-testing))
 7. [Manual test cases](#7-manual-test-cases)
 8. [Flows](#8-flows)
 9. [Running tests](#9-running-tests)
@@ -298,6 +298,161 @@ or code without a person in the loop:
 it next to the demo shop (UI at `http://127.0.0.1:8025`), and the `staging` environment has
 `MAILPIT_URL` and the secret `QA_TOTP_SEED`. For your own app, point `MAILPIT_URL` at your
 Mailpit/MailHog instance and store your test account's 2FA seed as a secret.
+
+### API testing
+
+A test case does not need a browser: **HTTP request** steps send requests, and the HTTP assertions
+check the **most recent** response. The browser only starts when a case also has UI steps, so pure
+API cases are fast. The demo shop doubles as a small REST API (`/api/v1`, Tokoku shop) and a payment
+API (`/api/v2`, Tokoku Pay, `X-Api-Key`); its endpoints are listed in
+[demo-target/README.md](../../demo-target/README.md#json-api).
+
+| Step | What it does |
+|---|---|
+| `http_request` | `method`, `url`, `headers`, `query` (encoded for you), `body` + `body_type` (`json`, `text`, `form`), `save` (name → JSONPath into `vars`), `save_regex`, polling (`poll_timeout_ms`, `poll_interval_ms`, `poll_until`) |
+| `expect_status` | `value` = the status code |
+| `expect_json` | `path` (JSONPath: `$.data.id`, `$.items[0].name`, `$['x-y']`), `op` = `eq` / `neq` / `contains` / `exists` / `gt` / `lt` / `matches` (regex), `value` |
+| `expect_header` | `name` (case-insensitive), `value`, `match` = `contains` / `equals` / `regex` |
+| `expect_response_time` | `max_ms` |
+
+Values are compared loosely, like a person would: `"45000"` equals the number `45000`, `"true"`
+equals `true`. The report shows each request (method, URL with query, status, time, response
+body) and expected vs actual for every assertion. `save` reads the JSON body only; to use a new
+resource's id, save it from the body (`$.data.id`) rather than from the `Location` header.
+
+The examples below are the demo cases SHOP-T23 to SHOP-T27 (folder **API**, environment
+`staging`, `API_URL` = `<demo target>/api`), flow **SHOP-F4 API regression** (all API cases in a
+row, each in its own session) and PAY-T1 to PAY-T3 (environment `sandbox`, `API_URL` =
+`<demo target>/api/v2`, secret `API_KEY`). The JSON is what **Form / JSON** → JSON shows.
+
+**1. Log in once, reuse the token (SHOP-T23).** `save` copies `$.data.token` into `vars.token`;
+the next request sends it as a header. The password comes from a secret, so the report shows `••••`.
+
+```json
+[
+  { "id": "s3l", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/v1/auth/login", "body_type": "json",
+    "body": "{\"email\":\"{{vars.email}}\",\"password\":\"{{secret.QA_PASSWORD}}\"}", "save": { "token": "$.data.token" } },
+  { "id": "s3m", "action": "expect_status", "value": 201 },
+  { "id": "s3n", "action": "expect_json", "path": "$.data.expires_in", "op": "gt", "value": "0" },
+  { "id": "s3o", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/v1/me",
+    "headers": { "Authorization": "Bearer {{vars.token}}" } },
+  { "id": "s3p", "action": "expect_status", "value": 200 },
+  { "id": "s3q", "action": "expect_json", "path": "$.data.email", "op": "eq", "value": "{{vars.email}}" }
+]
+```
+
+**2. A full CRUD lifecycle (SHOP-T24).** Create → read → update → delete, then check it is gone. A
+unique name per run (`{{fn.random_int 1000 9999}}`) keeps runs apart; the demo API also keeps
+products per token, so parallel runs never see each other's data.
+
+```json
+[
+  { "id": "s3u", "action": "set_variable", "name": "product_name", "value": "QA Mug {{fn.random_int 1000 9999}}" },
+  { "id": "s3v", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/v1/products", "body_type": "json",
+    "headers": { "Authorization": "Bearer {{vars.token}}" },
+    "body": "{\"name\":\"{{vars.product_name}}\",\"price\":45000,\"stock\":3,\"category\":\"accessories\"}",
+    "save": { "product_id": "$.data.id" } },
+  { "id": "s3w", "action": "expect_status", "value": 201 },
+  { "id": "s3x", "action": "expect_header", "name": "Location", "value": "^/api/v1/products/prd_[0-9a-f]+$", "match": "regex" },
+  { "id": "s42", "action": "http_request", "method": "PATCH", "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+    "body_type": "json", "headers": { "Authorization": "Bearer {{vars.token}}" }, "body": "{\"price\":39000,\"stock\":10}" },
+  { "id": "s44", "action": "expect_json", "path": "$.data.price", "op": "eq", "value": "39000" },
+  { "id": "s45", "action": "http_request", "method": "DELETE", "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+    "headers": { "Authorization": "Bearer {{vars.token}}" } },
+  { "id": "s46", "action": "expect_status", "value": 204 },
+  { "id": "s47", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+    "headers": { "Authorization": "Bearer {{vars.token}}" } },
+  { "id": "s48", "action": "expect_status", "value": 404 },
+  { "id": "s49", "action": "expect_json", "path": "$.error.code", "op": "eq", "value": "not_found" }
+]
+```
+
+(The login at the start, the read-back after the create and a few assertions are left out here.)
+
+**3. Negative tests (SHOP-T25, SHOP-T26).** An error response is not a failed step: assert the
+status you expect and the error body. Invalid input returns `422` with one entry per field; a
+missing or made-up token returns `401` with a `WWW-Authenticate` challenge.
+
+```json
+[
+  { "id": "s4c", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/v1/products", "body_type": "json",
+    "headers": { "Authorization": "Bearer {{vars.token}}" }, "body": "{\"name\":\"\",\"price\":-5}" },
+  { "id": "s4d", "action": "expect_status", "value": 422 },
+  { "id": "s4e", "action": "expect_json", "path": "$.error.details[0].path", "op": "eq", "value": "name" },
+  { "id": "s4f", "action": "expect_json", "path": "$.error.details[1].path", "op": "eq", "value": "price" }
+]
+```
+
+```json
+[
+  { "id": "s4h", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/v1/me" },
+  { "id": "s4i", "action": "expect_status", "value": 401 },
+  { "id": "s4j", "action": "expect_header", "name": "WWW-Authenticate", "value": "Bearer", "match": "contains" },
+  { "id": "s4k", "action": "expect_json", "path": "$.error.code", "op": "eq", "value": "unauthenticated" }
+]
+```
+
+**4. Query parameters, headers and response time (SHOP-T27).** Put parameters in `query`, not in
+the URL: they are encoded for you (`+`, spaces, `@`). `expect_response_time` measures the last
+request; `expect_header` with `match: regex` checks a header's format.
+
+```json
+[
+  { "id": "s4o", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/v1/products",
+    "query": { "limit": "2", "offset": "2" } },
+  { "id": "s4p", "action": "expect_status", "value": 200 },
+  { "id": "s4q", "action": "expect_json", "path": "$.meta.total", "op": "gt", "value": "0" },
+  { "id": "s4t", "action": "expect_json", "path": "$.data[1].id", "op": "exists" },
+  { "id": "s4u", "action": "expect_response_time", "max_ms": 800 },
+  { "id": "s4v", "action": "expect_header", "name": "X-RateLimit-Remaining", "value": "^\\d+$", "match": "regex" }
+]
+```
+
+To see a response-time failure, point a copy at `{{env.API_URL}}/v1/slow` with `query`
+`{ "ms": "1200" }`: the step fails with `Expected response time <= 800 ms, took 1203 ms`.
+
+**5. Waiting for an asynchronous result: polling a refund (PAY-T3).** A refund starts as
+`pending` and settles about 2 seconds later. Instead of a fixed `wait`, poll: the request is sent
+again until the status is 2xx and `poll_until` points at a value that is not `null` — here
+`succeeded_at`, which stays `null` while the refund is pending. Then try to refund more than what
+is left and expect `422`.
+
+```json
+[
+  { "id": "rf4", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/refunds", "body_type": "json",
+    "headers": { "X-Api-Key": "{{secret.API_KEY}}" },
+    "body": "{\"payment_intent\":\"{{vars.intent_id}}\",\"amount\":10000}", "save": { "refund_id": "$.data.id" } },
+  { "id": "rf5", "action": "expect_status", "value": 201 },
+  { "id": "rf6", "action": "expect_json", "path": "$.data.status", "op": "eq", "value": "pending" },
+  { "id": "rf7", "action": "http_request", "method": "GET", "url": "{{env.API_URL}}/refunds/{{vars.refund_id}}",
+    "headers": { "X-Api-Key": "{{secret.API_KEY}}" },
+    "poll_timeout_ms": 15000, "poll_interval_ms": 500, "poll_until": "$.data.succeeded_at" },
+  { "id": "rf8", "action": "expect_json", "path": "$.data.status", "op": "eq", "value": "succeeded" },
+  { "id": "rf9", "action": "http_request", "method": "POST", "url": "{{env.API_URL}}/refunds", "body_type": "json",
+    "headers": { "X-Api-Key": "{{secret.API_KEY}}" },
+    "body": "{\"payment_intent\":\"{{vars.intent_id}}\",\"amount\":90000}" },
+  { "id": "rf10", "action": "expect_status", "value": 422 },
+  { "id": "rf11", "action": "expect_json", "path": "$.error.details[0].path", "op": "eq", "value": "amount" }
+]
+```
+
+The report shows the number of attempts on the polling step and its summary ends with
+`(poll ≤15s)`. The same pattern waits for a job, an export or an email (see
+[2FA and email](#2fa-and-email)). PAY-T1 shows a two-step flow (create a payment intent, then
+`POST …/{{vars.intent_id}}/confirm`), and PAY-T2 checks a webhook signature with
+`"op": "matches", "value": "^t=\\d+,v1=[0-9a-f]{64}$"`.
+
+**Tips**
+
+- In JSON a regex backslash is written twice (`"^\\d+$"`); in the form you type it once (`^\d+$`).
+- Keep API keys and tokens in environment **secrets** (`{{secret.API_KEY}}`): they are masked as
+  `••••` in summaries, reports, logs and MCP output.
+- Cases in a flow with **Shared session** off (like SHOP-F4) start with empty runtime variables, so
+  every API case logs in itself. With a shared session, saved variables (e.g. `token`) carry over to
+  the next case.
+- One case may mix both worlds: create data through the API, then check it in the browser (SHOP-T17).
+- To try these cases on your own instance without the demo users, see
+  [deploy/README.md](../../deploy/README.md#try-the-demo-projects-on-your-own-instance).
 
 ### JSON mode
 

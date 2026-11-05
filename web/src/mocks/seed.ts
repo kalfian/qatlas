@@ -31,6 +31,11 @@ let stepSeq = 0
 const sid = () => `s${(++stepSeq).toString(36)}`
 const S = (action: Step['action'], rest: Omit<Step, 'id' | 'action'> = {}): Step => ({ id: sid(), action, ...rest })
 const M = (description: string, expected: string): Step => ({ id: sid(), action: 'manual', description, expected })
+/**
+ * Step with an explicit id. For steps added to an existing case later: S() would advance the shared
+ * counter and shift the ids of every step declared after it (all ids must stay stable).
+ */
+const X = (id: string, action: Step['action'], rest: Omit<Step, 'id' | 'action'> = {}): Step => ({ id, action, ...rest })
 
 interface TcSeed {
   folder: string | null
@@ -200,25 +205,55 @@ const SHOP_CASES: TcSeed[] = [
     ] },
 ]
 
+/**
+ * Tokoku Pay API (demo-target /api/v2, X-Api-Key). Rewritten for the demo-target Pay API: each case
+ * keeps exactly as many S() steps as before (so every later step id stays unchanged); the steps
+ * added in the rewrite use X() with explicit ids.
+ */
+const payKey = { 'X-Api-Key': '{{secret.API_KEY}}' }
 const PAY_CASES: TcSeed[] = [
   { folder: 'Payment intent', title: 'Create a payment intent', priority: 'critical', tags: ['api', 'smoke'],
+    description: 'Creates a payment intent for Rp 90.000 and confirms it.',
     steps: [
-      S('http_request', { method: 'POST', url: '{{env.API_URL}}/v2/payment-intents', body_type: 'json',
-        headers: { 'X-Api-Key': '{{secret.API_KEY}}' }, body: '{"amount":90000,"currency":"IDR"}', save: { intent_id: '$.data.id' } }),
+      S('http_request', { method: 'POST', url: '{{env.API_URL}}/payment-intents', body_type: 'json',
+        headers: payKey, body: '{"amount":90000,"currency":"IDR"}', save: { intent_id: '$.data.id' }, description: 'Create the payment intent' }),
       S('expect_status', { value: 201 }),
       S('expect_json', { path: '$.data.status', op: 'eq', value: 'requires_payment' }),
+      X('pi4', 'expect_header', { name: 'Location', value: '/payment-intents/pi_', match: 'contains', description: 'Location points at the new intent' }),
+      X('pi5', 'http_request', { method: 'POST', url: '{{env.API_URL}}/payment-intents/{{vars.intent_id}}/confirm', headers: payKey,
+        description: 'Confirm the payment (the sandbox charges at once)' }),
+      X('pi6', 'expect_status', { value: 200 }),
+      X('pi7', 'expect_json', { path: '$.data.status', op: 'eq', value: 'succeeded' }),
     ] },
   { folder: 'Webhook', title: 'Payment succeeded webhook', priority: 'high', tags: ['api', 'webhook'],
     steps: [
-      S('http_request', { method: 'POST', url: '{{env.API_URL}}/v2/test/webhooks', body_type: 'json', body: '{"event":"payment.succeeded"}' }),
+      S('http_request', { method: 'POST', url: '{{env.API_URL}}/test/webhooks', body_type: 'json', headers: payKey,
+        body: '{"event":"payment.succeeded"}', description: 'Ask the sandbox to send a signed test event' }),
       S('expect_status', { value: 200 }),
       S('expect_json', { path: '$.delivered', op: 'eq', value: 'true' }),
+      X('wh4', 'expect_json', { path: '$.signature', op: 'matches', value: '^t=\\d+,v1=[0-9a-f]{64}$', description: 'Stripe-style signature header value' }),
     ] },
   { folder: 'Refund', title: 'Partial refund', priority: 'medium', tags: ['api', 'refund', 'flaky'],
+    description: 'Refunds Rp 10.000 of a paid Rp 90.000 intent, polls until the refund has settled, then checks that refunding more than what is left is rejected.',
     steps: [
-      S('http_request', { method: 'POST', url: '{{env.API_URL}}/v2/refunds', body_type: 'json', body: '{"payment_id":"pay_123","amount":10000}' }),
-      S('expect_status', { value: 201 }),
-      S('expect_json', { path: '$.data.amount', op: 'eq', value: '10000' }),
+      S('http_request', { method: 'POST', url: '{{env.API_URL}}/payment-intents', body_type: 'json', headers: payKey,
+        body: '{"amount":90000,"currency":"IDR"}', save: { intent_id: '$.data.id' }, description: 'Create a payment intent' }),
+      S('http_request', { method: 'POST', url: '{{env.API_URL}}/payment-intents/{{vars.intent_id}}/confirm', headers: payKey,
+        description: 'Pay it' }),
+      S('expect_json', { path: '$.data.status', op: 'eq', value: 'succeeded' }),
+      X('rf4', 'http_request', { method: 'POST', url: '{{env.API_URL}}/refunds', body_type: 'json', headers: payKey,
+        body: '{"payment_intent":"{{vars.intent_id}}","amount":10000}', save: { refund_id: '$.data.id' }, description: 'Refund Rp 10.000' }),
+      X('rf5', 'expect_status', { value: 201 }),
+      X('rf6', 'expect_json', { path: '$.data.status', op: 'eq', value: 'pending', description: 'Refunds settle asynchronously' }),
+      X('rf7', 'http_request', { method: 'GET', url: '{{env.API_URL}}/refunds/{{vars.refund_id}}', headers: payKey,
+        poll_timeout_ms: 15000, poll_interval_ms: 500, poll_until: '$.data.succeeded_at',
+        description: 'Poll until the refund has settled', expected: 'succeeded_at is set within 15 s' }),
+      X('rf8', 'expect_json', { path: '$.data.status', op: 'eq', value: 'succeeded' }),
+      X('rf9', 'http_request', { method: 'POST', url: '{{env.API_URL}}/refunds', body_type: 'json', headers: payKey,
+        body: '{"payment_intent":"{{vars.intent_id}}","amount":90000}', description: 'Try to refund more than the remaining Rp 80.000' }),
+      X('rf10', 'expect_status', { value: 422 }),
+      X('rf11', 'expect_json', { path: '$.error.details[0].path', op: 'eq', value: 'amount' }),
+      X('rf12', 'expect_json', { path: '$.error.details[0].message', op: 'contains', value: '80000' }),
     ] },
   { folder: 'Webhook', title: 'Validate the bank callback signature', priority: 'medium', execution: 'manual', tags: ['security'],
     steps: [
@@ -290,6 +325,96 @@ const SHOP_AUTH_EMAIL_CASES: TcSeed[] = [
     ] },
 ]
 
+/**
+ * SHOP API-testing examples (demo-target /api/v1). Appended after SHOP_AUTH_EMAIL_CASES (keys
+ * SHOP-T23…T27) and declared after it, so every existing key and step id stays unchanged. Each case
+ * logs in on its own: they also pass one by one and in a flow with isolated sessions (SHOP-F4).
+ */
+const apiLogin = (description = 'Log in through the API and keep the token'): Step[] => [
+  S('http_request', { method: 'POST', url: '{{env.API_URL}}/v1/auth/login', body_type: 'json',
+    body: '{"email":"qa.bot@tokoku.id","password":"{{secret.QA_PASSWORD}}"}', save: { token: '$.data.token' }, description }),
+  S('expect_status', { value: 201 }),
+]
+const bearerAuth = { Authorization: 'Bearer {{vars.token}}' }
+
+const SHOP_API_CASES: TcSeed[] = [
+  { folder: 'API', title: 'API: log in and fetch my profile', priority: 'high', tags: ['api', 'auth', 'smoke'],
+    description: 'Token chaining: the token from the login response is saved to a variable and sent as a Bearer header.',
+    variables: { email: 'qa.bot@tokoku.id' },
+    steps: [
+      S('http_request', { method: 'POST', url: '{{env.API_URL}}/v1/auth/login', body_type: 'json',
+        body: '{"email":"{{vars.email}}","password":"{{secret.QA_PASSWORD}}"}', save: { token: '$.data.token' },
+        description: 'Log in through the API', expected: '201 with a token' }),
+      S('expect_status', { value: 201 }),
+      S('expect_json', { path: '$.data.expires_in', op: 'gt', value: '0' }),
+      S('http_request', { method: 'GET', url: '{{env.API_URL}}/v1/me', headers: bearerAuth, description: 'Call a protected endpoint with the saved token' }),
+      S('expect_status', { value: 200 }),
+      S('expect_json', { path: '$.data.email', op: 'eq', value: '{{vars.email}}' }),
+      S('expect_json', { path: '$.data.name', op: 'eq', value: 'QA Bot' }),
+    ] },
+  { folder: 'API', title: 'API: product CRUD lifecycle', priority: 'critical', tags: ['api', 'crud'],
+    description: 'Create → read → update → delete a product, then check that it is gone. Products created through the API are only visible to the token that created them.',
+    steps: [
+      ...apiLogin(),
+      S('set_variable', { name: 'product_name', value: 'QA Mug {{fn.random_int 1000 9999}}', description: 'A unique name per run' }),
+      S('http_request', { method: 'POST', url: '{{env.API_URL}}/v1/products', body_type: 'json', headers: bearerAuth,
+        body: '{"name":"{{vars.product_name}}","price":45000,"stock":3,"category":"accessories"}', save: { product_id: '$.data.id' },
+        description: 'Create a product' }),
+      S('expect_status', { value: 201 }),
+      S('expect_header', { name: 'Location', value: '^/api/v1/products/prd_[0-9a-f]+$', match: 'regex', description: 'Location of the new resource' }),
+      S('expect_json', { path: '$.data.name', op: 'eq', value: '{{vars.product_name}}' }),
+      S('http_request', { method: 'GET', url: '{{env.API_URL}}/v1/products/{{vars.product_id}}', headers: bearerAuth, description: 'Read it back' }),
+      S('expect_status', { value: 200 }),
+      S('expect_json', { path: '$.data.price', op: 'eq', value: '45000' }),
+      S('http_request', { method: 'PATCH', url: '{{env.API_URL}}/v1/products/{{vars.product_id}}', body_type: 'json', headers: bearerAuth,
+        body: '{"price":39000,"stock":10}', description: 'Change price and stock' }),
+      S('expect_status', { value: 200 }),
+      S('expect_json', { path: '$.data.price', op: 'eq', value: '39000' }),
+      S('http_request', { method: 'DELETE', url: '{{env.API_URL}}/v1/products/{{vars.product_id}}', headers: bearerAuth, description: 'Delete it' }),
+      S('expect_status', { value: 204 }),
+      S('http_request', { method: 'GET', url: '{{env.API_URL}}/v1/products/{{vars.product_id}}', headers: bearerAuth, description: 'It is gone' }),
+      S('expect_status', { value: 404 }),
+      S('expect_json', { path: '$.error.code', op: 'eq', value: 'not_found' }),
+    ] },
+  { folder: 'API', title: 'API: validation errors return 422', priority: 'medium', tags: ['api', 'negative'],
+    description: 'Negative test: an invalid product is rejected with 422 and one error per field.',
+    steps: [
+      ...apiLogin(),
+      S('http_request', { method: 'POST', url: '{{env.API_URL}}/v1/products', body_type: 'json', headers: bearerAuth,
+        body: '{"name":"","price":-5}', description: 'Send an empty name and a negative price' }),
+      S('expect_status', { value: 422 }),
+      S('expect_json', { path: '$.error.details[0].path', op: 'eq', value: 'name' }),
+      S('expect_json', { path: '$.error.details[1].path', op: 'eq', value: 'price' }),
+      S('expect_json', { path: '$.error.details[1].message', op: 'contains', value: 'integer' }),
+    ] },
+  { folder: 'API', title: 'API: unauthorized without token', priority: 'high', tags: ['api', 'auth', 'negative', 'security'],
+    description: 'Protected endpoints answer 401 with a WWW-Authenticate challenge, with no token and with a wrong one.',
+    steps: [
+      S('http_request', { method: 'GET', url: '{{env.API_URL}}/v1/me', description: 'No Authorization header' }),
+      S('expect_status', { value: 401 }),
+      S('expect_header', { name: 'WWW-Authenticate', value: 'Bearer', match: 'contains' }),
+      S('expect_json', { path: '$.error.code', op: 'eq', value: 'unauthenticated' }),
+      S('http_request', { method: 'POST', url: '{{env.API_URL}}/v1/products', body_type: 'json',
+        headers: { Authorization: 'Bearer not-a-real-token' }, body: '{"name":"Sneaky","price":1000}', description: 'A made-up token' }),
+      S('expect_status', { value: 401 }),
+      S('expect_header', { name: 'WWW-Authenticate', value: 'error="invalid_token"', match: 'contains' }),
+    ] },
+  { folder: 'API', title: 'API: list products with pagination', priority: 'medium', tags: ['api', 'catalog'],
+    description: 'Query parameters, pagination metadata, a response-time budget and response headers.',
+    steps: [
+      S('http_request', { method: 'GET', url: '{{env.API_URL}}/v1/products', query: { limit: '2', offset: '2' }, description: 'Second page of two' }),
+      S('expect_status', { value: 200 }),
+      S('expect_json', { path: '$.meta.total', op: 'gt', value: '0' }),
+      S('expect_json', { path: '$.meta.limit', op: 'eq', value: '2' }),
+      S('expect_json', { path: '$.meta.offset', op: 'eq', value: '2' }),
+      S('expect_json', { path: '$.data[1].id', op: 'exists' }),
+      S('expect_response_time', { max_ms: 800 }),
+      S('expect_header', { name: 'X-RateLimit-Remaining', value: '^\\d+$', match: 'regex', description: 'Rate-limit budget is reported' }),
+      S('http_request', { method: 'GET', url: '{{env.API_URL}}/v1/products', query: { category: 'accessories' }, description: 'Filter by category' }),
+      S('expect_json', { path: '$.data[0].category', op: 'eq', value: 'accessories' }),
+    ] },
+]
+
 /* ------------------------------------------------------------------ builder */
 
 export function buildSeed(): MockState {
@@ -333,8 +458,9 @@ export function buildSeed(): MockState {
       variables: { BASE_URL: 'https://tokoku.id', API_URL: 'https://api.tokoku.id' },
       secrets: [{ name: 'QA_PASSWORD', value: 'Qa-Prod-2026!', updated_at: iso(20 * DAY) }], updated_at: iso(20 * DAY) },
     { id: 'env_pay_sbx', project_id: 'p_pay', name: 'sandbox', is_default: true,
-      variables: { API_URL: 'https://sandbox.pay.tokoku.id' },
-      secrets: [{ name: 'API_KEY', value: 'sk_sbx_123', updated_at: iso(10 * DAY) }], updated_at: iso(10 * DAY) },
+      // Real mode (`qatlas seed demo`): API_URL=<target-url>/api/v2, API_KEY=--pay-api-key (demo-target DEMO_API_KEY).
+      variables: { API_URL: 'https://sandbox.pay.tokoku.id/api/v2' },
+      secrets: [{ name: 'API_KEY', value: 'demo_pay_key_123', updated_at: iso(10 * DAY) }], updated_at: iso(10 * DAY) },
   ]
 
   const folders: DbFolder[] = []
@@ -379,7 +505,7 @@ export function buildSeed(): MockState {
       })
     })
   }
-  makeCases(projects[0], [...SHOP_CASES, ...SHOP_AUTH_EMAIL_CASES], ['u_rina', 'u_dimas'])
+  makeCases(projects[0], [...SHOP_CASES, ...SHOP_AUTH_EMAIL_CASES, ...SHOP_API_CASES], ['u_rina', 'u_dimas'])
   makeCases(projects[1], PAY_CASES, ['u_dimas', 'u_sari'])
 
   const revisions = testCases.flatMap((t) =>
@@ -412,8 +538,12 @@ export function buildSeed(): MockState {
     { id: 'fl_pay_1', project_id: 'p_pay', key: 'PAY-F1', name: 'Full payment flow', description: 'Intent → webhook → refund.',
       tags: ['api'], shared_session: false, stop_on_failure: true, variables: {},
       items: [flowItem('PAY-T1'), flowItem('PAY-T2'), flowItem('PAY-T3', true)], revision: 1, created_at: iso(20 * DAY), updated_at: iso(20 * DAY), deleted_at: null },
+    // Appended after the existing flows (key SHOP-F4): the API examples, each in its own session.
+    { id: 'fl_shop_4', project_id: 'p_shop', key: 'SHOP-F4', name: 'API regression', description: 'All API test cases in a row, each in its own session (no shared cookies or variables); a failure does not stop the rest.',
+      tags: ['api', 'regression'], shared_session: false, stop_on_failure: false, variables: {},
+      items: ['SHOP-T23', 'SHOP-T24', 'SHOP-T25', 'SHOP-T26', 'SHOP-T27', 'SHOP-T15', 'SHOP-T16'].map((k) => flowItem(k)), revision: 1, created_at: iso(4 * DAY), updated_at: iso(4 * DAY), deleted_at: null },
   ]
-  projects[0].seq.flow = 3
+  projects[0].seq.flow = 4
   projects[1].seq.flow = 1
 
   return {

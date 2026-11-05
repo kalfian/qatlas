@@ -52,10 +52,12 @@ Commands:
                                           create (or reset) an admin; password from --password,
                                           QATLAS_ADMIN_PASSWORD or an interactive prompt
   seed demo [--password P] [--target-url URL] [--mailpit-url URL] [--qa-password P]
-            [--qa-totp-seed S] [--admin-token T] [--reset] [--runs]
+            [--qa-totp-seed S] [--admin-token T] [--pay-api-key K] [--reset] [--runs]
+            [--no-users --owner EMAIL]
                                           load the demo users, projects SHOP/PAY, environments,
                                           folders, test cases and flows (skips existing projects);
-                                          see "qatlas seed demo --help"
+                                          --no-users --owner: only the projects, owned by an
+                                          existing user; see "qatlas seed demo --help"
   artifacts migrate --from local --to s3 [--dry-run] [--delete-local]
                                           move artifact files between stores (S3 settings from
                                           QATLAS_S3_* or Admin → Storage); idempotent, see
@@ -297,9 +299,17 @@ Needs QATLAS_DATABASE_URL and QATLAS_MASTER_KEY (secrets are encrypted).
 
 SHOP "staging" points at the demo target (demo-target/, node demo-target/server.mjs):
 BASE_URL=<target-url>, API_URL=<target-url>/api, MAILPIT_URL=<mailpit-url> (the Mailpit the
-demo target sends its sign-up email to). Secrets: QA_PASSWORD=--qa-password,
-QA_TOTP_SEED=--qa-totp-seed (demo-target DEMO_TOTP_SEED), ADMIN_TOKEN=--admin-token (random when
-empty; demo-target accepts DEMO_ADMIN_TOKEN), PAY API_KEY random.
+demo target sends its sign-up email to). PAY "sandbox": API_URL=<target-url>/api/v2 (the demo
+target's Tokoku Pay API). Secrets: QA_PASSWORD=--qa-password, QA_TOTP_SEED=--qa-totp-seed
+(demo-target DEMO_TOTP_SEED), ADMIN_TOKEN=--admin-token (random when empty; demo-target accepts
+DEMO_ADMIN_TOKEN), PAY API_KEY=--pay-api-key (demo-target DEMO_API_KEY).
+<target-url> is where the WORKER reaches the demo target: http://localhost:8099 for a worker on
+the host (or host network), http://demo-target:8099 for a worker in the compose bridge network.
+
+Your own instance without demo accounts: --no-users --owner you@example.com creates only the
+projects SHOP and PAY (environments, folders, test cases, flows) with that existing user as
+maintainer; no demo users, no invite links. It refuses (and writes nothing) when the owner
+does not exist or is disabled.
 
 Flags:
 `
@@ -315,11 +325,14 @@ func runSeed(ctx context.Context, cfg *config.Config, logger *slog.Logger, args 
 	}
 	opts := seed.Options{Out: os.Stdout}
 	fs.StringVar(&opts.Password, "password", seed.DefaultPassword, "password of the active demo users")
-	fs.StringVar(&opts.TargetURL, "target-url", seed.DefaultTargetURL, "demo target base URL for SHOP staging")
+	fs.StringVar(&opts.TargetURL, "target-url", seed.DefaultTargetURL, "demo target base URL as the worker reaches it (SHOP staging, PAY sandbox <url>/api/v2)")
 	fs.StringVar(&opts.QAPassword, "qa-password", seed.DefaultQAPassword, "value of the QA_PASSWORD secrets (demo-target DEMO_QA_PASSWORD)")
 	fs.StringVar(&opts.MailpitURL, "mailpit-url", seed.DefaultMailpitURL, "Mailpit web/API URL for SHOP staging MAILPIT_URL (sign-up email cases)")
 	fs.StringVar(&opts.QATOTPSeed, "qa-totp-seed", seed.DefaultQATOTPSeed, "value of the QA_TOTP_SEED secret (demo-target DEMO_TOTP_SEED; the default is a public demo-only seed)")
 	fs.StringVar(&opts.AdminToken, "admin-token", "", "value of the ADMIN_TOKEN secret (default: random; demo-target DEMO_ADMIN_TOKEN)")
+	fs.StringVar(&opts.PayAPIKey, "pay-api-key", seed.DefaultPayAPIKey, "value of PAY's API_KEY secret (demo-target DEMO_API_KEY; the default is a public demo-only key)")
+	fs.BoolVar(&opts.NoUsers, "no-users", false, "create only the demo projects (no demo users, no invite links); needs --owner")
+	fs.StringVar(&opts.Owner, "owner", "", "with --no-users: email of an existing user who becomes maintainer of the demo projects")
 	fs.BoolVar(&opts.Reset, "reset", false, "delete the demo projects (with all their runs) first")
 	fs.BoolVar(&opts.Runs, "runs", false, "enqueue a few demo runs (SHOP-F2, SHOP-T12, SHOP-F3) for a running worker; returns immediately")
 	if err := fs.Parse(args[1:]); err != nil {

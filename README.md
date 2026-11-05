@@ -116,6 +116,10 @@ and API on `http://127.0.0.1:8025`. The shop's sign-up sends its verification em
 three SHOP cases show the patterns: **SHOP-T20** logs in with TOTP 2FA via
 `{{fn.totp secret.QA_TOTP_SEED}}`, **SHOP-T21** signs up, polls Mailpit until the email arrives,
 extracts the link with `save_regex` and opens it, **SHOP-T22** does the same with the 6-digit code.
+The shop is also a small REST API: **SHOP-T23…T27** (flow **SHOP-F4 API regression**) show API
+testing — token chaining, a CRUD lifecycle, 422/401 negative tests, headers and response time — and
+the **PAY** project tests a payment API, polling a refund until it has settled
+([manual → API testing](docs/manual/README.md#api-testing)).
 The TOTP seed is a public demo-only value (see [demo-target/README.md](demo-target/README.md)).
 
 `scripts/demo-server.sh status | stop | reset` (reset deletes the demo database and data).

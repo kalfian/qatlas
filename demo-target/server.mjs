@@ -14,6 +14,13 @@
 //   DEMO_PUBLIC_URL=…                  base URL used in email links (default http://localhost:<port>)
 //   DEMO_MAIL_DELAY_MS=…               delivery delay of sign-up emails like a mail queue (default 1500;
 //                                      0 = deliver before the "Check your email" page)
+//   DEMO_API_KEY=…                     X-Api-Key of the Tokoku Pay API /api/v2 (default demo_pay_key_123)
+//   DEMO_REFUND_DELAY_MS=…             a refund stays "pending" this long, then "succeeded" (default 2000)
+//   DEMO_WEBHOOK_SECRET=…              HMAC key of POST /api/v2/test/webhooks signatures (default whsec_demo_123)
+//   DEMO_RATE_LIMIT=…                  API reads (GET) per client per minute (default 600)
+//
+// REST API (JSON, X-Request-Id on every response): /api/v1 = Tokoku shop (bearer tokens from
+// POST /api/v1/auth/login), /api/v2 = Tokoku Pay (X-Api-Key). See README.md "JSON API".
 //
 // INTENTIONAL BUG: the voucher HEMAT10 is shown as applied, but the grand total ignores the
 // discount (see renderCheckout). The seeded "voucher" test case is meant to fail on it.
@@ -39,6 +46,11 @@ const SMTP_HOST = process.env.DEMO_SMTP_HOST || '127.0.0.1'
 const SMTP_PORT = Number(process.env.DEMO_SMTP_PORT || 1025)
 let PUBLIC_URL = (process.env.DEMO_PUBLIC_URL ?? '').replace(/\/+$/, '') // set after listen when empty
 const MAIL_DELAY_MS = Math.max(0, Number(process.env.DEMO_MAIL_DELAY_MS ?? 1500) || 0)
+// Demo-only API key of the Pay API (documented, protects nothing). Override with DEMO_API_KEY.
+const API_KEY = process.env.DEMO_API_KEY || 'demo_pay_key_123'
+const REFUND_DELAY_MS = Math.max(0, Number(process.env.DEMO_REFUND_DELAY_MS ?? 2000) || 0)
+const WEBHOOK_SECRET = process.env.DEMO_WEBHOOK_SECRET || 'whsec_demo_123'
+const RATE_LIMIT = Math.max(1, Number(process.env.DEMO_RATE_LIMIT ?? 600) || 600)
 
 /** Registered accounts. `totp` = base32 seed → password login asks for an authentication code. */
 const USERS = [
@@ -192,8 +204,15 @@ const STATIC = {
 const sessions = new Map()
 /** id → order */
 const orders = new Map()
-/** API bearer tokens issued by POST /api/v1/auth/login */
-const apiTokens = new Set()
+/** API bearer tokens issued by POST /api/v1/auth/login: token → { user, expiresAt } */
+const apiTokens = new Map()
+/** Products created through the API, per bearer token (tests don't see each other's): token → Map(id → product) */
+const tokenProducts = new Map()
+/** Tokoku Pay: id → payment intent / refund */
+const paymentIntents = new Map()
+const refunds = new Map()
+/** Rate-limit windows of API reads: client → { start, count } */
+const rateWindows = new Map()
 
 function newSession() {
   // Every new visitor starts with a demo cart (1× the first product — Plain Black Tee / Kaos Polos
@@ -518,9 +537,12 @@ function send(res, status, body, headers = {}) {
 }
 
 const html = (res, body, status = 200) => send(res, status, body, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' })
-const json = (res, status, data) => send(res, status, JSON.stringify(data), { 'Content-Type': 'application/json; charset=utf-8' })
+const json = (res, status, data, headers = {}) =>
+  send(res, status, JSON.stringify(data), { 'Content-Type': 'application/json; charset=utf-8', ...headers })
 const redirect = (res, location) => send(res, 303, '', { Location: location })
-const apiError = (res, status, code, message) => json(res, status, { error: { code, message } })
+/** `{error:{code,message,details?}}`; details = [{path, message}] per invalid field. */
+const apiError = (res, status, code, message, details, headers = {}) =>
+  json(res, status, { error: { code, message, ...(details?.length ? { details } : {}) } }, headers)
 
 /* ------------------------------------------------------------------ layout */
 
@@ -865,66 +887,401 @@ function renderNotFound(s) {
 
 /* ------------------------------------------------------------------ API */
 
+// Two small REST APIs for API-testing demos (English responses, JSON everywhere):
+//   /api/v1  Tokoku shop: auth, profile, products (CRUD per bearer token), orders, a slow endpoint
+//   /api/v2  Tokoku Pay: payment intents, refunds (pending → succeeded after DEMO_REFUND_DELAY_MS),
+//            test webhooks; every endpoint except /api/v2/health needs `X-Api-Key: <DEMO_API_KEY>`
+// Errors are `{error:{code,message,details?}}` with details = [{path, message}] per invalid field.
+
+const TOKEN_TTL_S = 3600
+const MAX_TOKENS = 5000
+const MAX_PRODUCTS_PER_TOKEN = 100
+const MAX_PAY_OBJECTS = 5000
+const SLOW_MAX_MS = 10_000
+const RATE_WINDOW_MS = 60_000
+const CURRENCIES = ['IDR', 'USD', 'SGD']
+const WEBHOOK_EVENTS = ['payment.succeeded', 'payment.failed', 'refund.succeeded', 'refund.failed']
+const ADMIN_USER = { email: 'admin@tokoku.id', name: 'Tokoku Admin', role: 'admin' }
+
+/** Map with a size cap: the oldest entries are dropped first (insertion order). */
+function remember(map, key, value, max) {
+  map.set(key, value)
+  while (map.size > max) map.delete(map.keys().next().value)
+  return value
+}
+
+const newApiId = (prefix) => `${prefix}_${randomBytes(8).toString('hex')}`
+const isInt = (v) => typeof v === 'number' && Number.isInteger(v)
+
+function safeEqual(a, b) {
+  const x = Buffer.from(String(a))
+  const y = Buffer.from(String(b))
+  return x.length === y.length && timingSafeEqual(x, y)
+}
+
 function bearer(req) {
   const m = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? '')
   return m ? m[1].trim() : null
 }
 
+/** { token, user } for a valid bearer token, otherwise { token, user: null } (token null = header missing). */
+function apiUser(req) {
+  const token = bearer(req)
+  if (!token) return { token: null, user: null }
+  if (safeEqual(token, ADMIN_TOKEN)) return { token, user: ADMIN_USER }
+  const entry = apiTokens.get(token)
+  if (!entry) return { token, user: null }
+  if (entry.expiresAt <= Date.now()) {
+    apiTokens.delete(token)
+    return { token, user: null }
+  }
+  return { token, user: entry.user }
+}
+
+/** 401 + WWW-Authenticate (RFC 6750), or the authenticated { token, user }. */
+function requireBearer(req, res) {
+  const auth = apiUser(req)
+  if (auth.user) return auth
+  if (!auth.token) {
+    apiError(res, 401, 'unauthenticated', 'Missing bearer token: send "Authorization: Bearer <token>" (POST /api/v1/auth/login)',
+      undefined, { 'WWW-Authenticate': 'Bearer realm="tokoku"' })
+  } else {
+    apiError(res, 401, 'unauthenticated', 'Invalid or expired bearer token', undefined,
+      { 'WWW-Authenticate': 'Bearer realm="tokoku", error="invalid_token", error_description="The access token is invalid or expired"' })
+  }
+  return null
+}
+
+async function readJsonObject(req) {
+  const body = await readJson(req)
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    throw Object.assign(new Error('Body must be a JSON object'), { status: 400 })
+  }
+  return body
+}
+
+const validationError = (res, details, message = 'The request has invalid fields') =>
+  apiError(res, 422, 'validation_failed', message, details)
+
+/** Fixed one-minute window per client (bearer token, API key or address) for API reads. */
+function rateLimit(req, res) {
+  const client = bearer(req) ?? req.headers['x-api-key'] ?? req.socket.remoteAddress ?? 'anonymous'
+  const now = Date.now()
+  let w = rateWindows.get(client)
+  if (!w || now - w.start >= RATE_WINDOW_MS) w = remember(rateWindows, client, { start: now, count: 0 }, MAX_TOKENS)
+  w.count += 1
+  const reset = Math.ceil((w.start + RATE_WINDOW_MS - now) / 1000)
+  res.setHeader('X-RateLimit-Limit', String(RATE_LIMIT))
+  res.setHeader('X-RateLimit-Remaining', String(Math.max(0, RATE_LIMIT - w.count)))
+  res.setHeader('X-RateLimit-Reset', String(reset))
+  if (w.count <= RATE_LIMIT) return true
+  apiError(res, 429, 'rate_limited', `Too many requests: ${RATE_LIMIT} reads per minute`, undefined, { 'Retry-After': String(reset) })
+  return false
+}
+
+/* ---------------------------------------------------------- v1: products */
+
+const productView = ({ id, slug, name, price, stock, category, created_at, updated_at }) =>
+  created_at ? { id, slug, name, price, stock, category, created_at, updated_at } : { id, slug, name, price, stock, category }
+
+const ownProducts = (token) => (token ? tokenProducts.get(token) : undefined) ?? new Map()
+
+/** Field errors of a product body; `partial` (PATCH) only checks the given fields. */
+function productErrors(body, partial) {
+  const details = []
+  const has = (k) => body[k] !== undefined
+  if (!partial || has('name')) {
+    if (typeof body.name !== 'string' || !body.name.trim()) details.push({ path: 'name', message: 'is required' })
+    else if (body.name.trim().length > 120) details.push({ path: 'name', message: 'must be at most 120 characters' })
+  }
+  if (!partial || has('price')) {
+    if (!isInt(body.price) || body.price < 1 || body.price > 100_000_000) {
+      details.push({ path: 'price', message: 'must be an integer between 1 and 100000000 (IDR)' })
+    }
+  }
+  if (has('stock') && (!isInt(body.stock) || body.stock < 0 || body.stock > 100_000)) {
+    details.push({ path: 'stock', message: 'must be an integer between 0 and 100000' })
+  }
+  if (has('category') && body.category !== null && !CATEGORIES.some((c) => c.slug === body.category)) {
+    details.push({ path: 'category', message: `must be one of: ${CATEGORIES.map((c) => c.slug).join(', ')}` })
+  }
+  return details
+}
+
+const slugify = (s) =>
+  String(s).toLowerCase().normalize('NFKD').replace(/[^\w\s-]/g, '').trim().replace(/[\s_-]+/g, '-').slice(0, 60) || 'product'
+
+function listProducts(req, res, url) {
+  const { token, user } = apiUser(req)
+  const q = (url.searchParams.get('q') ?? '').toLowerCase()
+  const category = url.searchParams.get('category') ?? url.searchParams.get('kategori')
+  const all = [...PRODUCTS, ...(user ? ownProducts(token).values() : [])]
+  const list = all.filter((p) => (!q || p.name.toLowerCase().includes(q)) && (!category || p.category === category))
+  const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') ?? 20) || 20))
+  const offset = Math.max(0, Math.floor(Number(url.searchParams.get('offset') ?? 0) || 0))
+  const page = list.slice(offset, offset + limit)
+  return json(res, 200, {
+    data: page.map(productView),
+    meta: { total: list.length, limit, offset, count: page.length, next_offset: offset + limit < list.length ? offset + limit : null },
+  })
+}
+
+function getProduct(req, res, _url, [id]) {
+  const { token, user } = apiUser(req)
+  const own = user ? ownProducts(token).get(id) : undefined
+  const p = own ?? PRODUCTS.find((x) => x.id === id || x.slug === id)
+  return p ? json(res, 200, { data: productView(p) }) : apiError(res, 404, 'not_found', `Product ${id} not found`)
+}
+
+async function createProduct(req, res) {
+  const auth = requireBearer(req, res)
+  if (!auth) return
+  const body = await readJsonObject(req)
+  const details = productErrors(body, false)
+  if (details.length) return validationError(res, details)
+  let own = tokenProducts.get(auth.token)
+  if (!own) own = remember(tokenProducts, auth.token, new Map(), MAX_TOKENS)
+  if (own.size >= MAX_PRODUCTS_PER_TOKEN) {
+    return apiError(res, 409, 'limit_reached', `At most ${MAX_PRODUCTS_PER_TOKEN} products per token; delete some or log in again`)
+  }
+  const id = newApiId('prd')
+  const now = new Date().toISOString()
+  const name = body.name.trim()
+  const product = {
+    id, slug: `${slugify(name)}-${id.slice(4, 10)}`, name, price: body.price, stock: body.stock ?? 0,
+    category: body.category ?? null, created_at: now, updated_at: now,
+  }
+  own.set(id, product)
+  return json(res, 201, { data: productView(product) }, { Location: `/api/v1/products/${id}` })
+}
+
+/** The caller's own product, or an error response (403 for catalog products, 404 otherwise). */
+function ownProductOr(res, auth, id) {
+  const p = ownProducts(auth.token).get(id)
+  if (p) return p
+  if (PRODUCTS.some((x) => x.id === id || x.slug === id)) {
+    apiError(res, 403, 'forbidden', 'Catalog products are read-only; create your own with POST /api/v1/products')
+  } else {
+    apiError(res, 404, 'not_found', `Product ${id} not found`)
+  }
+  return null
+}
+
+async function updateProduct(req, res, _url, [id]) {
+  const auth = requireBearer(req, res)
+  if (!auth) return
+  const p = ownProductOr(res, auth, id)
+  if (!p) return
+  const body = await readJsonObject(req)
+  const details = productErrors(body, true)
+  if (details.length) return validationError(res, details)
+  if (body.name !== undefined) p.name = body.name.trim()
+  for (const k of ['price', 'stock', 'category']) if (body[k] !== undefined) p[k] = body[k]
+  p.updated_at = new Date().toISOString()
+  return json(res, 200, { data: productView(p) })
+}
+
+function deleteProduct(req, res, _url, [id]) {
+  const auth = requireBearer(req, res)
+  if (!auth) return
+  if (!ownProductOr(res, auth, id)) return
+  ownProducts(auth.token).delete(id)
+  return send(res, 204, '')
+}
+
+/* ---------------------------------------------------------- v1: auth, profile, orders, slow */
+
+async function login(req, res) {
+  const body = await readJsonObject(req)
+  const details = []
+  if (typeof body.email !== 'string' || !body.email) details.push({ path: 'email', message: 'is required' })
+  if (typeof body.password !== 'string' || !body.password) details.push({ path: 'password', message: 'is required' })
+  if (details.length) return validationError(res, details)
+  const user = findUser(body.email)
+  if (!user || user.password !== body.password) return apiError(res, 401, 'invalid_credentials', T.wrongCredentials)
+  if (user.totp && !verifyTotp(user.totp, body.totp)) {
+    return apiError(res, 401, body.totp ? 'invalid_totp' : 'totp_required', T.invalidAuthCode)
+  }
+  const token = `tkk_${randomBytes(16).toString('hex')}`
+  const profile = { email: user.email, name: user.name, role: 'customer' }
+  remember(apiTokens, token, { user: profile, expiresAt: Date.now() + TOKEN_TTL_S * 1000 }, MAX_TOKENS)
+  return json(res, 201, { data: { token, token_type: 'Bearer', expires_in: TOKEN_TTL_S, user: { email: user.email, name: user.name } } })
+}
+
+function me(req, res) {
+  const auth = requireBearer(req, res)
+  if (!auth) return
+  return json(res, 200, { data: { ...auth.user, two_factor: Boolean(findUser(auth.user.email)?.totp) } })
+}
+
+async function createApiOrder(req, res) {
+  if (!requireBearer(req, res)) return
+  const body = await readJsonObject(req)
+  const qty = Number(body.qty ?? 1)
+  if (!productBySku(body.sku)) {
+    return apiError(res, 422, 'validation_failed', `Unknown sku "${body.sku}"`, [{ path: 'sku', message: 'is not a known SKU' }])
+  }
+  if (!Number.isInteger(qty) || qty < 1 || qty > 99) {
+    return apiError(res, 422, 'validation_failed', 'qty must be 1..99', [{ path: 'qty', message: 'must be an integer between 1 and 99' }])
+  }
+  const order = createOrder({ items: [{ sku: body.sku, qty }], address: body.address, payment: body.payment, source: 'api' })
+  return json(res, 201, { data: { id: order.id, status: order.status, total: order.total } }, { Location: `/api/v1/orders/${order.id}` })
+}
+
+function getOrder(_req, res, _url, [id]) {
+  const o = orders.get(id)
+  return o ? json(res, 200, { data: o }) : apiError(res, 404, 'not_found', `Order ${id} not found`)
+}
+
+async function slow(_req, res, url) {
+  const raw = url.searchParams.get('ms') ?? '1000'
+  const ms = Number(raw)
+  if (!Number.isFinite(ms) || ms < 0) return validationError(res, [{ path: 'ms', message: 'must be a number ≥ 0' }], 'Invalid query parameter')
+  const delayed = Math.min(Math.round(ms), SLOW_MAX_MS)
+  await new Promise((resolve) => setTimeout(resolve, delayed))
+  return json(res, 200, { data: { requested_ms: Math.round(ms), delayed_ms: delayed, max_ms: SLOW_MAX_MS } })
+}
+
+/* ---------------------------------------------------------- v2: Tokoku Pay */
+
+function requireApiKey(req, res) {
+  const key = req.headers['x-api-key']
+  if (!key) {
+    apiError(res, 401, 'missing_api_key', 'Send your API key in the X-Api-Key header')
+    return false
+  }
+  if (!safeEqual(key, API_KEY)) {
+    apiError(res, 401, 'invalid_api_key', 'The API key is not valid')
+    return false
+  }
+  return true
+}
+
+function refundView(r) {
+  const doneAt = Date.parse(r.created_at) + REFUND_DELAY_MS
+  const done = Date.now() >= doneAt
+  return { ...r, status: done ? 'succeeded' : 'pending', succeeded_at: done ? new Date(doneAt).toISOString() : null }
+}
+
+function intentView(pi) {
+  const amountRefunded = [...refunds.values()].filter((r) => r.payment_intent === pi.id).reduce((sum, r) => sum + r.amount, 0)
+  return { ...pi, amount_refunded: amountRefunded, amount_refundable: pi.status === 'succeeded' ? pi.amount - amountRefunded : 0 }
+}
+
+async function createIntent(req, res) {
+  const body = await readJsonObject(req)
+  const details = []
+  if (!isInt(body.amount) || body.amount < 1 || body.amount > 100_000_000) {
+    details.push({ path: 'amount', message: 'must be an integer between 1 and 100000000 (smallest currency unit)' })
+  }
+  if (!CURRENCIES.includes(body.currency)) details.push({ path: 'currency', message: `must be one of: ${CURRENCIES.join(', ')}` })
+  if (details.length) return validationError(res, details)
+  const now = new Date().toISOString()
+  const pi = {
+    id: newApiId('pi'), object: 'payment_intent', amount: body.amount, currency: body.currency, status: 'requires_payment',
+    description: typeof body.description === 'string' ? body.description.slice(0, 200) : null, created_at: now, confirmed_at: null,
+  }
+  remember(paymentIntents, pi.id, pi, MAX_PAY_OBJECTS)
+  return json(res, 201, { data: intentView(pi) }, { Location: `/api/v2/payment-intents/${pi.id}` })
+}
+
+function getIntent(_req, res, _url, [id]) {
+  const pi = paymentIntents.get(id)
+  return pi ? json(res, 200, { data: intentView(pi) }) : apiError(res, 404, 'not_found', `Payment intent ${id} not found`)
+}
+
+function confirmIntent(_req, res, _url, [id]) {
+  const pi = paymentIntents.get(id)
+  if (!pi) return apiError(res, 404, 'not_found', `Payment intent ${id} not found`)
+  if (pi.status === 'requires_payment') {
+    pi.status = 'succeeded'
+    pi.confirmed_at = new Date().toISOString()
+  }
+  return json(res, 200, { data: intentView(pi) })
+}
+
+async function createRefund(req, res) {
+  const body = await readJsonObject(req)
+  const details = []
+  if (typeof body.payment_intent !== 'string' || !body.payment_intent) details.push({ path: 'payment_intent', message: 'is required' })
+  if (body.amount !== undefined && (!isInt(body.amount) || body.amount < 1)) details.push({ path: 'amount', message: 'must be a positive integer' })
+  if (details.length) return validationError(res, details)
+  const pi = paymentIntents.get(body.payment_intent)
+  if (!pi) return apiError(res, 404, 'not_found', `Payment intent ${body.payment_intent} not found`)
+  if (pi.status !== 'succeeded') {
+    return apiError(res, 409, 'invalid_state', `Payment intent ${pi.id} has not been paid yet (status ${pi.status}); confirm it first`)
+  }
+  const refundable = intentView(pi).amount_refundable
+  const amount = body.amount ?? refundable
+  if (amount > refundable || refundable === 0) {
+    return apiError(res, 422, 'amount_exceeds_refundable', `Refund amount ${amount} exceeds the refundable amount ${refundable}`,
+      [{ path: 'amount', message: `must be at most ${refundable}` }])
+  }
+  const r = {
+    id: newApiId('re'), object: 'refund', payment_intent: pi.id, amount, currency: pi.currency,
+    reason: typeof body.reason === 'string' ? body.reason.slice(0, 200) : null, created_at: new Date().toISOString(),
+  }
+  remember(refunds, r.id, r, MAX_PAY_OBJECTS)
+  return json(res, 201, { data: refundView(r) }, { Location: `/api/v2/refunds/${r.id}` })
+}
+
+function getRefund(_req, res, _url, [id]) {
+  const r = refunds.get(id)
+  return r ? json(res, 200, { data: refundView(r) }) : apiError(res, 404, 'not_found', `Refund ${id} not found`)
+}
+
+/** Sends nothing anywhere: returns the signed event a webhook receiver would get (Stripe-style signature). */
+async function testWebhook(req, res) {
+  const body = await readJsonObject(req)
+  if (!WEBHOOK_EVENTS.includes(body.event)) {
+    return validationError(res, [{ path: 'event', message: `must be one of: ${WEBHOOK_EVENTS.join(', ')}` }])
+  }
+  const t = Math.floor(Date.now() / 1000)
+  const event = { id: newApiId('evt'), type: body.event, created: t }
+  const payload = JSON.stringify(event)
+  const v1 = createHmac('sha256', WEBHOOK_SECRET).update(`${t}.${payload}`).digest('hex')
+  return json(res, 200, { delivered: true, event: body.event, id: event.id, signature: `t=${t},v1=${v1}`, payload })
+}
+
+/* ---------------------------------------------------------- dispatch */
+
+const ok = (_req, res) => send(res, 200, 'ok', { 'Content-Type': 'text/plain; charset=utf-8' })
+
+/** [method, path pattern (after /api), handler(req, res, url, params)] */
+const API_ROUTES = [
+  ['GET', /^\/health$/, (_req, res) => json(res, 200, { ok: true })],
+  ['POST', /^\/v1\/auth\/login$/, login],
+  ['GET', /^\/v1\/me$/, me],
+  ['GET', /^\/v1\/products$/, listProducts],
+  ['POST', /^\/v1\/products$/, createProduct],
+  ['GET', /^\/v1\/products\/([\w-]+)$/, getProduct],
+  ['PATCH', /^\/v1\/products\/([\w-]+)$/, updateProduct],
+  ['DELETE', /^\/v1\/products\/([\w-]+)$/, deleteProduct],
+  ['POST', /^\/v1\/orders$/, createApiOrder],
+  ['GET', /^\/v1\/orders\/([\w-]+)$/, getOrder],
+  ['GET', /^\/v1\/slow$/, slow],
+  ['GET', /^\/v2\/health$/, ok],
+  ['POST', /^\/v2\/payment-intents$/, createIntent],
+  ['GET', /^\/v2\/payment-intents\/([\w-]+)$/, getIntent],
+  ['POST', /^\/v2\/payment-intents\/([\w-]+)\/confirm$/, confirmIntent],
+  ['POST', /^\/v2\/refunds$/, createRefund],
+  ['GET', /^\/v2\/refunds\/([\w-]+)$/, getRefund],
+  ['POST', /^\/v2\/test\/webhooks$/, testWebhook],
+]
+
 async function handleApi(req, res, url) {
   const path = url.pathname.replace(/^\/api/, '')
-  if (req.method === 'GET' && path === '/health') return json(res, 200, { ok: true })
-
-  if (req.method === 'GET' && path === '/v1/products') {
-    const q = (url.searchParams.get('q') ?? '').toLowerCase()
-    const category = url.searchParams.get('category') ?? url.searchParams.get('kategori')
-    let list = PRODUCTS.filter((p) => (!q || p.name.toLowerCase().includes(q)) && (!category || p.category === category))
-    const total = list.length
-    const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit') ?? 20) || 20))
-    list = list.slice(0, limit)
-    return json(res, 200, {
-      data: list.map(({ id, slug, name, price, stock, category: cat }) => ({ id, slug, name, price, stock, category: cat })),
-      meta: { total, limit },
-    })
+  const method = req.method === 'HEAD' ? 'GET' : req.method
+  if (path.startsWith('/v2/') && path !== '/v2/health' && !requireApiKey(req, res)) return
+  const matching = API_ROUTES.map(([m, re, fn]) => [m, re.exec(path), fn]).filter(([, match]) => match)
+  if (!matching.length) return apiError(res, 404, 'not_found', `No such endpoint: ${req.method} ${url.pathname}`)
+  const route = matching.find(([m]) => m === method)
+  if (!route) {
+    const allow = [...new Set(matching.map(([m]) => m))].join(', ')
+    return apiError(res, 405, 'method_not_allowed', `${req.method} is not allowed here (allowed: ${allow})`, undefined, { Allow: allow })
   }
-
-  const productMatch = /^\/v1\/products\/([\w-]+)$/.exec(path)
-  if (req.method === 'GET' && productMatch) {
-    const p = PRODUCTS.find((x) => x.id === productMatch[1] || x.slug === productMatch[1])
-    return p ? json(res, 200, { data: p }) : apiError(res, 404, 'not_found', 'Product not found')
-  }
-
-  if (req.method === 'POST' && path === '/v1/auth/login') {
-    const body = await readJson(req)
-    const user = findUser(body.email)
-    if (!user || user.password !== body.password) return apiError(res, 401, 'invalid_credentials', T.wrongCredentials)
-    if (user.totp && !verifyTotp(user.totp, body.totp)) {
-      return apiError(res, 401, body.totp ? 'invalid_totp' : 'totp_required', T.invalidAuthCode)
-    }
-    const token = `tkk_${randomBytes(16).toString('hex')}`
-    apiTokens.add(token)
-    return json(res, 201, { data: { token, user: { email: user.email, name: user.name } } })
-  }
-
-  if (req.method === 'POST' && path === '/v1/orders') {
-    const token = bearer(req)
-    if (!token || (token !== ADMIN_TOKEN && !apiTokens.has(token))) {
-      return apiError(res, 401, 'unauthenticated', 'Missing or invalid bearer token')
-    }
-    const body = await readJson(req)
-    const qty = Number(body.qty ?? 1)
-    if (!productBySku(body.sku)) return apiError(res, 422, 'validation_failed', `Unknown sku "${body.sku}"`)
-    if (!Number.isInteger(qty) || qty < 1 || qty > 99) return apiError(res, 422, 'validation_failed', 'qty must be 1..99')
-    const order = createOrder({ items: [{ sku: body.sku, qty }], address: body.address, payment: body.payment, source: 'api' })
-    return json(res, 201, { data: { id: order.id, status: order.status, total: order.total } })
-  }
-
-  const orderMatch = /^\/v1\/orders\/([\w-]+)$/.exec(path)
-  if (req.method === 'GET' && orderMatch) {
-    const o = orders.get(orderMatch[1])
-    return o ? json(res, 200, { data: o }) : apiError(res, 404, 'not_found', 'Order not found')
-  }
-
-  return apiError(res, 404, 'not_found', 'No such endpoint')
+  if (method === 'GET' && path !== '/health' && path !== '/v2/health' && !rateLimit(req, res)) return
+  return route[2](req, res, url, route[1].slice(1))
 }
 
 /* ------------------------------------------------------------------ router */
@@ -1151,11 +1508,16 @@ async function handle(req, res) {
   return html(res, renderNotFound(s), 404)
 }
 
+const ERROR_CODES = { 400: 'bad_request', 413: 'payload_too_large', 500: 'internal' }
+
 const server = createServer((req, res) => {
+  // Every response carries a request id (the client's X-Request-Id is echoed when it looks sane).
+  const incoming = req.headers['x-request-id']
+  res.setHeader('X-Request-Id', typeof incoming === 'string' && /^[\w.:-]{1,64}$/.test(incoming) ? incoming : `req_${randomBytes(8).toString('hex')}`)
   handle(req, res).catch((err) => {
     const status = err.status ?? 500
     if (status === 500) console.error('[demo-target]', err)
-    if (!res.headersSent) apiError(res, status, status === 500 ? 'internal' : 'bad_request', err.message)
+    if (!res.headersSent) apiError(res, status, ERROR_CODES[status] ?? 'bad_request', err.message)
     else res.end()
   })
 })
@@ -1167,6 +1529,7 @@ server.listen(PORT, HOST, () => {
   console.log(`Tokoku demo listening on http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${port}`)
   console.log(`  language=${LANG}  BASE_URL=http://localhost:${port}  API_URL=http://localhost:${port}/api`)
   console.log(`  smtp=${SMTP_HOST}:${SMTP_PORT}  mail_delay_ms=${MAIL_DELAY_MS}  public_url=${PUBLIC_URL}`)
+  console.log(`  pay api=http://localhost:${port}/api/v2  refund_delay_ms=${REFUND_DELAY_MS}  rate_limit=${RATE_LIMIT}/min`)
 })
 
 for (const sig of ['SIGINT', 'SIGTERM']) {

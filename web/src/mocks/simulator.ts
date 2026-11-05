@@ -272,6 +272,333 @@ function mailpitResponse(url: string, ctx: { env: Record<string, string>; vars: 
     Size: 1971, Inline: [], Attachments: [] }
 }
 
+/* ------------------------------------------------------------------ REST API palsu (demo-target)
+ * Meniru REST API demo-target (demo-target/server.mjs): /v1 = Tokoku shop (login, me, products CRUD,
+ * orders, slow), Pay = payment-intents/refunds/test/webhooks. State per test case (seperti token &
+ * produk per sesi di demo-target). Respons dari sini dipakai assertion HTTP berikutnya (expect_status,
+ * expect_json, expect_header, expect_response_time) untuk expected vs actual yang realistis.
+ * URL lain → respons generik lama (tanpa evaluasi assertion).
+ */
+
+interface SimResponse {
+  status: number
+  time_ms: number
+  /** Nama header lower-case (seperti runner/Playwright). */
+  headers: Record<string, string>
+  body: unknown
+}
+
+interface ApiSim {
+  tokens: Map<string, string> // token → email
+  products: Map<string, Record<string, unknown>>
+  intents: Map<string, Record<string, unknown>>
+  refunds: Map<string, Record<string, unknown>>
+  reads: number
+  /** Respons terakhir yang berasal dari API palsu (null = belum ada / respons generik). */
+  last: SimResponse | null
+}
+
+const newApiSim = (): ApiSim => ({ tokens: new Map(), products: new Map(), intents: new Map(), refunds: new Map(), reads: 0, last: null })
+
+const MOCK_CATALOG: Record<string, unknown>[] = [
+  { id: 'p_1', slug: 'plain-black-tee', name: 'Plain Black Tee', price: 90000, stock: 12, category: 'menswear' },
+  { id: 'p_2', slug: 'plain-white-tee', name: 'Plain White Tee', price: 85000, stock: 7, category: 'menswear' },
+  { id: 'p_3', slug: 'plaid-flannel-shirt', name: 'Plaid Flannel Shirt', price: 175000, stock: 4, category: 'menswear' },
+  { id: 'p_4', slug: 'linen-blouse', name: 'Linen Blouse', price: 150000, stock: 9, category: 'ladieswear' },
+  { id: 'p_5', slug: 'baseball-cap', name: 'Baseball Cap', price: 60000, stock: 20, category: 'accessories' },
+  { id: 'p_6', slug: 'canvas-tote', name: 'Canvas Tote', price: 120000, stock: 0, category: 'accessories' },
+]
+const MOCK_CATEGORIES = ['menswear', 'ladieswear', 'accessories']
+const RATE_LIMIT = 600
+
+const hexOf = (rng: Rng, n: number) => Array.from({ length: n }, () => '0123456789abcdef'[Math.floor(rng() * 16)]).join('')
+const isInt = (v: unknown): v is number => typeof v === 'number' && Number.isInteger(v)
+
+interface FakeRequest {
+  method: string
+  url: string
+  headers: Record<string, string>
+  body: string | undefined
+  polling: boolean
+}
+
+/** Respons API palsu, atau undefined bila URL bukan endpoint demo-target yang dikenal. */
+function fakeApiResponse(req: FakeRequest, sim: ApiSim, rng: Rng): SimResponse | undefined {
+  let u: URL
+  try {
+    u = new URL(req.url)
+  } catch {
+    return undefined
+  }
+  const path = u.pathname.replace(/\/+$/, '')
+  const shop = /\/v1\/(auth\/login|me|products(?:\/([\w-]+))?|orders(?:\/([\w-]+))?|slow)$/.exec(path)
+  const pay = /\/(payment-intents(?:\/([\w-]+)(\/confirm)?)?|refunds(?:\/([\w-]+))?|test\/webhooks|v2\/health)$/.exec(path)
+  if (!shop && !pay) return undefined
+
+  const method = req.method.toUpperCase()
+  const header = (name: string) => Object.entries(req.headers).find(([k]) => k.toLowerCase() === name)?.[1]
+  let body: Record<string, unknown> = {}
+  try {
+    const v: unknown = req.body ? JSON.parse(req.body) : {}
+    if (v && typeof v === 'object' && !Array.isArray(v)) body = v as Record<string, unknown>
+  } catch {
+    /* body bukan JSON → objek kosong */
+  }
+  const time = between(rng, 40, 260)
+  const headers: Record<string, string> = { 'content-type': 'application/json; charset=utf-8', 'x-request-id': `req_${hexOf(rng, 16)}` }
+  if (method === 'GET' && !path.endsWith('/health')) {
+    sim.reads += 1
+    Object.assign(headers, { 'x-ratelimit-limit': String(RATE_LIMIT), 'x-ratelimit-remaining': String(RATE_LIMIT - sim.reads), 'x-ratelimit-reset': '60' })
+  }
+  const res = (status: number, data: unknown, extra: Record<string, string> = {}, ms = time): SimResponse => ({
+    status, time_ms: ms, headers: { ...headers, ...extra }, body: data,
+  })
+  const err = (status: number, code: string, message: string, details?: { path: string; message: string }[], extra: Record<string, string> = {}) =>
+    res(status, { error: { code, message, ...(details?.length ? { details } : {}) } }, extra)
+  const invalid = (details: { path: string; message: string }[]) => err(422, 'validation_failed', 'The request has invalid fields', details)
+  const now = new Date().toISOString()
+
+  if (shop) {
+    const [, route, productId, orderId] = shop
+    const token = /^Bearer\s+(.+)$/i.exec(header('authorization') ?? '')?.[1]?.trim()
+    const email = token ? (sim.tokens.get(token) ?? (token === '••••' ? 'admin@tokoku.id' : undefined)) : undefined
+    const unauthorized = () =>
+      token
+        ? err(401, 'unauthenticated', 'Invalid or expired bearer token', undefined, {
+            'www-authenticate': 'Bearer realm="tokoku", error="invalid_token", error_description="The access token is invalid or expired"',
+          })
+        : err(401, 'unauthenticated', 'Missing bearer token: send "Authorization: Bearer <token>" (POST /api/v1/auth/login)', undefined, {
+            'www-authenticate': 'Bearer realm="tokoku"',
+          })
+    const productErrors = (partial: boolean) => {
+      const d: { path: string; message: string }[] = []
+      if (!partial || body.name !== undefined) {
+        if (typeof body.name !== 'string' || !body.name.trim()) d.push({ path: 'name', message: 'is required' })
+      }
+      if ((!partial || body.price !== undefined) && (!isInt(body.price) || body.price < 1 || body.price > 100_000_000)) {
+        d.push({ path: 'price', message: 'must be an integer between 1 and 100000000 (IDR)' })
+      }
+      if (body.stock !== undefined && (!isInt(body.stock) || body.stock < 0)) d.push({ path: 'stock', message: 'must be an integer between 0 and 100000' })
+      if (body.category !== undefined && body.category !== null && !MOCK_CATEGORIES.includes(String(body.category))) {
+        d.push({ path: 'category', message: `must be one of: ${MOCK_CATEGORIES.join(', ')}` })
+      }
+      return d
+    }
+
+    if (route === 'auth/login' && method === 'POST') {
+      const d = ['email', 'password'].filter((k) => typeof body[k] !== 'string' || !body[k]).map((k) => ({ path: k, message: 'is required' }))
+      if (d.length) return invalid(d)
+      const t = `tkk_${hexOf(rng, 32)}`
+      sim.tokens.set(t, String(body.email))
+      const name = String(body.email).startsWith('qa.2fa') ? 'QA 2FA' : 'QA Bot'
+      return res(201, { data: { token: t, token_type: 'Bearer', expires_in: 3600, user: { email: body.email, name } } })
+    }
+    if (route === 'me' && method === 'GET') {
+      if (!email) return unauthorized()
+      const name = email === 'admin@tokoku.id' ? 'Tokoku Admin' : email.startsWith('qa.2fa') ? 'QA 2FA' : 'QA Bot'
+      return res(200, { data: { email, name, role: email === 'admin@tokoku.id' ? 'admin' : 'customer', two_factor: email.startsWith('qa.2fa') } })
+    }
+    if (route === 'products' && method === 'GET') {
+      const q = (u.searchParams.get('q') ?? '').toLowerCase()
+      const category = u.searchParams.get('category')
+      const all = [...MOCK_CATALOG, ...(email ? sim.products.values() : [])].filter(
+        (p) => (!q || String(p.name).toLowerCase().includes(q)) && (!category || p.category === category),
+      )
+      const limit = Math.max(1, Math.min(100, Number(u.searchParams.get('limit') ?? 20) || 20))
+      const offset = Math.max(0, Math.floor(Number(u.searchParams.get('offset') ?? 0) || 0))
+      const page = all.slice(offset, offset + limit)
+      return res(200, { data: page, meta: { total: all.length, limit, offset, count: page.length, next_offset: offset + limit < all.length ? offset + limit : null } })
+    }
+    if (route === 'products' && method === 'POST') {
+      if (!email) return unauthorized()
+      const d = productErrors(false)
+      if (d.length) return invalid(d)
+      const id = `prd_${hexOf(rng, 16)}`
+      const name = String(body.name).trim()
+      const p = { id, slug: `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')}-${id.slice(4, 10)}`, name, price: body.price,
+        stock: body.stock ?? 0, category: body.category ?? null, created_at: now, updated_at: now }
+      sim.products.set(id, p)
+      return res(201, { data: p }, { location: `/api/v1/products/${id}` })
+    }
+    if (productId) {
+      const own = email ? sim.products.get(productId) : undefined
+      const catalog = MOCK_CATALOG.find((p) => p.id === productId || p.slug === productId)
+      if (method === 'GET') return own ?? catalog ? res(200, { data: own ?? catalog }) : err(404, 'not_found', `Product ${productId} not found`)
+      if (method === 'PATCH' || method === 'DELETE') {
+        if (!email) return unauthorized()
+        if (!own) {
+          return catalog
+            ? err(403, 'forbidden', 'Catalog products are read-only; create your own with POST /api/v1/products')
+            : err(404, 'not_found', `Product ${productId} not found`)
+        }
+        if (method === 'DELETE') {
+          sim.products.delete(productId)
+          return { status: 204, time_ms: time, headers: { 'x-request-id': headers['x-request-id'] }, body: '' }
+        }
+        const d = productErrors(true)
+        if (d.length) return invalid(d)
+        for (const k of ['name', 'price', 'stock', 'category']) if (body[k] !== undefined) own[k] = k === 'name' ? String(body[k]).trim() : body[k]
+        own.updated_at = now
+        return res(200, { data: own })
+      }
+    }
+    if (route === 'orders' && method === 'POST') {
+      if (!email) return unauthorized()
+      const id = `ORD-${between(rng, 100000, 999999)}`
+      return res(201, { data: { id, status: 'awaiting_payment', total: 90000 * (Number(body.qty) || 1) } }, { location: `/api/v1/orders/${id}` })
+    }
+    if (orderId && method === 'GET') {
+      return res(200, { data: { id: orderId, status: 'awaiting_payment', lines: [{ sku: 'PBT-L', name: 'Plain Black Tee', size: 'L', qty: 1, price: 90000 }], total: 90000, source: 'api' } })
+    }
+    if (route === 'slow' && method === 'GET') {
+      const ms = Math.min(Math.max(0, Number(u.searchParams.get('ms') ?? 1000) || 0), 10_000)
+      return res(200, { data: { requested_ms: ms, delayed_ms: ms, max_ms: 10000 } }, {}, ms + between(rng, 2, 15))
+    }
+    return err(405, 'method_not_allowed', `${method} is not allowed here`)
+  }
+
+  // Tokoku Pay
+  const [, route, intentId, confirm, refundId] = pay!
+  if (route === 'v2/health') return { status: 200, time_ms: time, headers: { 'content-type': 'text/plain; charset=utf-8', 'x-request-id': headers['x-request-id'] }, body: 'ok' }
+  if (!header('x-api-key')) return err(401, 'missing_api_key', 'Send your API key in the X-Api-Key header')
+  const refundView = (r: Record<string, unknown>, settled: boolean) =>
+    ({ ...r, status: settled ? 'succeeded' : 'pending', succeeded_at: settled ? new Date(Date.parse(String(r.created_at)) + 2000).toISOString() : null })
+  const refunded = (piId: string) => [...sim.refunds.values()].filter((r) => r.payment_intent === piId).reduce((s, r) => s + Number(r.amount), 0)
+  const intentView = (pi: Record<string, unknown>) => ({
+    ...pi, amount_refunded: refunded(String(pi.id)), amount_refundable: pi.status === 'succeeded' ? Number(pi.amount) - refunded(String(pi.id)) : 0,
+  })
+
+  if (route === 'payment-intents' && method === 'POST') {
+    const d: { path: string; message: string }[] = []
+    if (!isInt(body.amount) || body.amount < 1) d.push({ path: 'amount', message: 'must be an integer between 1 and 100000000 (smallest currency unit)' })
+    if (!['IDR', 'USD', 'SGD'].includes(String(body.currency))) d.push({ path: 'currency', message: 'must be one of: IDR, USD, SGD' })
+    if (d.length) return invalid(d)
+    const pi = { id: `pi_${hexOf(rng, 16)}`, object: 'payment_intent', amount: body.amount, currency: body.currency, status: 'requires_payment',
+      description: null, created_at: now, confirmed_at: null }
+    sim.intents.set(pi.id, pi)
+    return res(201, { data: intentView(pi) }, { location: `/api/v2/payment-intents/${pi.id}` })
+  }
+  if (intentId) {
+    const pi = sim.intents.get(intentId)
+    if (!pi) return err(404, 'not_found', `Payment intent ${intentId} not found`)
+    if (confirm && method === 'POST') {
+      if (pi.status === 'requires_payment') Object.assign(pi, { status: 'succeeded', confirmed_at: now })
+      return res(200, { data: intentView(pi) })
+    }
+    if (!confirm && method === 'GET') return res(200, { data: intentView(pi) })
+  }
+  if (route === 'refunds' && method === 'POST') {
+    if (typeof body.payment_intent !== 'string' || !body.payment_intent) return invalid([{ path: 'payment_intent', message: 'is required' }])
+    const pi = sim.intents.get(body.payment_intent)
+    if (!pi) return err(404, 'not_found', `Payment intent ${body.payment_intent} not found`)
+    if (pi.status !== 'succeeded') return err(409, 'invalid_state', `Payment intent ${pi.id} has not been paid yet (status ${pi.status}); confirm it first`)
+    const refundable = Number(pi.amount) - refunded(String(pi.id))
+    const amount = isInt(body.amount) ? body.amount : refundable
+    if (amount > refundable || refundable === 0) {
+      return err(422, 'amount_exceeds_refundable', `Refund amount ${amount} exceeds the refundable amount ${refundable}`,
+        [{ path: 'amount', message: `must be at most ${refundable}` }])
+    }
+    const r = { id: `re_${hexOf(rng, 16)}`, object: 'refund', payment_intent: pi.id, amount, currency: pi.currency, reason: null, created_at: now }
+    sim.refunds.set(r.id, r)
+    return res(201, { data: refundView(r, false) }, { location: `/api/v2/refunds/${r.id}` })
+  }
+  if (refundId && method === 'GET') {
+    const r = sim.refunds.get(refundId)
+    // Polling: percobaan terakhir melihat refund yang sudah selesai (DEMO_REFUND_DELAY_MS di demo-target).
+    return r ? res(200, { data: refundView(r, req.polling) }) : err(404, 'not_found', `Refund ${refundId} not found`)
+  }
+  if (route === 'test/webhooks' && method === 'POST') {
+    const events = ['payment.succeeded', 'payment.failed', 'refund.succeeded', 'refund.failed']
+    if (!events.includes(String(body.event))) return invalid([{ path: 'event', message: `must be one of: ${events.join(', ')}` }])
+    const t = Math.floor(Date.now() / 1000)
+    const id = `evt_${hexOf(rng, 16)}`
+    return res(200, { delivered: true, event: body.event, id, signature: `t=${t},v1=${hexOf(rng, 64)}`, payload: JSON.stringify({ id, type: body.event, created: t }) })
+  }
+  return err(405, 'method_not_allowed', `${method} is not allowed here`)
+}
+
+/* ------------------------------------------------------------------ assertion HTTP (seperti runner/src/actions.ts) */
+
+const asText = (v: unknown) => (typeof v === 'string' ? v : JSON.stringify(v))
+
+function looseEquals(actual: unknown, expected: unknown): boolean {
+  if (JSON.stringify(actual) === JSON.stringify(expected)) return true
+  if (typeof expected !== 'string') return false
+  if (typeof actual === 'string') return actual === expected
+  try {
+    if (JSON.stringify(actual) === JSON.stringify(JSON.parse(expected))) return true
+  } catch {
+    /* bukan JSON */
+  }
+  return actual !== null && typeof actual !== 'object' && String(actual) === expected
+}
+
+function toRegExp(pattern: string): RegExp | null {
+  const lit = /^\/([\s\S]+)\/([dgimsuvy]*)$/.exec(pattern)
+  try {
+    return lit ? new RegExp(lit[1], lit[2]) : new RegExp(pattern)
+  } catch {
+    return null
+  }
+}
+
+/** Evaluasi assertion HTTP terhadap respons API palsu terakhir: { pass, expected, actual, error }. */
+function checkHttpAssertion(step: Step, last: SimResponse): { pass: boolean; expected: string; actual: string; error: string } | undefined {
+  const p = (name: string) => param(step, name)
+  switch (step.action) {
+    case 'expect_status': {
+      const list = Array.isArray(p('in')) ? (p('in') as unknown[]).map(Number) : null
+      const expected = list ? `in [${list.join(', ')}]` : String(Number(step.value))
+      const actual = String(last.status)
+      const pass = list ? list.includes(last.status) : last.status === Number(step.value)
+      return { pass, expected, actual, error: `Expected status ${expected}, received ${actual}` }
+    }
+    case 'expect_json': {
+      const path = String(step.path ?? '')
+      const op = String(step.op ?? 'eq')
+      const v = typeof last.body === 'object' ? jsonPathGet(last.body, path) : undefined
+      const found = v !== undefined
+      const want = step.value
+      const actual = found ? asText(v) : '(missing)'
+      const expected = op === 'exists' ? 'exists' : op === 'eq' ? asText(want ?? '') : `${op} ${asText(want ?? '')}`
+      let pass = false
+      if (op === 'exists') pass = found
+      else if (op === 'eq') pass = found && looseEquals(v, want)
+      else if (op === 'neq') pass = !(found && looseEquals(v, want))
+      else if (op === 'contains') {
+        pass = found && (typeof v === 'string' ? v.includes(asText(want)) : Array.isArray(v) ? v.some((x) => looseEquals(x, want)) : v !== null && typeof v === 'object' && asText(want) in (v as object))
+      } else if (op === 'gt' || op === 'lt') {
+        const a = Number(v)
+        const b = Number(want)
+        pass = found && v !== null && v !== '' && Number.isFinite(a) && Number.isFinite(b) && (op === 'gt' ? a > b : a < b)
+      } else if (op === 'matches') pass = found && (toRegExp(asText(want))?.test(asText(v)) ?? false)
+      const error = op === 'exists'
+        ? `Expected ${path} to exist, but it is missing`
+        : !found && op !== 'neq'
+          ? `Expected ${path} ${op} ${JSON.stringify(asText(want))}, but ${path} is missing`
+          : `Expected ${path} ${op} ${JSON.stringify(asText(want))}, received ${actual}`
+      return { pass, expected, actual, error }
+    }
+    case 'expect_header': {
+      const name = String(step.name ?? '').toLowerCase()
+      const expected = asText(step.value ?? '')
+      const mode = step.match || 'contains'
+      const actual = last.headers[name]
+      const pass = actual !== undefined && (mode === 'equals' ? actual === expected : mode === 'regex' ? (toRegExp(expected)?.test(actual) ?? false) : actual.includes(expected))
+      const phrase = mode === 'equals' ? `to equal ${JSON.stringify(expected)}` : mode === 'regex' ? `to match ${toRegExp(expected) ?? expected}` : `to contain ${JSON.stringify(expected)}`
+      return actual === undefined
+        ? { pass, expected, actual: '(missing)', error: `Expected header ${name} ${phrase}, but the response has no ${name} header` }
+        : { pass, expected, actual, error: `Expected header ${name} ${phrase}, received ${JSON.stringify(actual)}` }
+    }
+    case 'expect_response_time': {
+      const max = Number(p('max_ms'))
+      return { pass: last.time_ms <= max, expected: `<= ${max} ms`, actual: `${last.time_ms} ms`, error: `Expected response time <= ${max} ms, took ${last.time_ms} ms` }
+    }
+    default:
+      return undefined
+  }
+}
+
 /* ------------------------------------------------------------------ pembuatan run */
 
 type StepPlan = SimPlan & { details?: Record<string, unknown>; saves?: Record<string, string> }
@@ -284,12 +611,18 @@ function planStep(
   interpolated: Step,
   rng: Rng,
   vctx: { env: Record<string, string>; vars: Record<string, string> } = { env: {}, vars: {} },
+  api: ApiSim = newApiSim(),
 ): StepPlan {
   if (step.action === 'manual') return { outcome: 'passed', duration_ms: 0 }
   let fail = containsFailMarker(step)
   if (!fail && (step.action === 'expect_text' || step.action === 'expect_value')) {
     const truth = MOCK_TRUTH[interpolated.selector ?? '']
     if (truth !== undefined) fail = !matches(truth, String(interpolated.value ?? ''), step.match)
+  }
+  // Assertion HTTP setelah respons API palsu: dievaluasi sungguhan (expected vs actual seperti runner).
+  const httpCheck = !fail && api.last ? checkHttpAssertion(interpolated, api.last) : undefined
+  if (httpCheck && !httpCheck.pass) {
+    return { outcome: 'failed', error: httpCheck.error, duration_ms: 3, details: { expected: httpCheck.expected, actual: httpCheck.actual } }
   }
   if (!fail && isLastAssertion && tc.tags.includes('flaky')) fail = rng() < 0.4
   if (fail) {
@@ -302,17 +635,49 @@ function planStep(
   if (step.action === 'http_request') {
     const status = interpolated.method === 'POST' ? 201 : 200
     const mail = mailpitResponse(interpolated.url ?? '', vctx, rng)
-    const response = {
+    const pollTimeoutMs = Number(param(interpolated, 'poll_timeout_ms') ?? 0)
+    let fake: SimResponse | undefined
+    let request: Record<string, unknown> = { method: interpolated.method ?? 'GET', url: interpolated.url }
+    if (!mail) {
+      // headers/query adalah objek → tidak ikut interpolateStep; secret tetap ••••.
+      const ictx: VarContext = { env: vctx.env, secretNames: [], vars: vctx.vars }
+      const headers = Object.fromEntries(Object.entries(stringRecord(param(step, 'headers'))).map(([k, v]) => [k, interpolate(v, ictx)]))
+      const query = Object.entries(stringRecord(param(step, 'query'))).map(([k, v]) => [k, interpolate(v, ictx)])
+      let url = interpolated.url ?? ''
+      if (query.length) {
+        try {
+          const u = new URL(url)
+          for (const [k, v] of query) u.searchParams.append(k, v)
+          url = u.toString()
+        } catch {
+          /* URL tidak valid → apa adanya */
+        }
+      }
+      const bodyText = typeof interpolated.body === 'string' ? interpolated.body : interpolated.body ? JSON.stringify(interpolated.body) : undefined
+      fake = fakeApiResponse({ method: interpolated.method ?? 'GET', url, headers, body: bodyText, polling: pollTimeoutMs > 0 }, api, rng)
+      if (fake) {
+        let shownBody: unknown = bodyText
+        try {
+          shownBody = bodyText ? JSON.parse(bodyText) : undefined
+        } catch {
+          /* teks biasa */
+        }
+        request = { method: (interpolated.method ?? 'GET').toUpperCase(), url, ...(Object.keys(headers).length ? { headers } : {}), ...(shownBody !== undefined ? { body: shownBody } : {}) }
+      }
+    }
+    api.last = fake ?? null
+    const response = fake ?? {
       status,
       time_ms: between(rng, 80, 600),
       body: mail ?? (interpolated.method === 'POST' ? { data: { id: `ord_${between(rng, 1000, 9999)}`, status: 'created' } } : { data: [{ id: 'p_1', name: 'Plain Black T-shirt', price: 90000 }], meta: { total: 1 } }),
     }
-    details = { request: { method: interpolated.method ?? 'GET', url: interpolated.url }, response }
+    details = { request, response }
     // save / save_regex → vars untuk step berikutnya (seperti runner)
     saves = {}
     for (const [name, path] of Object.entries(stringRecord(param(interpolated, 'save')))) {
       const v = jsonPathGet(response.body, path)
       if (v !== undefined) saves[name] = typeof v === 'string' ? v : JSON.stringify(v)
+      else if (fake) return { outcome: 'failed', error: `Cannot save "${name}": ${path} not found in the response`, duration_ms: response.time_ms, details }
     }
     const regexes = stringRecord(param(interpolated, 'save_regex'))
     if (Object.keys(regexes).length) {
@@ -327,8 +692,8 @@ function planStep(
         saves[name] = match ? (match[1] ?? match[0]) : `mock-${name}`
       }
     }
-    // Polling: email "datang" setelah beberapa percobaan.
-    const pollTimeout = Number(param(interpolated, 'poll_timeout_ms') ?? 0)
+    // Polling: email/refund "datang" setelah beberapa percobaan.
+    const pollTimeout = pollTimeoutMs
     if (pollTimeout > 0) {
       const interval = Math.max(200, Number(param(interpolated, 'poll_interval_ms') ?? 1000))
       const attempts = Math.min(between(rng, 2, 4), Math.max(1, Math.floor(pollTimeout / interval)))
@@ -341,6 +706,7 @@ function planStep(
     const truth = MOCK_TRUTH[interpolated.selector ?? '']
     details = { expected: String(interpolated.value ?? ''), actual: truth ?? String(interpolated.value ?? '') }
   }
+  if (httpCheck) details = { expected: httpCheck.expected, actual: httpCheck.actual }
   return { outcome: 'passed', duration_ms: duration ?? normalDuration(step, rng), details, saves }
 }
 
@@ -356,12 +722,13 @@ function buildCase(
   const lastAssertIdx = enabled.map((s) => s.action.startsWith('expect_')).lastIndexOf(true)
   let assertCounter = -1
   const runtime: Record<string, string> = {} // hasil save / save_regex / set_variable
+  const api = newApiSim() // state API palsu per test case (token, produk, payment intent, refund)
   const steps: DbRunStep[] = tc.steps.map((step, i): DbRunStep => {
     const vars = { ...tc.variables, ...ctx.vars, ...runtime }
     const interp = interpolateStep(step, { ...ctx, vars })
     const timeout = step.timeout_ms ?? run.options.step_timeout_ms
     if (step.enabled !== false && step.action.startsWith('expect_')) assertCounter += 1
-    const plan = step.enabled === false ? undefined : planStep(step, tc, assertCounter === lastAssertIdx && step.action.startsWith('expect_'), timeout, interp, rng, { env: ctx.env, vars })
+    const plan = step.enabled === false ? undefined : planStep(step, tc, assertCounter === lastAssertIdx && step.action.startsWith('expect_'), timeout, interp, rng, { env: ctx.env, vars }, api)
     if (plan?.outcome === 'passed' && plan.saves) Object.assign(runtime, plan.saves)
     return {
       id: newId('rs'),

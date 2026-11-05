@@ -204,3 +204,14 @@ describe('fn.* di step', () => {
     expect(run([{ ...fill('x'), description: '{{fn.nope}}', expected: '{{fn.totp}}' }]).errors).toEqual([])
   })
 })
+
+describe('expect_status', () => {
+  it('accepts `in` instead of `value`', () => {
+    const steps: Step[] = [
+      { id: 'a', action: 'http_request', method: 'GET', url: '/x' },
+      { id: 'b', action: 'expect_status', in: [200, 204] },
+    ]
+    expect(validateSteps(steps, 'automated').errors).toEqual([])
+    expect(validateSteps([steps[0], { id: 'b', action: 'expect_status' }], 'automated').errors.map((e) => e.path)).toEqual(['steps[1].value'])
+  })
+})

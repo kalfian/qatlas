@@ -120,9 +120,13 @@ services:
         condition: service_completed_successfully
     logging: *logging
 
-  # Optional fake shop used by `qatlas seed demo` and the runner tests.
-  # Enabled with `--profile demo`; reachable from the worker as http://demo-target:8099.
-  # Seed with: qatlas seed demo --target-url http://demo-target:8099 --mailpit-url http://mailpit:8025
+  # Optional fake shop + REST APIs (Tokoku /api/v1, Tokoku Pay /api/v2) used by `qatlas seed demo`
+  # and the runner tests. Enabled with `--profile demo`; published on 127.0.0.1 only.
+  # Bridge worker (default):   qatlas seed demo --target-url http://demo-target:8099 --mailpit-url http://mailpit:8025
+  # Host-network worker (deploy/docker-compose.host-worker.yml): --target-url http://localhost:8099
+  #   --mailpit-url http://localhost:8025, and DEMO_PUBLIC_URL=http://localhost:8099 in .env.
+  # Into an existing instance without demo accounts: add --no-users --owner you@example.com
+  # (deploy/README.md, "Try the demo projects on your own instance").
   demo-target:
     profiles: ["demo"]
     image: qatlas-demo-target:${QATLAS_VERSION:-local}
@@ -139,10 +143,16 @@ services:
         CMD ["node", "server.mjs"]
     restart: unless-stopped
     environment:
-      # Sign-up emails go to Mailpit; the link in them must work from the worker's browser.
+      # Sign-up emails go to Mailpit; the link in them must work from the worker's browser
+      # (http://localhost:8099 for a host-network worker).
       DEMO_SMTP_HOST: mailpit
       DEMO_SMTP_PORT: "1025"
-      DEMO_PUBLIC_URL: http://demo-target:8099
+      DEMO_PUBLIC_URL: ${DEMO_PUBLIC_URL:-http://demo-target:8099}
+      # Public demo-only credentials; they must match the `qatlas seed demo` flags
+      # --admin-token (ADMIN_TOKEN secret) and --pay-api-key (PAY API_KEY secret).
+      DEMO_ADMIN_TOKEN: ${DEMO_ADMIN_TOKEN:-adm_stg_8f3a}
+      DEMO_API_KEY: ${DEMO_API_KEY:-demo_pay_key_123}
+      DEMO_REFUND_DELAY_MS: ${DEMO_REFUND_DELAY_MS:-2000}
     ports:
       - "127.0.0.1:${DEMO_TARGET_PORT:-8099}:8099"
     depends_on:

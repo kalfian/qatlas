@@ -87,8 +87,10 @@ projects SHOP/PAY with environments, folders, test cases and flows. Existing pro
 `--admin-token` must match the demo target's `DEMO_ADMIN_TOKEN` (default `adm_stg_8f3a`) for
 SHOP-T17; without it the secret is random. `--mailpit-url` is where the worker reaches Mailpit for
 the email cases (SHOP-T21/T22), and `--qa-totp-seed` must match the demo target's `DEMO_TOTP_SEED`
-for the TOTP case (SHOP-T20; both default to the public demo seed). `qatlas seed demo --help` lists
-every flag.
+for the TOTP case (SHOP-T20; both default to the public demo seed). PAY's `sandbox` environment
+points at the demo target's Tokoku Pay API (`<target-url>/api/v2`); `--pay-api-key` must match its
+`DEMO_API_KEY` (both default to the public demo key `demo_pay_key_123`). `qatlas seed demo --help`
+lists every flag.
 
 ### Targets reachable only through the host's VPN
 
@@ -105,6 +107,43 @@ The worker then uses the host's routes and resolver, like a browser on that mach
 no longer resolve the `postgres` service name, Postgres is published on loopback only
 (`127.0.0.1:${QATLAS_DB_HOST_PORT:-55434}`) and the worker connects there. Pick a free port with
 `QATLAS_DB_HOST_PORT` in `.env` if 55434 is taken.
+
+### Try the demo projects on your own instance
+
+To look at the example projects (SHOP web store with UI, email, 2FA and REST API cases; PAY
+payment API) on a real instance — without the demo users `rina@`/`dimas@`/`sari@`/`budi@` and
+without invite links — start the demo target next to your stack and seed only the projects,
+owned by an existing account:
+
+```sh
+# 1. demo target ("Tokoku", 127.0.0.1:8099) + Mailpit (127.0.0.1:8025), published on loopback only
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile demo up -d --build demo-target mailpit
+
+# 2. projects SHOP + PAY (environments, folders, test cases, flows), you@example.com = maintainer
+docker compose -f deploy/docker-compose.yml --env-file deploy/.env exec server \
+  qatlas seed demo --no-users --owner you@example.com \
+    --target-url http://demo-target:8099 --mailpit-url http://mailpit:8025
+```
+
+- `--owner` must be an existing, not disabled user (admin or member); the command refuses — and
+  writes nothing — otherwise. An admin owner creates the projects itself; for a member owner the
+  oldest active admin creates them and the owner becomes the only member (maintainer).
+- Existing projects with the keys `SHOP` or `PAY` are skipped. `--reset` deletes and recreates
+  **those two projects including all their runs** — don't use it if your own projects use these keys.
+- `--target-url` / `--mailpit-url` are where the **worker** reaches the demo target and Mailpit:
+  - worker in the compose bridge network (default): `http://demo-target:8099`, `http://mailpit:8025`;
+  - worker on the host network (`deploy/docker-compose.host-worker.yml`, also when your compose
+    file `include:`s both files): `http://localhost:8099`, `http://localhost:8025`, and set
+    `DEMO_PUBLIC_URL=http://localhost:8099` in `.env` **before** step 1 (the sign-up email link
+    is opened by the worker's browser).
+- The demo target uses public demo-only credentials (`DEMO_ADMIN_TOKEN=adm_stg_8f3a`,
+  `DEMO_API_KEY=demo_pay_key_123`, the TOTP seed); they protect nothing. Pass
+  `--admin-token adm_stg_8f3a` if you want SHOP-T17 (order via API) to pass. If you override
+  `DEMO_API_KEY`/`DEMO_ADMIN_TOKEN` in `.env`, pass the same values to `--pay-api-key`/`--admin-token`.
+- Run **SHOP-F4 "API regression"** or **PAY-F1** to see the API examples; SHOP-T12 (voucher)
+  fails on purpose. Remove everything again with
+  `docker compose -f deploy/docker-compose.yml --env-file deploy/.env --profile demo rm -sf demo-target mailpit`
+  and archive/delete the two projects in the UI.
 
 ### Upgrade / rollback
 

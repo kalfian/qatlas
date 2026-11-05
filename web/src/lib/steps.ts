@@ -374,7 +374,10 @@ export function validateSteps(steps: Step[], execution: Execution = 'automated',
     if (step.action === 'manual' && isEmpty(step.description)) {
       errors.push({ path: `${p}.description`, message: t('steps:validation.manualInstructionRequired') })
     }
+    // expect_status accepts either `value` (one code) or `in` (list of allowed codes)
+    const statusList = step.action === 'expect_status' && Array.isArray(step.in) && step.in.length > 0
     for (const param of def.params) {
+      if (statusList && param.name === 'value') continue
       if (param.required && isEmpty(step[param.name])) {
         const label = t(`steps:params.${PARAM_LABEL_KEY.get(param) ?? param.name}`)
         errors.push({ path: `${p}.${param.name}`, message: t('steps:validation.paramRequired', { label }) })

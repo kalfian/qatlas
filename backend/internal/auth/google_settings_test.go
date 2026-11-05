@@ -22,9 +22,9 @@ func TestParseGoogleClientJSON(t *testing.T) {
 		`{"other":{}}`:                  `"web" section is missing`,
 		`{"web":"x"}`:                   "malformed",
 		`{"web":{"client_secret":"s"}}`: "client_id is missing",
-		`{"web":{"client_id":"unittest.apps.googleusercontent.com"}}`:                                 "client_secret is missing",
+		`{"web":{"client_id":"unittest.apps.googleusercontent.com"}}`:                             "client_secret is missing",
 		`{"web":{"client_id":"evil.apps.googleusercontent.com.attacker.io","client_secret":"s"}}`: ".apps.googleusercontent.com",
-		`{"web":{"client_id":"unittest.apps.googleusercontent.com","client_secret":"has space"}}`:     "malformed",
+		`{"web":{"client_id":"unittest.apps.googleusercontent.com","client_secret":"has space"}}`: "malformed",
 	} {
 		f, d := parseGoogleClientJSON(raw)
 		if f != nil || len(d) == 0 || d[0].Path != "client_json" || !strings.Contains(d[0].Message, want) {

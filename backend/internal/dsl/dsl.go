@@ -198,7 +198,17 @@ func Validate(steps []Step, execution string) (errs, warnings []FieldError) {
 		if act == "manual" && isEmpty(st["description"]) {
 			errs = append(errs, FieldError{path + ".description", "Manual step instructions are required"})
 		}
+		// expect_status accepts either `value` (one code) or `in` (list of allowed codes)
+		statusList := false
+		if act == "expect_status" {
+			if l, ok := st["in"].([]any); ok && len(l) > 0 {
+				statusList = true
+			}
+		}
 		for _, prm := range def.Params {
+			if statusList && prm.Name == "value" {
+				continue
+			}
 			if prm.Required && isEmpty(st[prm.Name]) {
 				errs = append(errs, FieldError{path + "." + prm.Name, prm.Label + " is required"})
 			}

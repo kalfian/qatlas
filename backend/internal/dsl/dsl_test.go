@@ -175,3 +175,14 @@ func TestDisplayStepKeepsTotpExpression(t *testing.T) {
 		t.Fatalf("summary %q", got)
 	}
 }
+
+func TestValidateExpectStatusIn(t *testing.T) {
+	steps := []Step{{"id": "a", "action": "http_request", "method": "GET", "url": "/x"}, {"id": "b", "action": "expect_status", "in": []any{float64(200), float64(204)}}}
+	if errs, _ := Validate(steps, "automated"); len(errs) != 0 {
+		t.Fatalf("expect_status with in should be valid: %+v", errs)
+	}
+	steps[1] = Step{"id": "b", "action": "expect_status"}
+	if errs, _ := Validate(steps, "automated"); len(errs) != 1 || errs[0].Path != "steps[1].value" {
+		t.Fatalf("expect_status without value/in: %+v", errs)
+	}
+}

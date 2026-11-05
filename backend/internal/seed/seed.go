@@ -8,11 +8,14 @@
 //	node scripts/export-demo-seed.mjs > backend/internal/seed/demo.json
 //
 // Values that differ between mock and real mode (SHOP staging BASE_URL,
-// API_URL, MAILPIT_URL and every secret value) are set here from Options.
+// API_URL, MAILPIT_URL, PAY sandbox API_URL and every secret value) are set
+// here from Options.
 //
 // The seed is idempotent per project: a project whose key already exists is
 // skipped (Options.Reset deletes the demo projects first). Users are created
-// when missing; existing users are left untouched.
+// when missing; existing users are left untouched. With Options.NoUsers only
+// the projects are created, owned by the existing user Options.Owner (for
+// trying the demo projects on a real instance without demo accounts).
 package seed
 
 import (
@@ -62,6 +65,9 @@ const (
 	// DefaultQATOTPSeed is demo-target's DEMO_TOTP_SEED default: a public,
 	// demo-only base32 seed of qa.2fa@tokoku.id. It protects nothing.
 	DefaultQATOTPSeed = "TOKOKU2FADEMOSEEDQATLASTOTPDEMOA"
+	// DefaultPayAPIKey is demo-target's DEMO_API_KEY default: the public,
+	// demo-only X-Api-Key of its Tokoku Pay API (/api/v2).
+	DefaultPayAPIKey = "demo_pay_key_123"
 )
 
 // Options configures Demo.
@@ -69,7 +75,8 @@ type Options struct {
 	// Password of the active demo users (invited users stay invited).
 	Password string
 	// TargetURL is the demo-target base URL: SHOP "staging" gets
-	// BASE_URL=<TargetURL> and API_URL=<TargetURL>/api.
+	// BASE_URL=<TargetURL> and API_URL=<TargetURL>/api, PAY "sandbox"
+	// API_URL=<TargetURL>/api/v2.
 	TargetURL string
 	// QAPassword is the value of every QA_PASSWORD secret.
 	QAPassword string
@@ -81,6 +88,14 @@ type Options struct {
 	QATOTPSeed string
 	// AdminToken is the value of ADMIN_TOKEN secrets; empty = random.
 	AdminToken string
+	// PayAPIKey is the value of PAY's API_KEY secret (demo-target
+	// DEMO_API_KEY); empty = DefaultPayAPIKey.
+	PayAPIKey string
+	// NoUsers creates only the demo projects: no demo users, no invite links.
+	// Owner (required) becomes maintainer of every created project.
+	NoUsers bool
+	// Owner is the email of an existing, not disabled user (only with NoUsers).
+	Owner string
 	// Reset deletes the demo projects (with their runs) before seeding.
 	Reset bool
 	// Runs enqueues a few demo runs after seeding (executed by a worker).
@@ -189,6 +204,7 @@ type seeder struct {
 	out    io.Writer
 	actor  *auth.Actor
 	userID map[string]string // email → id
+	owner  *auth.User        // NoUsers: the project owner
 
 	users    *users.Service
 	projects *projects.Service
@@ -209,7 +225,13 @@ func Demo(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *s
 	if opts.Password == "" {
 		opts.Password = DefaultPassword
 	}
-	if len(opts.Password) < auth.MinPasswordLength {
+	opts.Owner = strings.ToLower(strings.TrimSpace(opts.Owner))
+	switch {
+	case opts.NoUsers && opts.Owner == "":
+		return errors.New("--no-users needs --owner <email> (an existing user who becomes maintainer)")
+	case !opts.NoUsers && opts.Owner != "":
+		return errors.New("--owner only works together with --no-users")
+	case !opts.NoUsers && len(opts.Password) < auth.MinPasswordLength:
 		return fmt.Errorf("--password must be at least %d characters", auth.MinPasswordLength)
 	}
 	if opts.TargetURL == "" {
@@ -225,6 +247,9 @@ func Demo(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *s
 	opts.MailpitURL = strings.TrimRight(opts.MailpitURL, "/")
 	if opts.QATOTPSeed == "" {
 		opts.QATOTPSeed = DefaultQATOTPSeed
+	}
+	if opts.PayAPIKey == "" {
+		opts.PayAPIKey = DefaultPayAPIKey
 	}
 	if opts.Runs && opts.Enqueuer == nil {
 		return errors.New("seed: --runs needs a job enqueuer")
@@ -266,7 +291,11 @@ func Demo(ctx context.Context, pool *pgxpool.Pool, cfg *config.Config, logger *s
 		s.runs = runs.New(pool, opts.Enqueuer, stores, nil, logger)
 	}
 
-	if err := s.seedUsers(ctx, f.Users); err != nil {
+	if opts.NoUsers {
+		if err := s.useOwner(ctx); err != nil {
+			return err
+		}
+	} else if err := s.seedUsers(ctx, f.Users); err != nil {
 		return err
 	}
 	if opts.Reset {
@@ -369,6 +398,40 @@ func (s *seeder) insertActiveUser(ctx context.Context, email string, fu fixtureU
 	return u, err
 }
 
+// useOwner (NoUsers) loads Options.Owner and picks the actor that creates the
+// projects: the owner when it is an admin (it becomes maintainer on create),
+// otherwise the oldest active admin (its creator membership is replaced by the
+// owner's in seedMembers). Nothing is written when the owner does not exist.
+func (s *seeder) useOwner(ctx context.Context) error {
+	u, err := auth.ScanUser(s.pool.QueryRow(ctx, `SELECT `+auth.UserColumns+` FROM users u WHERE lower(u.email) = $1`, s.opts.Owner))
+	if db.IsNoRows(err) {
+		return fmt.Errorf("seed: owner %s does not exist — create or invite that user first (e.g. qatlas user create-admin), nothing was seeded", s.opts.Owner)
+	}
+	if err != nil {
+		return err
+	}
+	if u.Status == auth.StatusDisabled {
+		return fmt.Errorf("seed: owner %s is disabled, nothing was seeded", s.opts.Owner)
+	}
+	s.owner = &u
+	if u.IsAdmin() && u.Status == auth.StatusActive {
+		s.actor = &auth.Actor{User: u}
+	} else {
+		admin, err := auth.ScanUser(s.pool.QueryRow(ctx, `SELECT `+auth.UserColumns+` FROM users u
+			WHERE u.system_role = $1 AND u.status = $2 ORDER BY u.created_at, u.id LIMIT 1`, auth.SystemRoleAdmin, auth.StatusActive))
+		if db.IsNoRows(err) {
+			return errors.New("seed: no active admin user to create the projects with, nothing was seeded")
+		}
+		if err != nil {
+			return err
+		}
+		s.actor = &auth.Actor{User: admin}
+	}
+	s.printf("owner %s (%s, %s) becomes maintainer of the demo projects; no demo users or invite links (--no-users)\n",
+		u.Email, u.SystemRole, u.Status)
+	return nil
+}
+
 // reset deletes the demo projects. Every project-scoped row (members,
 // environments, test cases, flows, runs, artifact rows) cascades; artifact
 // files of deleted runs stay on disk.
@@ -448,8 +511,12 @@ func (s *seeder) seedProject(ctx context.Context, fp fixtureProject) error {
 		return err
 	}
 	s.created = append(s.created, p.Key)
+	members := len(fp.Members)
+	if s.opts.NoUsers {
+		members = 1
+	}
 	s.printf("project %s created: %d members, %d environments, %d folders, %d test cases, %d flows\n",
-		p.Key, len(fp.Members), len(fp.Environments), len(fp.Folders), len(fp.TestCases), len(fp.Flows))
+		p.Key, members, len(fp.Environments), len(fp.Folders), len(fp.TestCases), len(fp.Flows))
 	return nil
 }
 
@@ -457,6 +524,9 @@ func (s *seeder) seedProject(ctx context.Context, fp fixtureProject) error {
 // maintainer on create; it is removed again when the fixture does not list it
 // (admins keep maintainer access without a membership).
 func (s *seeder) seedMembers(ctx context.Context, fp fixtureProject) error {
+	if s.opts.NoUsers {
+		return s.seedOwnerMember(ctx, fp)
+	}
 	actorListed := false
 	for _, m := range fp.Members {
 		id, ok := s.userID[strings.ToLower(m.Email)]
@@ -484,6 +554,22 @@ func (s *seeder) seedMembers(ctx context.Context, fp fixtureProject) error {
 	return nil
 }
 
+// seedOwnerMember (NoUsers) makes the owner the project's only member, as
+// maintainer. An admin owner already is (it created the project).
+func (s *seeder) seedOwnerMember(ctx context.Context, fp fixtureProject) error {
+	ownerID := s.owner.ID.String()
+	if ownerID == s.actor.User.ID.String() {
+		return nil
+	}
+	if _, err := s.projects.AddMember(ctx, s.actor, fp.Key, projects.AddMemberInput{UserID: ownerID, Role: authz.RoleMaintainer}); err != nil {
+		return fmt.Errorf("add owner %s: %w", s.owner.Email, err)
+	}
+	if err := s.projects.RemoveMember(ctx, s.actor, fp.Key, s.actor.User.ID.String()); err != nil {
+		return fmt.Errorf("remove creator membership: %w", err)
+	}
+	return nil
+}
+
 // seedEnvironments turns the environment created with the project into the
 // fixture's first environment and creates the others, then sets secrets.
 func (s *seeder) seedEnvironments(ctx context.Context, fp fixtureProject) error {
@@ -500,6 +586,9 @@ func (s *seeder) seedEnvironments(ctx context.Context, fp fixtureProject) error 
 			vars["BASE_URL"] = s.opts.TargetURL
 			vars["API_URL"] = s.opts.TargetURL + "/api"
 			vars["MAILPIT_URL"] = s.opts.MailpitURL
+		}
+		if fp.Key == "PAY" && fe.Name == "sandbox" {
+			vars["API_URL"] = s.opts.TargetURL + "/api/v2" // demo-target's Tokoku Pay API
 		}
 		name, isDefault := fe.Name, fe.IsDefault
 		in := environments.Input{Name: &name, IsDefault: &isDefault, Variables: vars}
@@ -530,7 +619,7 @@ func (s *seeder) secretValue(name string) string {
 	case "QA_TOTP_SEED":
 		return s.opts.QATOTPSeed
 	case "API_KEY":
-		return "sk_sandbox_" + randomHex(16)
+		return s.opts.PayAPIKey
 	default:
 		return randomHex(16)
 	}

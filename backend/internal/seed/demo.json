@@ -1167,6 +1167,470 @@
               "selector": "role=heading[name='Email verified']"
             }
           ]
+        },
+        {
+          "key": "SHOP-T23",
+          "folder": "API",
+          "title": "API: log in and fetch my profile",
+          "description": "Token chaining: the token from the login response is saved to a variable and sent as a Bearer header.",
+          "preconditions": "",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "auth",
+            "smoke"
+          ],
+          "variables": {
+            "email": "qa.bot@tokoku.id"
+          },
+          "steps": [
+            {
+              "id": "s3l",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v1/auth/login",
+              "body_type": "json",
+              "body": "{\"email\":\"{{vars.email}}\",\"password\":\"{{secret.QA_PASSWORD}}\"}",
+              "save": {
+                "token": "$.data.token"
+              },
+              "description": "Log in through the API",
+              "expected": "201 with a token"
+            },
+            {
+              "id": "s3m",
+              "action": "expect_status",
+              "value": 201
+            },
+            {
+              "id": "s3n",
+              "action": "expect_json",
+              "path": "$.data.expires_in",
+              "op": "gt",
+              "value": "0"
+            },
+            {
+              "id": "s3o",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.API_URL}}/v1/me",
+              "headers": {
+                "Authorization": "Bearer {{vars.token}}"
+              },
+              "description": "Call a protected endpoint with the saved token"
+            },
+            {
+              "id": "s3p",
+              "action": "expect_status",
+              "value": 200
+            },
+            {
+              "id": "s3q",
+              "action": "expect_json",
+              "path": "$.data.email",
+              "op": "eq",
+              "value": "{{vars.email}}"
+            },
+            {
+              "id": "s3r",
+              "action": "expect_json",
+              "path": "$.data.name",
+              "op": "eq",
+              "value": "QA Bot"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T24",
+          "folder": "API",
+          "title": "API: product CRUD lifecycle",
+          "description": "Create → read → update → delete a product, then check that it is gone. Products created through the API are only visible to the token that created them.",
+          "preconditions": "",
+          "priority": "critical",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "crud"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s3s",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v1/auth/login",
+              "body_type": "json",
+              "body": "{\"email\":\"qa.bot@tokoku.id\",\"password\":\"{{secret.QA_PASSWORD}}\"}",
+              "save": {
+                "token": "$.data.token"
+              },
+              "description": "Log in through the API and keep the token"
+            },
+            {
+              "id": "s3t",
+              "action": "expect_status",
+              "value": 201
+            },
+            {
+              "id": "s3u",
+              "action": "set_variable",
+              "name": "product_name",
+              "value": "QA Mug {{fn.random_int 1000 9999}}",
+              "description": "A unique name per run"
+            },
+            {
+              "id": "s3v",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v1/products",
+              "body_type": "json",
+              "headers": {
+                "Authorization": "Bearer {{vars.token}}"
+              },
+              "body": "{\"name\":\"{{vars.product_name}}\",\"price\":45000,\"stock\":3,\"category\":\"accessories\"}",
+              "save": {
+                "product_id": "$.data.id"
+              },
+              "description": "Create a product"
+            },
+            {
+              "id": "s3w",
+              "action": "expect_status",
+              "value": 201
+            },
+            {
+              "id": "s3x",
+              "action": "expect_header",
+              "name": "Location",
+              "value": "^/api/v1/products/prd_[0-9a-f]+$",
+              "match": "regex",
+              "description": "Location of the new resource"
+            },
+            {
+              "id": "s3y",
+              "action": "expect_json",
+              "path": "$.data.name",
+              "op": "eq",
+              "value": "{{vars.product_name}}"
+            },
+            {
+              "id": "s3z",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+              "headers": {
+                "Authorization": "Bearer {{vars.token}}"
+              },
+              "description": "Read it back"
+            },
+            {
+              "id": "s40",
+              "action": "expect_status",
+              "value": 200
+            },
+            {
+              "id": "s41",
+              "action": "expect_json",
+              "path": "$.data.price",
+              "op": "eq",
+              "value": "45000"
+            },
+            {
+              "id": "s42",
+              "action": "http_request",
+              "method": "PATCH",
+              "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+              "body_type": "json",
+              "headers": {
+                "Authorization": "Bearer {{vars.token}}"
+              },
+              "body": "{\"price\":39000,\"stock\":10}",
+              "description": "Change price and stock"
+            },
+            {
+              "id": "s43",
+              "action": "expect_status",
+              "value": 200
+            },
+            {
+              "id": "s44",
+              "action": "expect_json",
+              "path": "$.data.price",
+              "op": "eq",
+              "value": "39000"
+            },
+            {
+              "id": "s45",
+              "action": "http_request",
+              "method": "DELETE",
+              "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+              "headers": {
+                "Authorization": "Bearer {{vars.token}}"
+              },
+              "description": "Delete it"
+            },
+            {
+              "id": "s46",
+              "action": "expect_status",
+              "value": 204
+            },
+            {
+              "id": "s47",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.API_URL}}/v1/products/{{vars.product_id}}",
+              "headers": {
+                "Authorization": "Bearer {{vars.token}}"
+              },
+              "description": "It is gone"
+            },
+            {
+              "id": "s48",
+              "action": "expect_status",
+              "value": 404
+            },
+            {
+              "id": "s49",
+              "action": "expect_json",
+              "path": "$.error.code",
+              "op": "eq",
+              "value": "not_found"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T25",
+          "folder": "API",
+          "title": "API: validation errors return 422",
+          "description": "Negative test: an invalid product is rejected with 422 and one error per field.",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "negative"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s4a",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v1/auth/login",
+              "body_type": "json",
+              "body": "{\"email\":\"qa.bot@tokoku.id\",\"password\":\"{{secret.QA_PASSWORD}}\"}",
+              "save": {
+                "token": "$.data.token"
+              },
+              "description": "Log in through the API and keep the token"
+            },
+            {
+              "id": "s4b",
+              "action": "expect_status",
+              "value": 201
+            },
+            {
+              "id": "s4c",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v1/products",
+              "body_type": "json",
+              "headers": {
+                "Authorization": "Bearer {{vars.token}}"
+              },
+              "body": "{\"name\":\"\",\"price\":-5}",
+              "description": "Send an empty name and a negative price"
+            },
+            {
+              "id": "s4d",
+              "action": "expect_status",
+              "value": 422
+            },
+            {
+              "id": "s4e",
+              "action": "expect_json",
+              "path": "$.error.details[0].path",
+              "op": "eq",
+              "value": "name"
+            },
+            {
+              "id": "s4f",
+              "action": "expect_json",
+              "path": "$.error.details[1].path",
+              "op": "eq",
+              "value": "price"
+            },
+            {
+              "id": "s4g",
+              "action": "expect_json",
+              "path": "$.error.details[1].message",
+              "op": "contains",
+              "value": "integer"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T26",
+          "folder": "API",
+          "title": "API: unauthorized without token",
+          "description": "Protected endpoints answer 401 with a WWW-Authenticate challenge, with no token and with a wrong one.",
+          "preconditions": "",
+          "priority": "high",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "auth",
+            "negative",
+            "security"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s4h",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.API_URL}}/v1/me",
+              "description": "No Authorization header"
+            },
+            {
+              "id": "s4i",
+              "action": "expect_status",
+              "value": 401
+            },
+            {
+              "id": "s4j",
+              "action": "expect_header",
+              "name": "WWW-Authenticate",
+              "value": "Bearer",
+              "match": "contains"
+            },
+            {
+              "id": "s4k",
+              "action": "expect_json",
+              "path": "$.error.code",
+              "op": "eq",
+              "value": "unauthenticated"
+            },
+            {
+              "id": "s4l",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/v1/products",
+              "body_type": "json",
+              "headers": {
+                "Authorization": "Bearer not-a-real-token"
+              },
+              "body": "{\"name\":\"Sneaky\",\"price\":1000}",
+              "description": "A made-up token"
+            },
+            {
+              "id": "s4m",
+              "action": "expect_status",
+              "value": 401
+            },
+            {
+              "id": "s4n",
+              "action": "expect_header",
+              "name": "WWW-Authenticate",
+              "value": "error=\"invalid_token\"",
+              "match": "contains"
+            }
+          ]
+        },
+        {
+          "key": "SHOP-T27",
+          "folder": "API",
+          "title": "API: list products with pagination",
+          "description": "Query parameters, pagination metadata, a response-time budget and response headers.",
+          "preconditions": "",
+          "priority": "medium",
+          "status": "ready",
+          "execution": "automated",
+          "tags": [
+            "api",
+            "catalog"
+          ],
+          "variables": {},
+          "steps": [
+            {
+              "id": "s4o",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.API_URL}}/v1/products",
+              "query": {
+                "limit": "2",
+                "offset": "2"
+              },
+              "description": "Second page of two"
+            },
+            {
+              "id": "s4p",
+              "action": "expect_status",
+              "value": 200
+            },
+            {
+              "id": "s4q",
+              "action": "expect_json",
+              "path": "$.meta.total",
+              "op": "gt",
+              "value": "0"
+            },
+            {
+              "id": "s4r",
+              "action": "expect_json",
+              "path": "$.meta.limit",
+              "op": "eq",
+              "value": "2"
+            },
+            {
+              "id": "s4s",
+              "action": "expect_json",
+              "path": "$.meta.offset",
+              "op": "eq",
+              "value": "2"
+            },
+            {
+              "id": "s4t",
+              "action": "expect_json",
+              "path": "$.data[1].id",
+              "op": "exists"
+            },
+            {
+              "id": "s4u",
+              "action": "expect_response_time",
+              "max_ms": 800
+            },
+            {
+              "id": "s4v",
+              "action": "expect_header",
+              "name": "X-RateLimit-Remaining",
+              "value": "^\\d+$",
+              "match": "regex",
+              "description": "Rate-limit budget is reported"
+            },
+            {
+              "id": "s4w",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.API_URL}}/v1/products",
+              "query": {
+                "category": "accessories"
+              },
+              "description": "Filter by category"
+            },
+            {
+              "id": "s4x",
+              "action": "expect_json",
+              "path": "$.data[0].category",
+              "op": "eq",
+              "value": "accessories"
+            }
+          ]
         }
       ],
       "flows": [
@@ -1268,6 +1732,48 @@
               "continue_on_failure": false
             }
           ]
+        },
+        {
+          "key": "SHOP-F4",
+          "name": "API regression",
+          "description": "All API test cases in a row, each in its own session (no shared cookies or variables); a failure does not stop the rest.",
+          "tags": [
+            "api",
+            "regression"
+          ],
+          "shared_session": false,
+          "stop_on_failure": false,
+          "variables": {},
+          "items": [
+            {
+              "test_case": "SHOP-T23",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T24",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T25",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T26",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T27",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T15",
+              "continue_on_failure": false
+            },
+            {
+              "test_case": "SHOP-T16",
+              "continue_on_failure": false
+            }
+          ]
         }
       ]
     },
@@ -1290,7 +1796,7 @@
           "name": "sandbox",
           "is_default": true,
           "variables": {
-            "API_URL": "https://sandbox.pay.tokoku.id"
+            "API_URL": "https://sandbox.pay.tokoku.id/api/v2"
           },
           "secrets": [
             "API_KEY"
@@ -1307,7 +1813,7 @@
           "key": "PAY-T1",
           "folder": "Payment intent",
           "title": "Create a payment intent",
-          "description": "",
+          "description": "Creates a payment intent for Rp 90.000 and confirms it.",
           "preconditions": "",
           "priority": "critical",
           "status": "ready",
@@ -1322,7 +1828,7 @@
               "id": "s2d",
               "action": "http_request",
               "method": "POST",
-              "url": "{{env.API_URL}}/v2/payment-intents",
+              "url": "{{env.API_URL}}/payment-intents",
               "body_type": "json",
               "headers": {
                 "X-Api-Key": "{{secret.API_KEY}}"
@@ -1330,7 +1836,8 @@
               "body": "{\"amount\":90000,\"currency\":\"IDR\"}",
               "save": {
                 "intent_id": "$.data.id"
-              }
+              },
+              "description": "Create the payment intent"
             },
             {
               "id": "s2e",
@@ -1343,6 +1850,36 @@
               "path": "$.data.status",
               "op": "eq",
               "value": "requires_payment"
+            },
+            {
+              "id": "pi4",
+              "action": "expect_header",
+              "name": "Location",
+              "value": "/payment-intents/pi_",
+              "match": "contains",
+              "description": "Location points at the new intent"
+            },
+            {
+              "id": "pi5",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/payment-intents/{{vars.intent_id}}/confirm",
+              "headers": {
+                "X-Api-Key": "{{secret.API_KEY}}"
+              },
+              "description": "Confirm the payment (the sandbox charges at once)"
+            },
+            {
+              "id": "pi6",
+              "action": "expect_status",
+              "value": 200
+            },
+            {
+              "id": "pi7",
+              "action": "expect_json",
+              "path": "$.data.status",
+              "op": "eq",
+              "value": "succeeded"
             }
           ]
         },
@@ -1365,9 +1902,13 @@
               "id": "s2g",
               "action": "http_request",
               "method": "POST",
-              "url": "{{env.API_URL}}/v2/test/webhooks",
+              "url": "{{env.API_URL}}/test/webhooks",
               "body_type": "json",
-              "body": "{\"event\":\"payment.succeeded\"}"
+              "headers": {
+                "X-Api-Key": "{{secret.API_KEY}}"
+              },
+              "body": "{\"event\":\"payment.succeeded\"}",
+              "description": "Ask the sandbox to send a signed test event"
             },
             {
               "id": "s2h",
@@ -1380,6 +1921,14 @@
               "path": "$.delivered",
               "op": "eq",
               "value": "true"
+            },
+            {
+              "id": "wh4",
+              "action": "expect_json",
+              "path": "$.signature",
+              "op": "matches",
+              "value": "^t=\\d+,v1=[0-9a-f]{64}$",
+              "description": "Stripe-style signature header value"
             }
           ]
         },
@@ -1387,7 +1936,7 @@
           "key": "PAY-T3",
           "folder": "Refund",
           "title": "Partial refund",
-          "description": "",
+          "description": "Refunds Rp 10.000 of a paid Rp 90.000 intent, polls until the refund has settled, then checks that refunding more than what is left is rejected.",
           "preconditions": "",
           "priority": "medium",
           "status": "ready",
@@ -1403,21 +1952,113 @@
               "id": "s2j",
               "action": "http_request",
               "method": "POST",
-              "url": "{{env.API_URL}}/v2/refunds",
+              "url": "{{env.API_URL}}/payment-intents",
               "body_type": "json",
-              "body": "{\"payment_id\":\"pay_123\",\"amount\":10000}"
+              "headers": {
+                "X-Api-Key": "{{secret.API_KEY}}"
+              },
+              "body": "{\"amount\":90000,\"currency\":\"IDR\"}",
+              "save": {
+                "intent_id": "$.data.id"
+              },
+              "description": "Create a payment intent"
             },
             {
               "id": "s2k",
-              "action": "expect_status",
-              "value": 201
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/payment-intents/{{vars.intent_id}}/confirm",
+              "headers": {
+                "X-Api-Key": "{{secret.API_KEY}}"
+              },
+              "description": "Pay it"
             },
             {
               "id": "s2l",
               "action": "expect_json",
-              "path": "$.data.amount",
+              "path": "$.data.status",
               "op": "eq",
-              "value": "10000"
+              "value": "succeeded"
+            },
+            {
+              "id": "rf4",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/refunds",
+              "body_type": "json",
+              "headers": {
+                "X-Api-Key": "{{secret.API_KEY}}"
+              },
+              "body": "{\"payment_intent\":\"{{vars.intent_id}}\",\"amount\":10000}",
+              "save": {
+                "refund_id": "$.data.id"
+              },
+              "description": "Refund Rp 10.000"
+            },
+            {
+              "id": "rf5",
+              "action": "expect_status",
+              "value": 201
+            },
+            {
+              "id": "rf6",
+              "action": "expect_json",
+              "path": "$.data.status",
+              "op": "eq",
+              "value": "pending",
+              "description": "Refunds settle asynchronously"
+            },
+            {
+              "id": "rf7",
+              "action": "http_request",
+              "method": "GET",
+              "url": "{{env.API_URL}}/refunds/{{vars.refund_id}}",
+              "headers": {
+                "X-Api-Key": "{{secret.API_KEY}}"
+              },
+              "poll_timeout_ms": 15000,
+              "poll_interval_ms": 500,
+              "poll_until": "$.data.succeeded_at",
+              "description": "Poll until the refund has settled",
+              "expected": "succeeded_at is set within 15 s"
+            },
+            {
+              "id": "rf8",
+              "action": "expect_json",
+              "path": "$.data.status",
+              "op": "eq",
+              "value": "succeeded"
+            },
+            {
+              "id": "rf9",
+              "action": "http_request",
+              "method": "POST",
+              "url": "{{env.API_URL}}/refunds",
+              "body_type": "json",
+              "headers": {
+                "X-Api-Key": "{{secret.API_KEY}}"
+              },
+              "body": "{\"payment_intent\":\"{{vars.intent_id}}\",\"amount\":90000}",
+              "description": "Try to refund more than the remaining Rp 80.000"
+            },
+            {
+              "id": "rf10",
+              "action": "expect_status",
+              "value": 422
+            },
+            {
+              "id": "rf11",
+              "action": "expect_json",
+              "path": "$.error.details[0].path",
+              "op": "eq",
+              "value": "amount"
+            },
+            {
+              "id": "rf12",
+              "action": "expect_json",
+              "path": "$.error.details[0].message",
+              "op": "contains",
+              "value": "80000"
             }
           ]
         },

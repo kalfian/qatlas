@@ -88,6 +88,8 @@ Rekomendasi di UI & ke AI: utamakan `role`/`label`/`testid` daripada CSS rapuh. 
 
 Assertion HTTP berlaku terhadap **response `http_request` terakhir**. Dieksekusi dengan Playwright `APIRequestContext`; jika test/flow punya browser context, dipakai `context.request` sehingga cookie sesi UI ikut terkirim.
 
+Contoh lengkap — token chaining (`save` → header `Authorization: Bearer {{vars.token}}`), CRUD (201 + `Location` → 204 → 404), negative test (422 dengan `$.error.details[0].path`, 401 + `WWW-Authenticate`), `query`, `expect_header` regex, `expect_response_time`, dan polling refund sampai `succeeded` (`poll_until: $.data.succeeded_at`): [manual → API testing](manual/README.md#api-testing) ([ID](manual/README.id.md#api-testing)), test case demo SHOP-T23…T27 dan PAY-T1…T3 (flow SHOP-F4), dijalankan terhadap REST API `demo-target` ([endpoint](../demo-target/README.md#json-api)).
+
 ### Umum
 
 | Action | Parameter |
