@@ -48,20 +48,25 @@ func RequestIDFrom(ctx context.Context) string {
 }
 
 // ClientIP stores the client IP in the context. With trustProxy it prefers
-// X-Real-IP, then the right-most X-Forwarded-For entry (the one appended by
-// our own proxy); otherwise it uses the TCP peer address.
+// the right-most X-Forwarded-For entry (the one written by our own proxy:
+// Caddy, nginx, cloudflared), then X-Real-IP; otherwise it uses the TCP peer
+// address. X-Forwarded-For comes first because proxies that append to it
+// (Caddy, Cloudflare) pass a client-sent X-Real-IP through unchanged, which
+// would let a client pick its own IP for login rate limiting.
 func ClientIP(trustProxy bool) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			ip := peerIP(r.RemoteAddr)
 			if trustProxy {
-				if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(v) != nil {
+				xff := ""
+				if vals := r.Header.Values("X-Forwarded-For"); len(vals) > 0 {
+					parts := strings.Split(vals[len(vals)-1], ",")
+					xff = strings.TrimSpace(parts[len(parts)-1])
+				}
+				if net.ParseIP(xff) != nil {
+					ip = xff
+				} else if v := strings.TrimSpace(r.Header.Get("X-Real-IP")); net.ParseIP(v) != nil {
 					ip = v
-				} else if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-					parts := strings.Split(xff, ",")
-					if v := strings.TrimSpace(parts[len(parts)-1]); net.ParseIP(v) != nil {
-						ip = v
-					}
 				}
 			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientIPKey, ip)))

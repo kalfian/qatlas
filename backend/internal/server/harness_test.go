@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -75,6 +76,19 @@ type client struct {
 	hc     *http.Client
 	bearer string
 	noCSRF bool
+	// host overrides the Host header (empty = the test server's address).
+	// net/http keys the cookie jar by it, so cookies follow the host.
+	host string
+}
+
+// atBase returns a copy of c (same cookie jar) whose requests carry the
+// QATLAS_BASE_URL host, as a reverse proxy in front of the server forwards it.
+func (c *client) atBase() *client {
+	cp := *c
+	if u, err := url.Parse(c.env.cfg.BaseURL); err == nil {
+		cp.host = u.Host
+	}
+	return &cp
 }
 
 func (e *testEnv) browser() *client {
@@ -127,6 +141,9 @@ func (c *client) do(method, path string, body any) response {
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
+	}
+	if c.host != "" {
+		req.Host = c.host
 	}
 	if !c.noCSRF {
 		req.Header.Set("X-QAtlas-CSRF", "1")

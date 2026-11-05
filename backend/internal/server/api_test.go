@@ -569,7 +569,7 @@ func TestGoogleLoginRules(t *testing.T) {
 
 func TestGoogleDisabledRedirects(t *testing.T) {
 	e := newEnv(t)
-	r := e.browser().do("GET", "/api/v1/auth/google/start", nil)
+	r := e.browser().atBase().do("GET", "/api/v1/auth/google/start", nil)
 	if r.status != http.StatusFound || r.header.Get("Location") != "/login?error=google_failed" {
 		t.Fatalf("start without config: %d %s", r.status, r.header.Get("Location"))
 	}

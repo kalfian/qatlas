@@ -96,6 +96,31 @@ func TestRequestIDAndClientIP(t *testing.T) {
 	if gotID != "abc-123" || rec.Header().Get(RequestIDHeader) != "abc-123" || gotIP != "10.0.0.9" {
 		t.Fatalf("id=%q ip=%q", gotID, gotIP)
 	}
+	// A client-sent X-Real-IP does not beat the proxy's X-Forwarded-For entry;
+	// it is the fallback when there is no (valid) X-Forwarded-For.
+	for _, tc := range []struct {
+		xff  []string
+		real string
+		want string
+	}{
+		{[]string{"10.0.0.9"}, "1.2.3.4", "10.0.0.9"},
+		{[]string{"9.9.9.9", "5.6.7.8, 10.0.0.7"}, "1.2.3.4", "10.0.0.7"},
+		{nil, "1.2.3.4", "1.2.3.4"},
+		{[]string{"garbage"}, "1.2.3.4", "1.2.3.4"},
+		{[]string{"garbage"}, "", "192.0.2.1"},
+	} {
+		req = httptest.NewRequest("GET", "/", nil)
+		for _, v := range tc.xff {
+			req.Header.Add("X-Forwarded-For", v)
+		}
+		if tc.real != "" {
+			req.Header.Set("X-Real-IP", tc.real)
+		}
+		h.ServeHTTP(httptest.NewRecorder(), req)
+		if gotIP != tc.want {
+			t.Errorf("xff=%v real=%q: ip=%q, want %q", tc.xff, tc.real, gotIP, tc.want)
+		}
+	}
 	req = httptest.NewRequest("GET", "/", nil)
 	req.Header.Set(RequestIDHeader, "bad id with spaces")
 	req.Header.Set("X-Forwarded-For", "1.1.1.1")

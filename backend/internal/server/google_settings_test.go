@@ -209,7 +209,7 @@ func TestGoogleSettings(t *testing.T) {
 	// ---- /auth/google/start: redirect to Google with the stored client and the computed redirect URI.
 	checkStart := func(c *client, clientID string) {
 		t.Helper()
-		r := c.do("GET", "/api/v1/auth/google/start", nil)
+		r := c.atBase().do("GET", "/api/v1/auth/google/start", nil)
 		loc, err := url.Parse(r.header.Get("Location"))
 		if r.status != http.StatusFound || err != nil {
 			t.Fatalf("start: %d %s", r.status, r.header.Get("Location"))
@@ -275,7 +275,7 @@ func TestGoogleSettings(t *testing.T) {
 		t.Fatalf("disabled: %+v", st)
 	}
 	waitFor(t, 10*time.Second, "the other server to disable Google sign-in", func() bool { return !anonOther.googleEnabled() })
-	if r := e.browser().do("GET", "/api/v1/auth/google/start", nil); r.status != http.StatusFound || r.header.Get("Location") != "/login?error=google_failed" {
+	if r := e.browser().atBase().do("GET", "/api/v1/auth/google/start", nil); r.status != http.StatusFound || r.header.Get("Location") != "/login?error=google_failed" {
 		t.Fatalf("start while disabled: %d %s", r.status, r.header.Get("Location"))
 	}
 	admin.expect("PUT", googlePath, map[string]any{"enabled": true}, 200, &st)
@@ -326,11 +326,20 @@ func TestGoogleSettingsEnvOverride(t *testing.T) {
 	if !e.browser().googleEnabled() {
 		t.Fatal("env google not enabled")
 	}
-	r := e.browser().do("GET", "/api/v1/auth/google/start", nil)
+	r := e.browser().atBase().do("GET", "/api/v1/auth/google/start", nil)
 	loc, _ := url.Parse(r.header.Get("Location"))
 	if r.status != http.StatusFound || loc == nil || loc.Host != "accounts.google.com" || loc.Query().Get("client_id") != cfg.GoogleClientID ||
 		loc.Query().Get("redirect_uri") != "https://qatlas.example.com/api/v1/auth/google/callback" {
 		t.Fatalf("env start: %d %s", r.status, r.header.Get("Location"))
+	}
+	// Started on another hostname of the same instance (LAN name next to the
+	// public one): first moved to the base URL host, where the callback lands.
+	lan := e.browser()
+	lan.host = "qatlas.lan.example"
+	r = lan.do("GET", "/api/v1/auth/google/start", nil)
+	if r.status != http.StatusFound || r.header.Get("Location") != "https://qatlas.example.com/api/v1/auth/google/start" ||
+		strings.Contains(r.header.Get("Set-Cookie"), "qatlas_oidc=") {
+		t.Fatalf("start on another host: %d %s %v", r.status, r.header.Get("Location"), r.header)
 	}
 	// A row saved earlier (e.g. before the env vars were added) is ignored and flagged.
 	if _, err := e.pool.Exec(e.ctx, `INSERT INTO system_settings (key, value) VALUES ('google_auth', '{"enabled": true, "client_id": "db.apps.googleusercontent.com"}')`); err != nil {

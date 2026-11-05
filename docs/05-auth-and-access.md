@@ -19,7 +19,7 @@ Bootstrap: admin pertama dibuat lewat CLI `qatlas user create-admin --email ...`
 
 - Hash **argon2id** (parameter disimpan di string hash agar bisa di-upgrade).
 - Minimal 8 karakter (invite accept, ganti password, `qatlas user create-admin`); cek terhadap daftar password umum.
-- Rate limit login per IP + per email; lockout sementara setelah N kali gagal.
+- Rate limit login per IP + per email; lockout sementara setelah N kali gagal. Di belakang proxy (`QATLAS_TRUST_PROXY=true`) IP diambil dari entri paling kanan `X-Forwarded-For`, `X-Real-IP` hanya fallback (header itu bisa dikirim klien dan diteruskan Caddy/Cloudflare).
 - Pesan error generik ("email atau password salah") agar tidak membocorkan keberadaan akun.
 - Reset password: admin generate reset link (v1); self-service via email (phase 5, butuh SMTP).
 
@@ -31,6 +31,7 @@ Bootstrap: admin pertama dibuat lewat CLI `qatlas user create-admin --email ...`
   2. email cocok dengan user berstatus `invited`/`active` (case-insensitive);
   3. jika user sudah punya `google_sub`, harus sama (mencegah pembajakan jika email Google berpindah tangan);
   4. opsional allowed domains dari konfigurasi aktif (mis. hanya `perusahaan.com`).
+- Flow selalu berjalan di host `QATLAS_BASE_URL`: `/auth/google/start` yang dibuka dari hostname lain (mis. domain LAN `*.kalfian.work` di samping domain publik) di-redirect dulu ke `{QATLAS_BASE_URL}/api/v1/auth/google/start`, karena cookie state harus ada di host tempat Google mengirim callback. Sesi hasil login Google ada di host base URL.
 - Login pertama → simpan `google_sub`, status jadi `active`.
 - Jika tidak terdaftar → redirect ke `/login?error=not_registered` dengan pesan "Akun belum terdaftar, hubungi admin". **Tidak** membuat user baru.
 

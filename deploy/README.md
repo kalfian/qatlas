@@ -417,9 +417,21 @@ sign-in from the UI.
 `qatlas server` speaks plain HTTP on 8090; terminate TLS in the existing proxy. Set
 `QATLAS_BASE_URL=https://qatlas.example.com` (Secure cookies, invite links, Google redirect
 `https://qatlas.example.com/api/v1/auth/google/callback`) and `QATLAS_TRUST_PROXY=true` only
-when the proxy **overwrites** `X-Real-IP` / `X-Forwarded-For` (login rate limiting uses them).
+when every path to the server goes through a proxy that writes `X-Forwarded-For` (login rate
+limiting uses it). The client IP is the **right-most** `X-Forwarded-For` entry (the one your proxy
+adds; Caddy, nginx and cloudflared all set it); `X-Real-IP` is only a fallback when there is no
+`X-Forwarded-For`, because proxies that append to XFF pass a client-sent `X-Real-IP` through.
 Bind the app to `127.0.0.1` (`QATLAS_BIND_ADDR`, or `QATLAS_HTTP_ADDR=127.0.0.1:8090`) when the
 proxy runs on the same CT.
+
+**Several hostnames** (e.g. `qatlas.lan.example` on the LAN through Caddy and
+`qatlas.example.com` publicly through a Cloudflare Tunnel) work side by side: sessions are
+host-only cookies, so each hostname has its own sign-in. Set `QATLAS_BASE_URL` to the one that
+works from everywhere (usually the public one): invite links, MCP artifact links and the Google
+redirect URI use it, and *Sign in with Google* started on another hostname is first redirected to
+the base URL host (the state cookie must live where Google sends the callback), so the session
+ends up there. A Cloudflare Tunnel route is just `hostname → http://<server-ip>:8090`; cloudflared
+streams `text/event-stream` without buffering, no extra settings needed.
 
 Run progress uses **Server-Sent Events** (`GET /api/v1/runs/{key}/events`, 15 s heartbeat):
 the proxy must not buffer it and must allow long-lived responses.

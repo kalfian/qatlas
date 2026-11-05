@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ const (
 	googleAuthURL      = "https://accounts.google.com/o/oauth2/v2/auth" // = discovery's authorization_endpoint
 	googleTokenURL     = "https://oauth2.googleapis.com/token"
 	GoogleCallbackPath = "/api/v1/auth/google/callback"
+	GoogleStartPath    = "/api/v1/auth/google/start"
 	oidcStateCookie    = "qatlas_oidc"
 	oidcCookiePath     = "/api/v1/auth/google"
 	oidcStateTTL       = 10 * time.Minute
@@ -99,8 +101,17 @@ func (s *Service) GoogleEnabled(ctx context.Context) bool {
 }
 
 // GoogleStart redirects to Google (authorization code + PKCE, state, nonce).
+//
+// The flow always runs on the QATLAS_BASE_URL host: Google redirects back to
+// the callback there, so the state cookie must be set there too. A start on
+// another hostname of the same instance (e.g. a LAN name next to the public
+// one) is first redirected to the base URL host.
 func (s *Service) GoogleStart(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	if base, err := url.Parse(s.cfg.BaseURL); err == nil && base.Host != "" && !strings.EqualFold(r.Host, base.Host) {
+		http.Redirect(w, r, s.cfg.BaseURL+GoogleStartPath, http.StatusFound)
+		return
+	}
 	c, err := s.googleCfg.active(ctx)
 	if err != nil {
 		s.log.ErrorContext(ctx, "load google sign-in settings", "err", err)
@@ -121,9 +132,9 @@ func (s *Service) GoogleStart(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteLaxMode,
 	})
 	oc := s.googleOAuth(c, oauth2.Endpoint{AuthURL: googleAuthURL, TokenURL: googleTokenURL})
-	url := oc.AuthCodeURL(st.State, oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier),
+	authURL := oc.AuthCodeURL(st.State, oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier),
 		oauth2.SetAuthURLParam("prompt", "select_account"))
-	http.Redirect(w, r, url, http.StatusFound)
+	http.Redirect(w, r, authURL, http.StatusFound)
 }
 
 // GoogleCallback finishes the flow and redirects to "/" or /login?error=….
