@@ -65,7 +65,7 @@ Script `deploy/install.sh` (Phase 2/3) menangani: buat user, salin file, install
 | `QATLAS_MASTER_KEY` | 32 byte base64 — enkripsi secret environment (**wajib di-backup terpisah**) |
 | `QATLAS_DATA_DIR` | `/var/lib/qatlas` |
 | `QATLAS_STORAGE` | kosong (default) = pakai **Admin → Storage**; `local` / `s3` (+ `QATLAS_S3_*`) = override dari env, lihat bagian berikut |
-| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS` | |
+| `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_ALLOWED_DOMAINS` | kosong (default) = pakai **Admin → Google sign-in**; di-set = override dari env (UI read-only), lihat docs/05 |
 | `WORKER_CONCURRENCY` | `2` |
 | `QATLAS_RUNNER_CMD` | perintah runner Node |
 
@@ -153,7 +153,7 @@ Migrasi membaca baris `artifacts` yang belum di-purge dan tersimpan di `--from` 
 
 - `qatlas server` listen di port internal (mis. `8080`); TLS di reverse proxy yang sudah dipakai di infrastruktur.
 - SSE butuh proxy yang tidak mem-buffer response (untuk nginx: `proxy_buffering off`; untuk Caddy umumnya langsung jalan — diverifikasi saat setup).
-- Redirect URI Google: `{QATLAS_BASE_URL}/api/v1/auth/google/callback`.
+- Google sign-in: atur dari **Admin → Google sign-in** (upload OAuth client JSON tipe *Web application*). Redirect URI yang didaftarkan di Google Cloud Console: `{QATLAS_BASE_URL}/api/v1/auth/google/callback`, JavaScript origin: `{QATLAS_BASE_URL}` — `QATLAS_BASE_URL` harus https (kecuali localhost).
 - Worker butuh akses jaringan ke aplikasi yang dites (perhatikan firewall/VLAN LXC).
 
 ## Backup

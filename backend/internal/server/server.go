@@ -97,6 +97,10 @@ func New(deps Deps) (*Server, error) {
 		}
 	}
 	s.Storage = reg
+	// Google sign-in settings changed by another process (Admin → Google
+	// sign-in): drop the cached configuration. Static registries do not
+	// listen, so there only this process's own changes apply at once.
+	reg.OnNotify(auth.GooglePayload, s.Auth.ReloadGoogleSettings)
 	enq := deps.Enqueuer
 	if enq == nil {
 		deps.Logger.Warn("no job enqueuer configured: automated runs stay queued until a worker enqueuer is wired")
@@ -147,7 +151,8 @@ func New(deps Deps) (*Server, error) {
 			flows.New(deps.Pool).Routes(r)
 			s.Runs.Routes(r) // includes the SSE stream /runs/{runKey}/events: no timeout/compress middleware here
 			s.Artifacts.Routes(r)
-			storageSvc.Routes(r) // /admin/settings/storage (admin, session only)
+			storageSvc.Routes(r)     // /admin/settings/storage (admin, session only)
+			s.Auth.SettingsRoutes(r) // /admin/settings/google-auth (admin, session only)
 			// Later packages mount here, e.g.:
 			//   projects.New(deps.Pool, …).Routes(r)
 			//   testcases.New(deps.Pool, …).Routes(r)

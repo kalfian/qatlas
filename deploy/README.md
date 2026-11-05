@@ -346,6 +346,33 @@ checks only the artifacts on that backend).
 
 ---
 
+## Google sign-in
+
+Configure it from **Admin → Google sign-in** (admins, signed-in session); the env vars are an
+optional override.
+
+1. Google Cloud Console → *APIs & Services → Credentials → Create credentials → OAuth client
+   ID*, type **Web application** (a *Desktop app* client is rejected).
+2. Add the **Authorized redirect URI** `https://qatlas.example.com/api/v1/auth/google/callback`
+   and the **Authorized JavaScript origin** `https://qatlas.example.com` — both are shown on the
+   admin page, derived from `QATLAS_BASE_URL`, which must be https (Google allows http only for
+   localhost).
+3. Download the client JSON (Google includes `client_secret` only when the client or a new
+   secret is created) and upload it on the admin page, switch sign-in on, optionally restrict
+   the email domains → *Save*. It applies at once on every server process, no restart.
+
+The page warns when the uploaded JSON does not list the redirect URI or the base URL is not
+https. The client secret is encrypted with `QATLAS_MASTER_KEY` (`system_settings` key
+`google_auth`), never returned or logged; the audit log (`settings.google_auth.update|delete`)
+records the client ID and the changed fields. Only invited/registered users can sign in.
+
+**Env override:** `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (+ optional
+`GOOGLE_ALLOWED_DOMAINS`) set on the server win over the database settings: the page is
+read-only and saving answers 409 `env_override`. Remove them and restart to manage Google
+sign-in from the UI.
+
+---
+
 ## Reverse proxy and TLS
 
 `qatlas server` speaks plain HTTP on 8090; terminate TLS in the existing proxy. Set

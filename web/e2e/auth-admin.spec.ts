@@ -30,6 +30,12 @@ test('J1: admin membuat user, menyalin link undangan, user set password lalu log
 test('J2: login Google dengan email yang tidak terdaftar ditolak', async ({ page }) => {
   test.skip(isReal, 'Google sign-in is simulated by the mock only')
   await page.goto('/login')
+  // Google sign-in is off until configured; simulate GOOGLE_CLIENT_ID on the server (mock dev toolbar).
+  await expect(page.getByRole('button', { name: 'Sign in', exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Continue with Google' })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Mock mode dev toolbar' }).click()
+  await page.getByRole('switch', { name: 'Google sign-in set by environment variables' }).click()
+  await page.keyboard.press('Escape')
   await page.getByRole('button', { name: 'Continue with Google' }).click()
   await page.getByRole('dialog').getByText('tamu.luar@gmail.com').click()
   await expect(page.getByRole('alert')).toContainText("isn't registered")

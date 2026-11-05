@@ -91,8 +91,8 @@ func (s *Service) UpdateMe(ctx context.Context, actor *auth.Actor, in UpdateMeIn
 					return httpx.BadRequest("Current password is incorrect", httpx.Field("current_password", "Current password is incorrect"))
 				}
 			}
-			if len(*in.NewPassword) < auth.MinPasswordLength {
-				return httpx.BadRequest("Password must be at least 10 characters", httpx.Field("new_password", "At least 10 characters"))
+			if err := auth.CheckPasswordLength("new_password", *in.NewPassword); err != nil {
+				return err
 			}
 			h, err := auth.HashPassword(*in.NewPassword)
 			if err != nil {

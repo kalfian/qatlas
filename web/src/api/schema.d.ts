@@ -223,6 +223,31 @@ export interface paths {
         patch: operations["adminUpdateUser"];
         trace?: never;
     };
+    "/admin/settings/google-auth": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Google sign-in configuration (admin, session only). The client secret is never returned. */
+        get: operations["adminGetGoogleAuthSettings"];
+        /**
+         * @description Saves Google sign-in settings in the database (client secret encrypted with the master key) and applies
+         *     them without a restart. `client_json` is the raw content of the OAuth client JSON downloaded from Google
+         *     Cloud Console (`{"web": {"client_id", "client_secret", "redirect_uris", ...}}`); omit it to keep the
+         *     stored credentials (required the first time). 422 `validation_failed` with detail path `client_json`
+         *     for an unreadable/incomplete file; 409 `env_override` when GOOGLE_CLIENT_ID is set in the environment.
+         */
+        put: operations["adminUpdateGoogleAuthSettings"];
+        post?: never;
+        /** @description Removes the stored Google credentials (Google sign-in becomes disabled unless configured by env). */
+        delete: operations["adminDeleteGoogleAuthSettings"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/admin/settings/storage": {
         parameters: {
             query?: never;
@@ -983,6 +1008,35 @@ export interface components {
             last_login_at: string | null;
             /** Format: date-time */
             created_at: string;
+        };
+        GoogleAuthSettings: {
+            /** @description Google sign-in is active (button shown on the login page) */
+            enabled: boolean;
+            /** @enum {string} */
+            source: "none" | "database" | "env";
+            /** @description True when GOOGLE_CLIENT_ID is set in the environment (UI read-only) */
+            env_override: boolean;
+            client_id: string | null;
+            client_secret_set: boolean;
+            project_id: string | null;
+            /** @description Authorized redirect URI to register in Google Cloud Console (QATLAS_BASE_URL + /api/v1/auth/google/callback) */
+            redirect_uri: string;
+            /** @description Authorized JavaScript origin (QATLAS_BASE_URL) */
+            javascript_origin: string;
+            /** @description Whether the uploaded JSON lists redirect_uri; null when unknown */
+            redirect_uri_registered: boolean | null;
+            /** @description Optional email domain allow-list (empty = any domain; users must still be registered) */
+            allowed_domains: string[];
+            /** Format: date-time */
+            updated_at: string | null;
+            updated_by: components["schemas"]["UserRef"] | null;
+            warning: string | null;
+        };
+        GoogleAuthSettingsInput: {
+            enabled: boolean;
+            /** @description Raw OAuth client JSON from Google Cloud Console; omit to keep the stored credentials */
+            client_json?: string;
+            allowed_domains?: string[];
         };
         /** @enum {string} */
         StorageBackend: "local" | "s3";
@@ -1981,6 +2035,74 @@ export interface operations {
                 };
             };
             400: components["responses"]["Error"];
+        };
+    };
+    adminGetGoogleAuthSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoogleAuthSettings"];
+                };
+            };
+            403: components["responses"]["Error"];
+        };
+    };
+    adminUpdateGoogleAuthSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GoogleAuthSettingsInput"];
+            };
+        };
+        responses: {
+            /** @description Saved */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoogleAuthSettings"];
+                };
+            };
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+        };
+    };
+    adminDeleteGoogleAuthSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GoogleAuthSettings"];
+                };
+            };
+            409: components["responses"]["Error"];
         };
     };
     adminGetStorageSettings: {

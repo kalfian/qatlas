@@ -21,6 +21,7 @@ export default {
     invalidCredentials: 'Incorrect email or password.',
     notRegistered: "This Google account isn't registered yet. Ask your admin for an invite.",
     network: "Can't reach the server. Check your connection and try again.",
+    domainNotAllowed: "Google sign-in isn't allowed for this email domain. Ask your admin, or sign in with email and password.",
     googleFailed: 'Google sign-in failed. Try again, or sign in with email and password.',
     demoHint: 'Demo mode · admin',
     autofill: 'Fill in',

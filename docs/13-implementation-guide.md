@@ -61,7 +61,7 @@ deploy/                        Dockerfiles, docker-compose.yml (+ .dev.yml), sys
 - Cookie `qatlas_session` (HttpOnly, SameSite=Lax, Secure when base URL is https), token hashed (SHA-256) in `sessions`; sliding 7 days idle / 30 days max.
 - **CSRF:** mutating requests authenticated by cookie must carry header `X-QAtlas-CSRF: 1` (custom header ⇒ cross-site forms/fetch can't send it without CORS). The web client always sends it. Bearer-token requests are exempt.
 - Passwords argon2id (`m=64MiB,t=3,p=2`, encoded PHC string). Login rate limit: 10 failures / 15 min per email+IP → 429.
-- Google: enabled only when `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` are set. `GET /api/v1/auth/config` → `{ "google_enabled": bool, "mode": "real" }` (the web uses it to show the button). Callback rules per docs/05.
+- Google: configured in Admin → Google sign-in (`/admin/settings/google-auth`, `system_settings` key `google_auth`, secret sealed with the master key); `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` in the environment override it. Read per request, cache dropped on NOTIFY `qatlas_settings` `google_auth`. `GET /api/v1/auth/config` → `{ "google_enabled": bool, "mode": "real" }` (the web uses it to show the button). Callback rules per docs/05.
 - API tokens: `qat_<8 hex prefix>_<32 hex secret>`, SHA-256 stored, `Authorization: Bearer`.
 - Bootstrap: `qatlas user create-admin --email … --name … --password …` (password from flag or prompt/env `QATLAS_ADMIN_PASSWORD`).
 

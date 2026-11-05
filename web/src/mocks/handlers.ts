@@ -5,6 +5,7 @@ import type {
   EnvironmentInput,
   FieldError,
   FlowInput,
+  GoogleAuthSettingsInput,
   ProjectRole,
   RunCreate,
   RunOptions,
@@ -19,6 +20,7 @@ import {
   activeStorageBackend,
   currentUser,
   db,
+  googleAuthState,
   storageState,
   isFinal,
   newId,
@@ -50,6 +52,7 @@ import {
 import { junitFilename, runToJUnit } from './junit'
 import { DEFAULT_RUN_OPTIONS } from './seed'
 import { completeManualCase, createRun } from './simulator'
+import { googleAllowedDomains, googleEnabled, removeGoogleAuth, saveGoogleAuth, toGoogleAuthSettings } from './google-auth'
 import { probeFailureDetails, probeStorage, saveStorage, startMigration, toStorageSettings, validateStorageInput } from './storage'
 
 const API = '/api/v1'
@@ -174,6 +177,10 @@ export const handlers = [
   // ---------- mock-only (tidak ada di OpenAPI)
   http.post(`${API}/__mock/google-login`, m(async ({ request }) => {
     const { email } = await body<{ email: string }>(request)
+    if (!googleEnabled()) fail(409, 'google_disabled', 'Google sign-in is turned off')
+    const allowed = googleAllowedDomains()
+    if (allowed.length && !allowed.includes(email.split('@')[1]?.toLowerCase() ?? ''))
+      fail(403, 'domain_not_allowed', "This Google account's domain isn't allowed. Ask an admin.")
     const u = db().users.find((x) => x.email.toLowerCase() === email.toLowerCase())
     if (!u || u.status === 'disabled') fail(403, 'not_registered', "This Google account isn't registered. Ask an admin for an invite.")
     u.google_linked = true
@@ -198,7 +205,7 @@ export const handlers = [
   })),
 
   // ---------- auth
-  http.get(`${API}/auth/config`, r(() => HttpResponse.json({ google_enabled: true, mode: 'mock' }), { latency: 20 })),
+  http.get(`${API}/auth/config`, r(() => HttpResponse.json({ google_enabled: googleEnabled(), mode: 'mock' }), { latency: 20 })),
   http.post(`${API}/auth/login`, m(async ({ request }) => {
     const { email, password } = await body<{ email: string; password: string }>(request)
     const u = db().users.find((x) => x.email.toLowerCase() === (email ?? '').toLowerCase())
@@ -224,7 +231,7 @@ export const handlers = [
     const { password } = await body<{ password: string }>(request)
     const inv = db().invites.find((x) => x.token === params.token)
     if (!inv || inv.used_at || Date.parse(inv.expires_at) < Date.now()) fail(410, 'expired', 'This invite link has already been used or has expired')
-    if (!password || password.length < 10) fail(400, 'validation_failed', 'Password must be at least 10 characters', [{ path: 'password', message: 'At least 10 characters' }])
+    if (!password || password.length < 8) fail(400, 'validation_failed', 'Password must be at least 8 characters', [{ path: 'password', message: 'At least 8 characters' }])
     const u = db().users.find((x) => x.id === inv.user_id)!
     u.password = password
     u.status = 'active'
@@ -246,7 +253,7 @@ export const handlers = [
     }
     if (b.new_password !== undefined) {
       if (u.password && u.password !== b.current_password) fail(400, 'validation_failed', 'Current password is incorrect', [{ path: 'current_password', message: 'Current password is incorrect' }])
-      if (b.new_password.length < 10) fail(400, 'validation_failed', 'Password must be at least 10 characters', [{ path: 'new_password', message: 'At least 10 characters' }])
+      if (b.new_password.length < 8) fail(400, 'validation_failed', 'Password must be at least 8 characters', [{ path: 'new_password', message: 'At least 8 characters' }])
       u.password = b.new_password
     }
     return HttpResponse.json(toMe(u))
@@ -340,6 +347,26 @@ export const handlers = [
     const expires_at = new Date(Date.now() + 72 * 3600_000).toISOString()
     db().invites.push({ token, user_id: u.id, kind: u.status === 'invited' ? 'invite' : 'reset_password', expires_at, used_at: null })
     return HttpResponse.json({ user: toUser(u), invite_url: `${location.origin}/invite/${token}`, expires_at })
+  })),
+
+  // ---------- admin: Google sign-in (lihat mocks/google-auth.ts untuk aturan validasi)
+  http.get(`${API}/admin/settings/google-auth`, r(() => {
+    requireAdmin()
+    return HttpResponse.json(toGoogleAuthSettings())
+  }, { latency: 60 })),
+  http.put(`${API}/admin/settings/google-auth`, m(async ({ request }) => {
+    const admin = requireAdmin()
+    if (googleAuthState().env_override) fail(409, 'env_override', 'Google sign-in is set by environment variables (GOOGLE_CLIENT_ID); remove them to manage it here')
+    const input = await body<GoogleAuthSettingsInput>(request)
+    const invalid = saveGoogleAuth(input, admin.id)
+    if (invalid.length) fail(422, 'validation_failed', 'Google sign-in settings are invalid', invalid)
+    return HttpResponse.json(toGoogleAuthSettings())
+  })),
+  http.delete(`${API}/admin/settings/google-auth`, m(() => {
+    const admin = requireAdmin()
+    if (googleAuthState().env_override) fail(409, 'env_override', 'Google sign-in is set by environment variables (GOOGLE_CLIENT_ID); remove them to manage it here')
+    removeGoogleAuth(admin.id)
+    return HttpResponse.json(toGoogleAuthSettings())
   })),
 
   // ---------- admin: artifact storage (lihat mocks/storage.ts untuk aturan simulasi)

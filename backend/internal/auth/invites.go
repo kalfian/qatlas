@@ -117,8 +117,8 @@ func (s *Service) AcceptInvite(ctx context.Context, w http.ResponseWriter, r *ht
 		if !row.usable || row.user.Status == StatusDisabled {
 			return errInviteExpired()
 		}
-		if len(in.Password) < MinPasswordLength {
-			return httpx.BadRequest("Password must be at least 10 characters", httpx.Field("password", "At least 10 characters"))
+		if err := CheckPasswordLength("password", in.Password); err != nil {
+			return err
 		}
 		hash, err := HashPassword(in.Password)
 		if err != nil {

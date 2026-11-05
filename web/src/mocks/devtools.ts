@@ -1,4 +1,5 @@
-import { db, persist, storageState } from './db'
+import { db, googleAuthState, persist, storageState } from './db'
+import { setGoogleEnvOverride } from './google-auth'
 import { setStorageEnvOverride } from './storage'
 import { DEMO_PASSWORD } from './constants'
 
@@ -18,6 +19,11 @@ export const mockDevtools = {
   storageEnv: () => storageState().env_override,
   setStorageEnv(on: boolean) {
     setStorageEnvOverride(on)
+    persist()
+  },
+  googleEnv: () => googleAuthState().env_override,
+  setGoogleEnv(on: boolean) {
+    setGoogleEnvOverride(on)
     persist()
   },
 }

@@ -28,6 +28,7 @@ function loginErrorMessage(err: unknown, t: TFunction<'auth'>): string {
   if (err instanceof ApiError) {
     if (err.code === 'invalid_credentials' || err.status === 401) return t('login.invalidCredentials')
     if (err.code === 'not_registered') return t('login.notRegistered')
+    if (err.code === 'domain_not_allowed') return t('login.domainNotAllowed')
     // lockout / rate limit: pesan server menyebut durasinya
     return err.message
   }
@@ -37,6 +38,7 @@ function loginErrorMessage(err: unknown, t: TFunction<'auth'>): string {
 function searchErrorMessage(code: string | undefined, t: TFunction<'auth'>): string | null {
   if (!code) return null
   if (code === 'not_registered') return t('login.notRegistered')
+  if (code === 'domain_not_allowed') return t('login.domainNotAllowed')
   return t('login.googleFailed')
 }
 
@@ -96,7 +98,8 @@ function LoginForm({ searchError, onSignedIn }: { searchError: string | null; on
   }
 
   const authConfig = useAuthConfig()
-  const googleEnabled = IS_MOCK || authConfig.data?.google_enabled === true
+  // Mode mock juga mengikuti /auth/config: Admin → Google sign-in (atau toggle env di dev toolbar) menyalakannya.
+  const googleEnabled = authConfig.data?.google_enabled === true
   const google = () => {
     setBanner(null)
     if (IS_MOCK) setGoogleOpen(true)
@@ -211,7 +214,7 @@ function MockGoogleDialog({
   const pick = (email: string) =>
     google.mutate(email, {
       onSuccess,
-      onError: (err) => onError(err instanceof ApiError && err.code === 'not_registered' ? t('login.notRegistered') : loginErrorMessage(err, t)),
+      onError: (err) => onError(loginErrorMessage(err, t)),
     })
 
   return (

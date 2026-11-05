@@ -7,6 +7,8 @@ import type {
   BulkTestCaseAction,
   EnvironmentInput,
   FlowInput,
+  GoogleAuthSettings,
+  GoogleAuthSettingsInput,
   ProjectRole,
   RunCreate,
   RunKind,
@@ -27,6 +29,8 @@ export const qk = {
   myManualRuns: ['me', 'manual-runs'] as const,
   adminUsers: ['admin', 'users'] as const,
   adminStorage: ['admin', 'storage'] as const,
+  adminGoogleAuth: ['admin', 'google-auth'] as const,
+  authConfig: ['auth', 'config'] as const,
   projects: ['projects'] as const,
   project: (key: string) => ['projects', key] as const,
   stats: (key: string, range: string) => ['projects', key, 'stats', range] as const,
@@ -106,7 +110,7 @@ export function useMockGoogleLogin() {
 }
 
 export function useAuthConfig() {
-  return useQuery({ queryKey: ['auth', 'config'], queryFn: () => unwrap(api.GET('/auth/config')), staleTime: Infinity })
+  return useQuery({ queryKey: qk.authConfig, queryFn: () => unwrap(api.GET('/auth/config')), staleTime: Infinity })
 }
 
 export function useInvite(token: string) {
@@ -225,6 +229,35 @@ export function useMigrateArtifacts() {
   return useMutation({
     mutationFn: (body: { delete_source: boolean }) => unwrap(api.POST('/admin/settings/storage/migrate', { body })),
     onSuccess: (s) => qc.setQueryData(qk.adminStorage, s),
+  })
+}
+
+/* ------------------------------------------------------------------ admin: google sign-in */
+
+export function useGoogleAuthSettings() {
+  return useQuery({ queryKey: qk.adminGoogleAuth, queryFn: () => unwrap(api.GET('/admin/settings/google-auth')) })
+}
+
+/** Tombol "Continue with Google" di login mengikuti `enabled`: perbarui cache `/auth/config` lalu tandai basi. */
+function syncGoogleAuth(qc: QueryClient, s: GoogleAuthSettings) {
+  qc.setQueryData(qk.adminGoogleAuth, s)
+  qc.setQueryData<{ google_enabled: boolean; mode: 'mock' | 'real' }>(qk.authConfig, (old) => (old ? { ...old, google_enabled: s.enabled } : old))
+  void qc.invalidateQueries({ queryKey: qk.authConfig })
+}
+
+export function useUpdateGoogleAuthSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (body: GoogleAuthSettingsInput) => unwrap(api.PUT('/admin/settings/google-auth', { body })),
+    onSuccess: (s) => syncGoogleAuth(qc, s),
+  })
+}
+
+export function useDeleteGoogleAuthSettings() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => unwrap(api.DELETE('/admin/settings/google-auth')),
+    onSuccess: (s) => syncGoogleAuth(qc, s),
   })
 }
 

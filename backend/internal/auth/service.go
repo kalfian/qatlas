@@ -30,17 +30,23 @@ const (
 
 // Service holds auth dependencies. Construct with New.
 type Service struct {
-	pool   *pgxpool.Pool
-	cfg    *config.Config
-	log    *slog.Logger
-	google *googleAuth // nil when Google sign-in is not configured
+	pool       *pgxpool.Pool
+	cfg        *config.Config
+	log        *slog.Logger
+	googleCfg  *googleSettings // active Google sign-in configuration (env or Admin → Google sign-in)
+	googleOIDC *googleProvider // lazy OIDC discovery, shared by every configuration
 }
 
-// New builds the auth service.
+// New builds the auth service. Google sign-in settings are read lazily (no
+// database or network access here); wire ReloadGoogleSettings to NOTIFY
+// qatlas_settings 'google_auth' for changes made by other processes.
 func New(pool *pgxpool.Pool, cfg *config.Config, logger *slog.Logger) *Service {
-	s := &Service{pool: pool, cfg: cfg, log: logger}
-	if cfg.GoogleEnabled() {
-		s.google = newGoogleAuth(cfg)
+	if logger == nil {
+		logger = slog.Default()
+	}
+	s := &Service{pool: pool, cfg: cfg, log: logger, googleCfg: newGoogleSettings(pool, cfg), googleOIDC: &googleProvider{issuer: googleIssuer}}
+	if cfg.GoogleClientID == "" && len(cfg.GoogleAllowedDomains) > 0 {
+		logger.Warn("GOOGLE_ALLOWED_DOMAINS is ignored without GOOGLE_CLIENT_ID; set the allowed domains in Admin → Google sign-in")
 	}
 	return s
 }

@@ -3,7 +3,7 @@ import { Link2Off } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import { ApiError, errorMessage } from '@/api/client'
-import { useAcceptInvite, useInvite, useMockGoogleLogin } from '@/api/queries'
+import { useAcceptInvite, useAuthConfig, useInvite, useMockGoogleLogin } from '@/api/queries'
 import type { InviteInfo } from '@/api/types'
 import { IS_MOCK } from '@/app/config'
 import { Button } from '@/components/ui/button'
@@ -95,6 +95,7 @@ function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
   const navigate = useNavigate()
   const accept = useAcceptInvite(token)
   const google = useMockGoogleLogin()
+  const googleEnabled = useAuthConfig().data?.google_enabled === true
   const isReset = invite.kind === 'reset_password'
   const firstName = invite.name.split(/\s+/)[0]
 
@@ -139,7 +140,7 @@ function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
   const continueWithGoogle = () => {
     setBanner(null)
     if (!IS_MOCK) {
-      window.location.href = '/api/v1/auth/google/start'
+      window.location.href = `/api/v1/auth/google/start?invite=${encodeURIComponent(token)}`
       return
     }
     google.mutate(invite.email, {
@@ -215,7 +216,7 @@ function InviteForm({ token, invite }: { token: string; invite: InviteInfo }) {
         </Button>
       </form>
 
-      {!isReset && (
+      {!isReset && googleEnabled && (
         <>
           <OrDivider />
           <Button type="button" variant="outline" size="lg" className="w-full" onClick={continueWithGoogle} loading={google.isPending} disabled={busy}>

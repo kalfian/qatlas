@@ -10,6 +10,7 @@ import {
   Languages,
   LayoutDashboard,
   ListChecks,
+  LogIn,
   LogOut,
   Menu,
   Monitor,
@@ -183,6 +184,7 @@ function Sidebar() {
           <>
             <NavLink item={{ to: '/admin/users', label: t('items.adminUsers'), icon: Users }} />
             <NavLink item={{ to: '/admin/storage', label: t('items.adminStorage'), icon: HardDrive }} />
+            <NavLink item={{ to: '/admin/google-sign-in', label: t('items.adminGoogle'), icon: LogIn }} />
           </>
         )}
       </nav>
@@ -260,6 +262,7 @@ const SECTION_KEYS = {
   admin: 'admin',
   users: 'users',
   storage: 'storage',
+  'google-sign-in': 'googleSignIn',
   profile: 'profile',
   tokens: 'tokens',
 } as const

@@ -21,6 +21,7 @@ export function DevToolbar() {
   const [open, setOpen] = React.useState(false)
   const [speed, setSpeed] = React.useState(String(mockDevtools.speed()))
   const [storageEnv, setStorageEnv] = React.useState(() => mockDevtools.storageEnv())
+  const [googleEnv, setGoogleEnv] = React.useState(() => mockDevtools.googleEnv())
   const me = qc.getQueryData<{ user: { id: string } }>(qk.me)
 
   const switchUser = async (id: string) => {
@@ -121,10 +122,29 @@ export function DevToolbar() {
               />
             </div>
           )}
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <Label htmlFor="mock-google-env">{t('toolbar.googleEnv')}</Label>
+              <p id="mock-google-env-hint" className="mt-1 text-xs text-muted-foreground">
+                {t('toolbar.googleEnvHint')}
+              </p>
+            </div>
+            <Switch
+              id="mock-google-env"
+              aria-describedby="mock-google-env-hint"
+              checked={googleEnv}
+              onCheckedChange={(on) => {
+                setGoogleEnv(on)
+                mockDevtools.setGoogleEnv(on)
+                void qc.invalidateQueries({ queryKey: qk.adminGoogleAuth })
+                void qc.invalidateQueries({ queryKey: qk.authConfig })
+              }}
+            />
+          </div>
           <div className="space-y-1 text-xs text-muted-foreground">
             <p className="font-medium text-foreground">{t('toolbar.rulesTitle')}</p>
             <ul className="list-disc space-y-0.5 pl-4">
-              {(['ruleFail', 'ruleVoucher', 'ruleFlaky', 'ruleStorage'] as const).map((rule) => (
+              {(['ruleFail', 'ruleVoucher', 'ruleFlaky', 'ruleStorage', 'ruleGoogle'] as const).map((rule) => (
                 <li key={rule}>
                   <Trans t={t} i18nKey={`toolbar.${rule}`} components={{ code: <code className="font-mono" /> }} />
                 </li>

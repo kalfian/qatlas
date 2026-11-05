@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/kalfian/qatlas/backend/internal/auth"
 	"github.com/kalfian/qatlas/backend/internal/config"
 	"github.com/kalfian/qatlas/backend/internal/db"
 	"github.com/kalfian/qatlas/backend/internal/httpx"
@@ -31,9 +32,10 @@ import (
 )
 
 // Channel is the NOTIFY channel announcing settings changes. Payloads:
-// PayloadStorage (reload the storage settings) and PayloadMigration
-// (storage migration progress; informational).
-const Channel = "qatlas_settings"
+// PayloadStorage (reload the storage settings), PayloadMigration (storage
+// migration progress; informational) and auth.GooglePayload (Google sign-in
+// settings, dispatched through Registry.OnNotify).
+const Channel = auth.SettingsChannel
 
 // NOTIFY payloads on Channel.
 const (

@@ -59,6 +59,9 @@ type Registry struct {
 	lifeMu sync.Mutex
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	subMu sync.Mutex
+	subs  map[string][]func() // OnNotify callbacks by payload
 }
 
 // state is one immutable configuration snapshot.
@@ -353,6 +356,36 @@ func (r *Registry) install(st *state) {
 	r.logState(st, "artifact storage switched")
 }
 
+// OnNotify registers fn for NOTIFY payload on Channel (other settings groups
+// sharing the listener, e.g. "google_auth"): it runs on every such
+// notification and after every (re)connect of the listener, so changes made
+// while it was disconnected are picked up. fn must be quick and must not
+// block (typically: drop a cache). Static registries never call it (they do
+// not listen). Safe to call before or after Start.
+func (r *Registry) OnNotify(payload string, fn func()) {
+	r.subMu.Lock()
+	defer r.subMu.Unlock()
+	if r.subs == nil {
+		r.subs = map[string][]func(){}
+	}
+	r.subs[payload] = append(r.subs[payload], fn)
+}
+
+// notify runs the OnNotify callbacks of payload ("" = all of them).
+func (r *Registry) notify(payload string) {
+	r.subMu.Lock()
+	var fns []func()
+	for p, list := range r.subs {
+		if payload == "" || p == payload {
+			fns = append(fns, list...)
+		}
+	}
+	r.subMu.Unlock()
+	for _, fn := range fns {
+		fn()
+	}
+}
+
 // Start runs the LISTEN loop and the S3 retry loop until Close. No-op for
 // static registries; safe to call more than once.
 func (r *Registry) Start() {
@@ -439,12 +472,14 @@ func (r *Registry) listenOnce(ctx context.Context, onListening func()) error {
 	if err := r.Reload(ctx); err != nil && ctx.Err() == nil {
 		r.log.Warn("storage settings reload failed", "err", err)
 	}
+	r.notify("")
 	for {
 		n, err := conn.WaitForNotification(ctx)
 		if err != nil {
 			return err
 		}
 		if n.Payload != PayloadStorage {
+			r.notify(n.Payload)
 			continue
 		}
 		if err := r.Reload(ctx); err != nil && ctx.Err() == nil {

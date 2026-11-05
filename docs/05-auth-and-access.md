@@ -18,7 +18,7 @@ Bootstrap: admin pertama dibuat lewat CLI `qatlas user create-admin --email ...`
 ## Email + password
 
 - Hash **argon2id** (parameter disimpan di string hash agar bisa di-upgrade).
-- Minimal 10 karakter; cek terhadap daftar password umum.
+- Minimal 8 karakter (invite accept, ganti password, `qatlas user create-admin`); cek terhadap daftar password umum.
 - Rate limit login per IP + per email; lockout sementara setelah N kali gagal.
 - Pesan error generik ("email atau password salah") agar tidak membocorkan keberadaan akun.
 - Reset password: admin generate reset link (v1); self-service via email (phase 5, butuh SMTP).
@@ -30,9 +30,19 @@ Bootstrap: admin pertama dibuat lewat CLI `qatlas user create-admin --email ...`
   1. `email_verified == true`;
   2. email cocok dengan user berstatus `invited`/`active` (case-insensitive);
   3. jika user sudah punya `google_sub`, harus sama (mencegah pembajakan jika email Google berpindah tangan);
-  4. opsional `GOOGLE_ALLOWED_DOMAINS` (mis. hanya `@perusahaan.com`).
+  4. opsional allowed domains dari konfigurasi aktif (mis. hanya `perusahaan.com`).
 - Login pertama → simpan `google_sub`, status jadi `active`.
 - Jika tidak terdaftar → redirect ke `/login?error=not_registered` dengan pesan "Akun belum terdaftar, hubungi admin". **Tidak** membuat user baru.
+
+### Konfigurasi: Admin → Google sign-in
+
+- **Admin → Google sign-in** (admin, sesi login; API token 403): upload file OAuth client JSON dari Google Cloud Console, aktifkan, opsional isi allowed domains → *Save*. Berlaku tanpa restart (`/auth/config.google_enabled`, `/auth/google/start|callback` membaca konfigurasi aktif per request; proses lain me-reload lewat `NOTIFY qatlas_settings 'google_auth'`).
+- Di Google Cloud Console: *APIs & Services → Credentials → Create credentials → OAuth client ID*, tipe **Web application** (client "Desktop app"/`installed` ditolak). Daftarkan **Authorized redirect URI** `{QATLAS_BASE_URL}/api/v1/auth/google/callback` dan **Authorized JavaScript origin** `{QATLAS_BASE_URL}` (keduanya ditampilkan di halaman admin), lalu download JSON-nya (berisi `client_secret` hanya saat client/secret baru dibuat).
+- Validasi (422 `validation_failed`, detail `client_json`): JSON harus terbaca, punya bagian `web` dengan `client_id` (`….apps.googleusercontent.com`) dan `client_secret`; `project_id`, `redirect_uris`, `javascript_origins` ikut disimpan. Allowed domains dinormalisasi (lowercase, tanpa `@`, harus hostname valid; error di `allowed_domains[i]`). Tanpa `client_json` → kredensial lama dipertahankan (wajib saat pertama kali).
+- Penyimpanan: `system_settings` key `google_auth`; `client_secret` dienkripsi dengan `QATLAS_MASTER_KEY` (`secret_enc`), **write-only** (tidak pernah dikembalikan API, tidak di-log, tidak masuk audit). Audit `settings.google_auth.update|delete` mencatat `client_id` + field yang berubah.
+- `GET` menunjukkan `redirect_uri_registered` (apakah JSON yang di-upload memuat redirect URI di atas) dan `warning` bila belum terdaftar, bila `QATLAS_BASE_URL` bukan https (Google hanya menerima http untuk localhost) atau masih default.
+- **Override env:** bila `GOOGLE_CLIENT_ID` (+ `GOOGLE_CLIENT_SECRET`, opsional `GOOGLE_ALLOWED_DOMAINS`) di-set di environment server, env yang dipakai (`source: env`, halaman admin read-only, PUT/DELETE → 409 `env_override`). `GOOGLE_ALLOWED_DOMAINS` tanpa `GOOGLE_CLIENT_ID` diabaikan.
+- `DELETE` menghapus konfigurasi tersimpan → Google sign-in nonaktif (kecuali dari env).
 
 ## Session (web)
 

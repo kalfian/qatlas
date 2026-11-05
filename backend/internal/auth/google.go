@@ -18,60 +18,67 @@ import (
 	"golang.org/x/oauth2"
 
 	"github.com/kalfian/qatlas/backend/internal/audit"
-	"github.com/kalfian/qatlas/backend/internal/config"
 	"github.com/kalfian/qatlas/backend/internal/db"
 	"github.com/kalfian/qatlas/backend/internal/httpx"
 )
 
 const (
-	googleIssuer     = "https://accounts.google.com"
-	oidcStateCookie  = "qatlas_oidc"
-	oidcCookiePath   = "/api/v1/auth/google"
-	oidcStateTTL     = 10 * time.Minute
-	loginErrRedirect = "/login?error="
+	googleIssuer       = "https://accounts.google.com"
+	googleAuthURL      = "https://accounts.google.com/o/oauth2/v2/auth" // = discovery's authorization_endpoint
+	googleTokenURL     = "https://oauth2.googleapis.com/token"
+	GoogleCallbackPath = "/api/v1/auth/google/callback"
+	oidcStateCookie    = "qatlas_oidc"
+	oidcCookiePath     = "/api/v1/auth/google"
+	oidcStateTTL       = 10 * time.Minute
+	loginErrRedirect   = "/login?error="
 )
 
 // Redirect error codes understood by the web login page.
 const (
-	googleErrNotRegistered = "not_registered"
-	googleErrFailed        = "google_failed"
+	googleErrNotRegistered    = "not_registered"
+	googleErrFailed           = "google_failed"
+	googleErrDomainNotAllowed = "domain_not_allowed"
 )
 
-// googleAuth lazily discovers Google's OIDC configuration on first use, so
-// the server starts even when Google is unreachable.
-type googleAuth struct {
-	cfg *config.Config
+var googleScopes = []string{oidc.ScopeOpenID, "email", "profile"}
 
-	mu       sync.Mutex
-	provider *oidc.Provider
-	oauth    *oauth2.Config
-	verifier *oidc.IDTokenVerifier
+// googleProvider discovers Google's OIDC configuration (token endpoint, JWKS)
+// lazily, on the first callback: start redirects to the fixed authorization
+// endpoint, so neither the server start nor /auth/google/start needs Google.
+// A failed discovery is not cached (the next callback retries).
+type googleProvider struct {
+	issuer string
+	mu     sync.Mutex
+	p      *oidc.Provider
 }
 
-func newGoogleAuth(cfg *config.Config) *googleAuth { return &googleAuth{cfg: cfg} }
-
-func (g *googleAuth) init(ctx context.Context) error {
+func (g *googleProvider) get(ctx context.Context) (*oidc.Provider, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.provider != nil {
-		return nil
+	if g.p != nil {
+		return g.p, nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	p, err := oidc.NewProvider(ctx, googleIssuer)
+	p, err := oidc.NewProvider(ctx, g.issuer)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	g.provider = p
-	g.oauth = &oauth2.Config{
-		ClientID:     g.cfg.GoogleClientID,
-		ClientSecret: g.cfg.GoogleClientSecret,
-		Endpoint:     p.Endpoint(),
-		RedirectURL:  g.cfg.BaseURL + "/api/v1/auth/google/callback",
-		Scopes:       []string{oidc.ScopeOpenID, "email", "profile"},
+	g.p = p
+	return p, nil
+}
+
+// googleRedirectURL is the OAuth redirect URI of this installation.
+func (s *Service) googleRedirectURL() string { return s.cfg.BaseURL + GoogleCallbackPath }
+
+func (s *Service) googleOAuth(c *googleClient, endpoint oauth2.Endpoint) *oauth2.Config {
+	return &oauth2.Config{
+		ClientID:     c.clientID,
+		ClientSecret: c.clientSecret,
+		Endpoint:     endpoint,
+		RedirectURL:  s.googleRedirectURL(),
+		Scopes:       googleScopes,
 	}
-	g.verifier = p.Verifier(&oidc.Config{ClientID: g.cfg.GoogleClientID})
-	return nil
 }
 
 type oidcState struct {
@@ -80,17 +87,25 @@ type oidcState struct {
 	Verifier string `json:"v"`
 }
 
-// GoogleEnabled reports whether Google sign-in is configured.
-func (s *Service) GoogleEnabled() bool { return s.google != nil }
+// GoogleEnabled reports whether Google sign-in is active right now (env
+// configuration, or enabled settings from Admin → Google sign-in).
+func (s *Service) GoogleEnabled(ctx context.Context) bool {
+	c, err := s.googleCfg.active(ctx)
+	if err != nil {
+		s.log.ErrorContext(ctx, "load google sign-in settings", "err", err)
+		return false
+	}
+	return c.enabled
+}
 
 // GoogleStart redirects to Google (authorization code + PKCE, state, nonce).
 func (s *Service) GoogleStart(w http.ResponseWriter, r *http.Request) {
-	if s.google == nil {
-		http.Redirect(w, r, loginErrRedirect+googleErrFailed, http.StatusFound)
-		return
+	ctx := r.Context()
+	c, err := s.googleCfg.active(ctx)
+	if err != nil {
+		s.log.ErrorContext(ctx, "load google sign-in settings", "err", err)
 	}
-	if err := s.google.init(r.Context()); err != nil {
-		s.log.ErrorContext(r.Context(), "google oidc discovery failed", "err", err)
+	if err != nil || !c.enabled {
 		http.Redirect(w, r, loginErrRedirect+googleErrFailed, http.StatusFound)
 		return
 	}
@@ -105,19 +120,27 @@ func (s *Service) GoogleStart(w http.ResponseWriter, r *http.Request) {
 		Secure:   s.cfg.SecureCookies(),
 		SameSite: http.SameSiteLaxMode,
 	})
-	url := s.google.oauth.AuthCodeURL(st.State, oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier),
+	oc := s.googleOAuth(c, oauth2.Endpoint{AuthURL: googleAuthURL, TokenURL: googleTokenURL})
+	url := oc.AuthCodeURL(st.State, oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier),
 		oauth2.SetAuthURLParam("prompt", "select_account"))
 	http.Redirect(w, r, url, http.StatusFound)
 }
 
 // GoogleCallback finishes the flow and redirects to "/" or /login?error=….
+// The client credentials are the ones active now (a change between start and
+// callback applies immediately).
 func (s *Service) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	fail := func(code, reason string, err error) {
 		s.log.WarnContext(ctx, "google sign-in rejected", "reason", reason, "err", err)
 		http.Redirect(w, r, loginErrRedirect+code, http.StatusFound)
 	}
-	if s.google == nil {
+	c, err := s.googleCfg.active(ctx)
+	if err != nil {
+		fail(googleErrFailed, "settings", err)
+		return
+	}
+	if !c.enabled {
 		fail(googleErrFailed, "disabled", nil)
 		return
 	}
@@ -136,11 +159,13 @@ func (s *Service) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 		fail(googleErrFailed, "state mismatch", nil)
 		return
 	}
-	if err := s.google.init(ctx); err != nil {
+	provider, err := s.googleOIDC.get(ctx)
+	if err != nil {
+		s.log.ErrorContext(ctx, "google oidc discovery failed", "err", err)
 		fail(googleErrFailed, "discovery", err)
 		return
 	}
-	tok, err := s.google.oauth.Exchange(ctx, q.Get("code"), oauth2.VerifierOption(st.Verifier))
+	tok, err := s.googleOAuth(c, provider.Endpoint()).Exchange(ctx, q.Get("code"), oauth2.VerifierOption(st.Verifier))
 	if err != nil {
 		fail(googleErrFailed, "code exchange", err)
 		return
@@ -150,7 +175,7 @@ func (s *Service) GoogleCallback(w http.ResponseWriter, r *http.Request) {
 		fail(googleErrFailed, "no id_token", nil)
 		return
 	}
-	idt, err := s.google.verifier.Verify(ctx, rawID)
+	idt, err := provider.Verifier(&oidc.Config{ClientID: c.clientID}).Verify(ctx, rawID)
 	if err != nil {
 		fail(googleErrFailed, "id_token verify", err)
 		return
@@ -204,7 +229,8 @@ var errNotRegistered = errors.New("not registered")
 // when accepted, creates a session. It returns the redirect target:
 //
 //  1. email_verified must be true;
-//  2. GOOGLE_ALLOWED_DOMAINS (if set) must contain the email domain;
+//  2. the allowed domains of the active configuration (if any) must contain
+//     the email domain;
 //  3. the email must belong to an invited/active user (no user is created);
 //  4. an existing google_sub binding must match.
 //
@@ -224,22 +250,32 @@ func (s *Service) CompleteGoogleLogin(ctx context.Context, w http.ResponseWriter
 			s.log.ErrorContext(ctx, "audit google login failure", "err", err)
 		}
 		s.log.WarnContext(ctx, "google sign-in rejected", "reason", reason, "email", email)
+		// Only the domain rule is reported specifically (it reveals no account state); every other
+		// rejection stays the generic "not registered".
+		if reason == googleErrDomainNotAllowed {
+			return loginErrRedirect + googleErrDomainNotAllowed
+		}
 		return loginErrRedirect + googleErrNotRegistered
 	}
 
 	if !id.EmailVerified || email == "" || id.Subject == "" {
 		return reject("email_not_verified", nil)
 	}
-	if len(s.cfg.GoogleAllowedDomains) > 0 {
+	gc, err := s.googleCfg.active(ctx)
+	if err != nil {
+		s.log.ErrorContext(ctx, "load google sign-in settings", "err", err)
+		return loginErrRedirect + googleErrFailed
+	}
+	if len(gc.allowedDomains) > 0 {
 		at := strings.LastIndexByte(email, '@')
-		if at < 0 || !slices.Contains(s.cfg.GoogleAllowedDomains, email[at+1:]) {
-			return reject("domain_not_allowed", nil)
+		if at < 0 || !slices.Contains(gc.allowedDomains, email[at+1:]) {
+			return reject(googleErrDomainNotAllowed, nil)
 		}
 	}
 
 	var rejectReason string
 	var rejectUser *uuid.UUID
-	err := db.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
+	err = db.WithTx(ctx, s.pool, func(tx pgx.Tx) error {
 		u, err := ScanUser(tx.QueryRow(ctx, `SELECT `+UserColumns+` FROM users u WHERE u.email = $1 FOR UPDATE`, email))
 		if db.IsNoRows(err) {
 			rejectReason = "unknown_email"

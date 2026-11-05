@@ -250,6 +250,21 @@ export interface DbStorage {
   } | null
 }
 
+/** Google sign-in (Admin → Google sign-in). Secret hanya ada di mock; API tidak pernah mengembalikannya. */
+export interface DbGoogleAuth {
+  enabled: boolean
+  client_id: string | null
+  client_secret: string | null
+  project_id: string | null
+  /** `web.redirect_uris` dari file yang diunggah; null = belum ada file. */
+  redirect_uris: string[] | null
+  allowed_domains: string[]
+  updated_at: string | null
+  updated_by: string | null
+  /** Simulasi GOOGLE_CLIENT_ID/SECRET di environment server (dev toolbar). */
+  env_override: boolean
+}
+
 export interface MockState {
   version: number
   session: { user_id: string } | null
@@ -268,6 +283,8 @@ export interface MockState {
   sim: { speed: number }
   /** Opsional agar data localStorage lama (STATE_VERSION sama) tetap terpakai; dibuat saat pertama dibaca. */
   storage?: DbStorage
+  /** Opsional (sama seperti `storage`): dibuat saat pertama dibaca, default belum dikonfigurasi. */
+  googleAuth?: DbGoogleAuth
 }
 
 /** Naikkan saat bentuk/isi seed berubah → data lama di localStorage di-seed ulang. v4: seed demo berbahasa Inggris. */
@@ -351,6 +368,22 @@ export function storageState(): DbStorage {
     migration: null,
   }
   return s.storage
+}
+
+export function googleAuthState(): DbGoogleAuth {
+  const s = db()
+  s.googleAuth ??= {
+    enabled: false,
+    client_id: null,
+    client_secret: null,
+    project_id: null,
+    redirect_uris: null,
+    allowed_domains: [],
+    updated_at: null,
+    updated_by: null,
+    env_override: false,
+  }
+  return s.googleAuth
 }
 
 /** Konfigurasi S3 yang "di-set lewat environment variable" saat env override aktif di dev toolbar. */

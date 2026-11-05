@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"golang.org/x/crypto/argon2"
+
+	"github.com/kalfian/qatlas/backend/internal/httpx"
 )
 
 // Argon2Params are the argon2id cost parameters. They are encoded into every
@@ -25,8 +27,19 @@ type Argon2Params struct {
 // DefaultArgon2 matches docs/13: m=64MiB, t=3, p=2.
 var DefaultArgon2 = Argon2Params{Memory: 64 * 1024, Time: 3, Threads: 2, SaltLen: 16, KeyLen: 32}
 
-// MinPasswordLength is enforced on invite accept and password change.
-const MinPasswordLength = 10
+// MinPasswordLength is enforced on invite accept, password change and
+// `qatlas user create-admin` (bytes, like the web's length hint for ASCII).
+const MinPasswordLength = 8
+
+// CheckPasswordLength returns 400 validation_failed (detail path field) when
+// password is shorter than MinPasswordLength.
+func CheckPasswordLength(field, password string) error {
+	if len(password) >= MinPasswordLength {
+		return nil
+	}
+	return httpx.BadRequest(fmt.Sprintf("Password must be at least %d characters", MinPasswordLength),
+		httpx.Field(field, fmt.Sprintf("At least %d characters", MinPasswordLength)))
+}
 
 var b64 = base64.RawStdEncoding
 

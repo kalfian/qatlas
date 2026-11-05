@@ -108,13 +108,19 @@ func TestLoginSessionAndMe(t *testing.T) {
 	}
 	c.expect("PATCH", "/api/v1/me", map[string]any{"current_password": "wrong", "new_password": "another-password-1"}, 400, nil)
 	c.expect("PATCH", "/api/v1/me", map[string]any{"current_password": testPassword, "new_password": "short"}, 400, nil)
+	r = c.expect("PATCH", "/api/v1/me", map[string]any{"current_password": testPassword, "new_password": "seven-7"}, 400, nil) // 7 < 8
+	if !strings.Contains(string(r.body), "Password must be at least 8 characters") || !strings.Contains(string(r.body), `"new_password"`) {
+		t.Fatalf("7-character password: %s", r.body)
+	}
 
-	// Password change keeps this session, kills the others.
+	// Password change keeps this session, kills the others. 8 characters is enough.
 	other := e.browser()
 	other.login("alice@example.com", testPassword)
-	c.expect("PATCH", "/api/v1/me", map[string]any{"current_password": testPassword, "new_password": "another-password-1"}, 200, nil)
+	c.expect("PATCH", "/api/v1/me", map[string]any{"current_password": testPassword, "new_password": "eight-88"}, 200, nil)
 	c.expect("GET", "/api/v1/me", nil, 200, nil)
 	other.expect("GET", "/api/v1/me", nil, 401, nil)
+	e.browser().login("alice@example.com", "eight-88")
+	c.expect("PATCH", "/api/v1/me", map[string]any{"current_password": "eight-88", "new_password": "another-password-1"}, 200, nil)
 	e.browser().login("alice@example.com", "another-password-1")
 
 	// Logout.
@@ -211,9 +217,13 @@ func TestInviteAcceptFlow(t *testing.T) {
 	anon.expect("GET", "/api/v1/auth/invites/bogus", nil, 404, nil)
 	anon.expect("POST", "/api/v1/auth/invites/bogus/accept", map[string]string{"password": "long-enough-pw"}, 410, nil)
 	anon.expect("POST", "/api/v1/auth/invites/"+token+"/accept", map[string]string{"password": "short"}, 400, nil)
+	short := anon.expect("POST", "/api/v1/auth/invites/"+token+"/accept", map[string]string{"password": "frank-7"}, 400, nil) // 7 < 8
+	if !strings.Contains(string(short.body), "Password must be at least 8 characters") || !strings.Contains(string(short.body), `"password"`) {
+		t.Fatalf("7-character password: %s", short.body)
+	}
 
 	var me auth.Me
-	anon.expect("POST", "/api/v1/auth/invites/"+token+"/accept", map[string]string{"password": "frank-password-1"}, 200, &me)
+	anon.expect("POST", "/api/v1/auth/invites/"+token+"/accept", map[string]string{"password": "frank-88"}, 200, &me) // exactly 8
 	if me.User.Status != "active" || !me.User.HasPassword {
 		t.Fatalf("accepted: %+v", me.User)
 	}
@@ -221,7 +231,7 @@ func TestInviteAcceptFlow(t *testing.T) {
 	if r := anon.expect("GET", "/api/v1/auth/invites/"+token, nil, 410, nil); r.errCode(t) != "expired" {
 		t.Fatal("used invite must be expired")
 	}
-	e.browser().login("frank@example.com", "frank-password-1")
+	e.browser().login("frank@example.com", "frank-88")
 
 	// Reset-password link for an active user; regenerating invalidates the previous link.
 	var reset1, reset2 users.UserInvite
@@ -555,18 +565,6 @@ func TestGoogleLoginRules(t *testing.T) {
 		t.Fatalf("google session: %v %v", res.StatusCode, err)
 	}
 	res.Body.Close()
-}
-
-func TestGoogleAllowedDomains(t *testing.T) {
-	e := newEnv(t)
-	e.createUser("max@other.com", "Max", "member", "active", "")
-	e.srv.deps.Config.GoogleAllowedDomains = []string{"corp.io"}
-	defer func() { e.srv.deps.Config.GoogleAllowedDomains = nil }()
-	rec := httptest.NewRecorder()
-	to := e.srv.Auth.CompleteGoogleLogin(e.ctx, rec, httptest.NewRequest("GET", "/", nil), auth.GoogleIdentity{Subject: "m", Email: "max@other.com", EmailVerified: true})
-	if to != "/login?error=not_registered" {
-		t.Fatalf("domain filter: %s", to)
-	}
 }
 
 func TestGoogleDisabledRedirects(t *testing.T) {

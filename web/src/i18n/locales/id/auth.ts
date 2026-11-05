@@ -24,6 +24,7 @@ export default {
     invalidCredentials: 'Email atau password salah.',
     notRegistered: 'Akun Google ini belum terdaftar. Hubungi admin untuk diundang.',
     network: 'Tidak bisa terhubung ke server. Periksa koneksi lalu coba lagi.',
+    domainNotAllowed: 'Login Google tidak diizinkan untuk domain email ini. Hubungi admin, atau masuk dengan email dan password.',
     googleFailed: 'Login dengan Google gagal. Coba lagi, atau masuk dengan email dan password.',
     demoHint: 'Mode demo · admin',
     autofill: 'Isi otomatis',

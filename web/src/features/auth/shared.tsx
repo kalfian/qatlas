@@ -133,7 +133,7 @@ export const PasswordInput = React.forwardRef<HTMLInputElement, Omit<React.Input
 )
 PasswordInput.displayName = 'PasswordInput'
 
-export const MIN_PASSWORD = 10
+export const MIN_PASSWORD = 8
 
 /** Hint live panjang password (dipakai invite & profil). */
 export function PasswordLengthHint({ value }: { value: string }) {

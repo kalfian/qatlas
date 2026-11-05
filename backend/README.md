@@ -67,7 +67,7 @@ fixtures — extend it rather than writing a second harness).
 | `internal/config` | env config + validation (`Load`, `RequireDatabase`, `RequireMasterKey`) |
 | `internal/db` | `Connect`, `Querier` (pool or tx), `WithTx`, `NewID` (uuid v7 — tables have no id default), `IsUniqueViolation`, migrations; `db/testutil` |
 | `internal/httpx` | `Handle` (handlers return `error`), `WriteJSON`/`OK`/`Created`/`NoContent`, `DecodeJSON`, `Optional[T]` (absent vs null in PATCH), `APIError` + constructors + `WriteError`, middleware (request id, client IP, access log, recover, CSRF), pagination (`ParsePage`, `NewPage`, `Paginate`) |
-| `internal/auth` | argon2id, sessions (`qatlas_session`, 7 d idle / 30 d max), login + rate limit, invites, Google OIDC, API tokens, `Actor` + middleware (`Authenticate`, `RequireAuth`, `RequireSession`, `RequireMethodScope`, `RequireScope`) |
+| `internal/auth` | argon2id, sessions (`qatlas_session`, 7 d idle / 30 d max), login + rate limit, invites, Google OIDC + Admin → Google sign-in settings (`/admin/settings/google-auth`), API tokens, `Actor` + middleware (`Authenticate`, `RequireAuth`, `RequireSession`, `RequireMethodScope`, `RequireScope`) |
 | `internal/authz` | `Can` (port of permissions.ts), `Scope(action)`, `ProjectAccess`, `ParseEntityKey` |
 | `internal/audit` | `Record(ctx, q, actor, action, entityType, entityID, projectID, meta)` — call inside the same tx |
 | `internal/users` | `/me`, `/me/tokens`, `/me/manual-runs`, `/admin/users` |
@@ -75,7 +75,7 @@ fixtures — extend it rather than writing a second harness).
 | `internal/mcp` | MCP server at `/mcp` (official go-sdk, Streamable HTTP, stateless, API tokens only): 19 tools calling the same services, resource `qatlas://docs/step-dsl` + test case template, prompts `write_test_case` / `triage_failed_run`, per-token limit of 3 queued/running MCP runs, `mcp.tool_call` audit entries; `stdio.go` = `qatlas mcp-stdio`. Spec: docs/07-mcp.md |
 | `internal/server` | router + graceful shutdown; `internal/web` serves `QATLAS_WEB_DIR` with SPA fallback |
 | `internal/artifacts` | `Store` (`Put`/`Open`/`Stat`/`Delete`, same keys everywhere): `LocalStore` (`QATLAS_DATA_DIR/artifacts`) and `S3Store` (minio-go; `Open` = lazy ranged GETs ≤ 8 MiB pinned to the ETag, so `http.ServeContent` Range works without downloading the whole object). `Stores` resolves a backend's store (`Writer` for new files, `For(row.storage)` for reads/deletes; `StoreSet`/`Single` = fixed sets). `Probe` (connect/bucket/write/read/delete) and `Verify`, `Save`/`SaveFile`/`SaveWith` (record `artifacts.storage`), `Purge`, `Migrate`/`Check` (per-row backend; CLI + UI job), `GET /artifacts/{id}` (RBAC + Range + CSP sandbox, 503 `storage_unavailable`); `s3test` = Garage container for tests |
-| `internal/storage` | Admin → Storage: settings in `system_settings` (S3 secret sealed with the master key, write-only), `Registry` (atomic store swap, LISTEN `qatlas_settings` + reload, S3 fallback re-check), `/admin/settings/storage` GET/PUT + `/test` + `/migrate`, `RunMigration` (River `storage_migrate`), `Backfill` (one-time `artifacts.storage` backfill for former `QATLAS_STORAGE=s3` installs) |
+| `internal/storage` | Admin → Storage: settings in `system_settings` (S3 secret sealed with the master key, write-only), `Registry` (atomic store swap, LISTEN `qatlas_settings` + reload, `OnNotify` for other payloads such as `google_auth`, S3 fallback re-check), `/admin/settings/storage` GET/PUT + `/test` + `/migrate`, `RunMigration` (River `storage_migrate`), `Backfill` (one-time `artifacts.storage` backfill for former `QATLAS_STORAGE=s3` installs) |
 | `internal/worker` | River (`NewEnqueuer`, `NewInsertOnlyClient`, River migrations), runner `Supervisor` (NDJSON), `Executor` (run_execute), startup recovery, artifact retention job |
 
 ## Worker
@@ -192,5 +192,18 @@ Rules of thumb:
   `rate_limited` (failures before the last success don't count). Set `QATLAS_TRUST_PROXY=true`
   only behind a proxy that overwrites `X-Real-IP` / `X-Forwarded-For`.
 - Disabling a user revokes tokens, deletes sessions and voids open invite links.
-- Google: lazy OIDC discovery; state/nonce/PKCE verifier in a 10-minute `qatlas_oidc` cookie;
-  rejections redirect to `/login?error=not_registered`, technical failures to `/login?error=google_failed`.
+- Passwords: at least `auth.MinPasswordLength` = 8 characters (`auth.CheckPasswordLength`:
+  invite accept, `PATCH /me`; also `user create-admin`, `seed demo --password`). No maximum.
+- Google: `/auth/google/start` redirects to Google's fixed authorization endpoint (no network
+  call); OIDC discovery happens lazily on the first callback (not cached when it fails, so it
+  is retried). State/nonce/PKCE verifier in a 10-minute `qatlas_oidc` cookie; rejections
+  redirect to `/login?error=not_registered`, technical failures to `/login?error=google_failed`.
+- Google configuration (`internal/auth/google_settings.go`, `/admin/settings/google-auth`
+  GET/PUT/DELETE, admin + session only): non-empty `GOOGLE_CLIENT_ID` → env (`source: env`,
+  writes 409 `env_override`); else `system_settings` key `google_auth` (value without the
+  secret; `client_secret` sealed in `secret_enc`); else off. PUT parses Google's client JSON
+  (`web` only; `installed` → 422 `client_json`), omitted `client_json` / `allowed_domains`
+  keep the stored ones. Start, callback, `/auth/config` and the domain rule read the active
+  config per request from a per-process cache that is dropped by the saving process and, in
+  the others, on NOTIFY `qatlas_settings` payload `google_auth` (dispatched by the storage
+  `Registry` listener via `OnNotify`; a static registry does not listen).

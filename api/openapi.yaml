@@ -109,7 +109,7 @@ paths:
               type: object
               required: [password]
               properties:
-                password: { type: string, minLength: 10 }
+                password: { type: string, minLength: 8 }
       responses:
         '200': { description: OK (sudah login), content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
         '400': { $ref: '#/components/responses/Error' }
@@ -136,7 +136,7 @@ paths:
                 name: { type: string, minLength: 1 }
                 locale: { $ref: '#/components/schemas/Locale' }
                 current_password: { type: string }
-                new_password: { type: string, minLength: 10 }
+                new_password: { type: string, minLength: 8 }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Me' } } } }
         '400': { $ref: '#/components/responses/Error' }
@@ -251,6 +251,39 @@ paths:
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/User' } } } }
         '400': { $ref: '#/components/responses/Error' }
+  /admin/settings/google-auth:
+    get:
+      tags: [admin]
+      operationId: adminGetGoogleAuthSettings
+      description: Google sign-in configuration (admin, session only). The client secret is never returned.
+      responses:
+        '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/GoogleAuthSettings' } } } }
+        '403': { $ref: '#/components/responses/Error' }
+    put:
+      tags: [admin]
+      operationId: adminUpdateGoogleAuthSettings
+      description: |
+        Saves Google sign-in settings in the database (client secret encrypted with the master key) and applies
+        them without a restart. `client_json` is the raw content of the OAuth client JSON downloaded from Google
+        Cloud Console (`{"web": {"client_id", "client_secret", "redirect_uris", ...}}`); omit it to keep the
+        stored credentials (required the first time). 422 `validation_failed` with detail path `client_json`
+        for an unreadable/incomplete file; 409 `env_override` when GOOGLE_CLIENT_ID is set in the environment.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GoogleAuthSettingsInput' }
+      responses:
+        '200': { description: Saved, content: { application/json: { schema: { $ref: '#/components/schemas/GoogleAuthSettings' } } } }
+        '409': { $ref: '#/components/responses/Error' }
+        '422': { $ref: '#/components/responses/Error' }
+    delete:
+      tags: [admin]
+      operationId: adminDeleteGoogleAuthSettings
+      description: Removes the stored Google credentials (Google sign-in becomes disabled unless configured by env).
+      responses:
+        '200': { description: Removed, content: { application/json: { schema: { $ref: '#/components/schemas/GoogleAuthSettings' } } } }
+        '409': { $ref: '#/components/responses/Error' }
   /admin/settings/storage:
     get:
       tags: [admin]
@@ -1130,6 +1163,33 @@ components:
         google_linked: { type: boolean }
         last_login_at: { type: [string, 'null'], format: date-time }
         created_at: { type: string, format: date-time }
+    GoogleAuthSettings:
+      type: object
+      required: [enabled, source, env_override, client_id, client_secret_set, project_id, redirect_uri, javascript_origin, redirect_uri_registered, allowed_domains, updated_at, updated_by, warning]
+      properties:
+        enabled: { type: boolean, description: Google sign-in is active (button shown on the login page) }
+        source: { type: string, enum: [none, database, env] }
+        env_override: { type: boolean, description: True when GOOGLE_CLIENT_ID is set in the environment (UI read-only) }
+        client_id: { type: [string, 'null'] }
+        client_secret_set: { type: boolean }
+        project_id: { type: [string, 'null'] }
+        redirect_uri: { type: string, description: 'Authorized redirect URI to register in Google Cloud Console (QATLAS_BASE_URL + /api/v1/auth/google/callback)' }
+        javascript_origin: { type: string, description: Authorized JavaScript origin (QATLAS_BASE_URL) }
+        redirect_uri_registered: { type: [boolean, 'null'], description: 'Whether the uploaded JSON lists redirect_uri; null when unknown' }
+        allowed_domains: { type: array, items: { type: string }, description: 'Optional email domain allow-list (empty = any domain; users must still be registered)' }
+        updated_at: { type: [string, 'null'], format: date-time }
+        updated_by:
+          oneOf:
+            - $ref: '#/components/schemas/UserRef'
+            - { type: 'null' }
+        warning: { type: [string, 'null'] }
+    GoogleAuthSettingsInput:
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        client_json: { type: string, writeOnly: true, description: Raw OAuth client JSON from Google Cloud Console; omit to keep the stored credentials }
+        allowed_domains: { type: array, items: { type: string } }
     StorageBackend: { type: string, enum: [local, s3] }
     StorageSettings:
       type: object

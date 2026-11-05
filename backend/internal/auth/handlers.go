@@ -28,7 +28,7 @@ type AuthConfig struct {
 }
 
 func (s *Service) handleConfig(w http.ResponseWriter, r *http.Request) error {
-	return httpx.OK(w, AuthConfig{GoogleEnabled: s.GoogleEnabled(), Mode: "real"})
+	return httpx.OK(w, AuthConfig{GoogleEnabled: s.GoogleEnabled(r.Context()), Mode: "real"})
 }
 
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) error {
