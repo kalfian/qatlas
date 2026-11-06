@@ -115,12 +115,18 @@ function caseOutput(c: RunCase): string {
 
 export function runToJUnit(run: Run): string {
   const counts = { tests: run.cases.length, failures: 0, errors: 0, skipped: 0 }
+  // Duplicates are counted per device: every case repeats once per device in a multi-device run.
+  const devices = run.options.devices ?? []
+  const multiDevice = devices.length > 1
   const keyCount = new Map<string, number>()
-  for (const c of run.cases) keyCount.set(c.test_case_key, (keyCount.get(c.test_case_key) ?? 0) + 1)
+  const dupKey = (c: RunCase) => `${c.device_index ?? 0}|${c.test_case_key}`
+  for (const c of run.cases) keyCount.set(dupKey(c), (keyCount.get(dupKey(c)) ?? 0) + 1)
 
   const cases = run.cases.map((c) => {
     let name = `${c.test_case_key} ${c.title}`.trim()
-    if ((keyCount.get(c.test_case_key) ?? 0) > 1) name += ` [#${c.position}]`
+    // docs/14: run > 1 device → "{title} [{device label}]", classname unchanged
+    if (multiDevice) name += ` [${devices[c.device_index ?? 0]?.label ?? `device ${(c.device_index ?? 0) + 1}`}]`
+    if ((keyCount.get(dupKey(c)) ?? 0) > 1) name += ` [#${c.position}]`
     const body: string[] = []
     if (c.status === 'failed' || c.status === 'blocked') {
       const p = problemOf(c, run)

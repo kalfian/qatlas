@@ -70,10 +70,10 @@ claude mcp add qatlas -e QATLAS_TOKEN=qat_xxx -- qatlas mcp-stdio --url https://
 
 | Tool | Input | Output |
 |------|-------|--------|
-| `run_test_case` | `key`, `environment?`, `options?` | `run_key`, status `queued` |
-| `run_flow` | `key`, `environment?`, `options?` | `run_key` |
+| `run_test_case` | `key`, `environment?`, `options?` (`devices`: id preset seperti `iphone-15`/`ipad-mini`/`desktop` atau `custom:390x844`, maks 6) | `run_key`, status `queued` |
+| `run_flow` | `key`, `environment?`, `options?` (sama) | `run_key` |
 | `wait_for_run` | `run_key`, `timeout_s` (maks ~120) | status terkini; jika selesai → summary. AI memanggil ulang bila belum selesai |
-| `get_run_report` | `run_key`, `include_screenshots` (`none`/`failed`/`all`) | summary + step per case (status, error, nilai aktual vs expected). Screenshot step gagal dikirim sebagai **image content** agar AI bisa melihat |
+| `get_run_report` | `run_key`, `include_screenshots` (`none`/`failed`/`all`) | summary (+ per device bila > 1 device) + step per case beserta device-nya (status, error, nilai aktual vs expected). Screenshot step gagal dikirim sebagai **image content** agar AI bisa melihat |
 | `list_runs` | `project`, filter target/status, limit | |
 | `cancel_run` | `run_key` | |
 

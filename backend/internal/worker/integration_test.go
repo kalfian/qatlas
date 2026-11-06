@@ -23,6 +23,7 @@ import (
 	"github.com/kalfian/qatlas/backend/internal/artifacts"
 	"github.com/kalfian/qatlas/backend/internal/db"
 	"github.com/kalfian/qatlas/backend/internal/db/testutil"
+	"github.com/kalfian/qatlas/backend/internal/devices"
 	"github.com/kalfian/qatlas/backend/internal/dsl"
 	"github.com/kalfian/qatlas/backend/internal/jobs"
 	"github.com/kalfian/qatlas/backend/internal/runs"
@@ -179,6 +180,7 @@ type runSpec struct {
 	flow    bool
 	shared  bool
 	stop    bool
+	devices []string // preset ids; every case runs once per device, device by device
 	options map[string]any
 	cases   []tcFixture
 }
@@ -198,6 +200,29 @@ func (f *fixture) createRun(enq jobs.Enqueuer, spec runSpec) createdRun {
 		"screenshot": "on_failure", "video": "off", "step_timeout_ms": 5000, "retries": 0}
 	for k, v := range spec.options {
 		opts[k] = v
+	}
+	type plannedCase struct {
+		tc     tcFixture
+		device int
+	}
+	planned := []plannedCase{}
+	devs := []devices.Device{devices.Default()}
+	if len(spec.devices) > 0 {
+		devs = nil
+		for _, id := range spec.devices {
+			d, ok := devices.Preset(id)
+			if !ok {
+				t.Fatalf("unknown preset %s", id)
+			}
+			devs = append(devs, d)
+		}
+		opts["devices"] = devs
+		opts["viewport"] = map[string]any{"width": devs[0].Width, "height": devs[0].Height}
+	}
+	for d := range max(len(spec.devices), 1) {
+		for _, tc := range spec.cases {
+			planned = append(planned, plannedCase{tc, d})
+		}
 	}
 	optsJSON, _ := json.Marshal(opts)
 	kind, targetID, targetKey, title := runs.KindTestCase, spec.cases[0].id, spec.cases[0].key, spec.cases[0].title
@@ -220,11 +245,12 @@ func (f *fixture) createRun(enq jobs.Enqueuer, spec runSpec) createdRun {
 		tcID = &targetID
 	}
 	out := createdRun{id: db.NewID()}
-	for i, tc := range spec.cases {
+	for i, pc := range planned {
+		tc := pc.tc
 		vars, _ := json.Marshal(tc.vars)
 		rcID := db.NewID()
 		out.cases = append(out.cases, rcID)
-		snap.Cases = append(snap.Cases, runs.CaseSnapshot{RunCaseID: rcID, Position: i + 1, TestCaseID: tc.id,
+		snap.Cases = append(snap.Cases, runs.CaseSnapshot{RunCaseID: rcID, Position: i + 1, DeviceIndex: pc.device, TestCaseID: tc.id,
 			TestCaseKey: tc.key, Revision: 1, Title: tc.title, Execution: tc.execution, Variables: vars, Steps: tc.steps})
 	}
 	snapJSON, _ := json.Marshal(snap)
@@ -249,15 +275,21 @@ func (f *fixture) createRun(enq jobs.Enqueuer, spec runSpec) createdRun {
 			spec.shared, spec.stop || !spec.flow, resume, optsJSON, snapJSON); err != nil {
 			return err
 		}
-		for i, tc := range spec.cases {
-			if _, err := tx.Exec(ctx, `INSERT INTO run_cases (id, run_id, position, test_case_id, test_case_key, test_case_revision, title, execution)
-				VALUES ($1, $2, $3, $4, $5, 1, $6, $7)`, out.cases[i], out.id, i+1, tc.id, tc.key, tc.title, tc.execution); err != nil {
+		for i, pc := range planned {
+			tc := pc.tc
+			if _, err := tx.Exec(ctx, `INSERT INTO run_cases (id, run_id, position, device_index, test_case_id, test_case_key, test_case_revision, title, execution)
+				VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8)`, out.cases[i], out.id, i+1, pc.device, tc.id, tc.key, tc.title, tc.execution); err != nil {
 				return err
 			}
 			for j, st := range tc.steps {
-				if _, err := tx.Exec(ctx, `INSERT INTO run_steps (id, run_case_id, position, step_id, action, summary, continue_on_failure, enabled)
-					VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`, db.NewID(), out.cases[i], j+1, st.ID(), st.Action(),
-					dsl.Summarize(st), st.Bool("continue_on_failure"), st.Enabled()); err != nil {
+				applies := st.AppliesTo(devs[pc.device].Category)
+				status := runs.StepPending
+				if !applies {
+					status = runs.StepSkipped
+				}
+				if _, err := tx.Exec(ctx, `INSERT INTO run_steps (id, run_case_id, position, step_id, action, summary, continue_on_failure, enabled, only_on, status)
+					VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`, db.NewID(), out.cases[i], j+1, st.ID(), st.Action(),
+					dsl.Summarize(st), st.Bool("continue_on_failure"), st.Enabled() && applies, st.OnlyOn(), status); err != nil {
 					return err
 				}
 			}
@@ -590,6 +622,27 @@ func TestWorkerEndToEnd(t *testing.T) {
 	c, st = loadCase(t, pool, r5.cases[0])
 	if c.Status != "skipped" || joinStatuses(st) != "skipped,skipped" {
 		t.Fatalf("cancelled case: %s %s", c.Status, joinStatuses(st))
+	}
+
+	// 6. Two devices, flow with stop_on_failure: a desktop-only assertion fails on Desktop,
+	//    which skips the rest of Desktop only; on iPhone 15 that step does not apply, so
+	//    every case runs (its own segment) and passes.
+	deskOnly := f.testCase("Desktop price check", "automated", nil,
+		step("goto", map[string]any{"url": "{{env.BASE_URL}}/produk/kaos-polos-hitam"}),
+		step("expect_text", map[string]any{"selector": "testid=product-price", "value": "Rp 1", "match": "equals", "timeout_ms": 1500, "only_on": []any{"desktop"}}),
+	)
+	multi := f.createRun(enq, runSpec{flow: true, stop: true, devices: []string{"desktop", "iphone-15"},
+		cases: []tcFixture{deskOnly, product}})
+	if s := waitStatus(t, pool, multi.id, 120*time.Second, "passed", "failed", "error"); s != "failed" {
+		t.Fatalf("multi-device run: %s", s)
+	}
+	var got []string
+	for _, id := range multi.cases {
+		c, st := loadCase(t, pool, id)
+		got = append(got, c.Status+"("+joinStatuses(st)+")")
+	}
+	if want := "failed(passed,failed),skipped(skipped,skipped),passed(passed,skipped),passed(passed,passed)"; strings.Join(got, ",") != want {
+		t.Fatalf("multi-device cases (desktop ×2, iphone ×2):\n%s\nwant\n%s", strings.Join(got, ","), want)
 	}
 
 	// Every job finished: no leftover artifact dirs.

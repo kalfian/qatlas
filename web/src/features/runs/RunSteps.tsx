@@ -1,13 +1,15 @@
 import { ChevronRight, Paperclip } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import type { Run, RunCase, RunStep } from '@/api/types'
+import type { Device, DeviceCategory, Run, RunCase, RunStep } from '@/api/types'
+import { DeviceChip, DeviceIcon } from '@/components/devices'
 import { KeyBadge, ManualBadge, StepSummaryText } from '@/components/misc'
 import { StatusBadge, StatusIcon } from '@/components/status'
+import { categoryWord, deviceLabel, onlyOnWords, sizeLabel } from '@/lib/devices'
 import { formatBytes, formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { FileTile, Thumb } from './media'
-import { attachmentItems, isFailStep, isImage, type MediaItem } from './runUtils'
+import { attachmentItems, casesByDevice, isFailStep, isImage, notRunOn, runDevices, type MediaItem } from './runUtils'
 
 /* ------------------------------------------------------------------ open state */
 
@@ -42,16 +44,73 @@ export interface CaseListProps {
 }
 
 export function CaseList(p: CaseListProps) {
+  const devices = runDevices(p.run)
+  if (devices.length <= 1)
+    return (
+      <div className="divide-y divide-border rounded-md border border-border bg-card">
+        {p.run.cases.map((c) => (
+          <CaseSection key={c.id} c={c} device={devices[0]} {...p} />
+        ))}
+      </div>
+    )
+  // multi-device: one block per device, cases numbered in flow order within the device
   return (
-    <div className="divide-y divide-border rounded-md border border-border bg-card">
-      {p.run.cases.map((c) => (
-        <CaseSection key={c.id} c={c} {...p} />
+    // flex columns, not grid: grid items keep min-width:auto and wide step details would stretch the page
+    <div className="flex min-w-0 flex-col gap-6">
+      {casesByDevice(p.run).map((list, di) => (
+        <DeviceGroup key={di} device={devices[di]} index={di} cases={list} {...p} />
       ))}
     </div>
   )
 }
 
-function CaseSection({ c, run, caseOpen, onToggleCase, manualSlot, ...rest }: CaseListProps & { c: RunCase }) {
+function DeviceGroup({ device, index, cases, ...p }: CaseListProps & { device: Device; index: number; cases: RunCase[] }) {
+  const { t } = useTranslation('runs')
+  const headingId = `device-group-${index}`
+  const failed = cases.filter((c) => c.status === 'failed' || c.status === 'error').length
+  return (
+    <section aria-labelledby={headingId} className="flex min-w-0 flex-col gap-2">
+      <h2 id={headingId} className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 text-sm">
+        <span className="inline-flex items-center gap-1.5 self-center font-semibold">
+          <DeviceIcon category={device.category} className="size-4 text-muted-foreground" />
+          <span className="sr-only">{t('steps.deviceGroup', { device: deviceLabel(device) })}</span>
+          <span aria-hidden>{device.label === sizeLabel(device) ? sizeLabel(device) : device.label}</span>
+        </span>
+        {device.label !== sizeLabel(device) && (
+          <span className="font-mono text-xs text-muted-foreground tabular" aria-hidden>
+            {sizeLabel(device)}
+          </span>
+        )}
+        <span className="text-xs text-muted-foreground tabular">
+          {t('steps.deviceCases', { count: cases.length })}
+          {failed > 0 && (
+            <>
+              {' · '}
+              <span className="font-medium text-status-failed">{t('list.failedCount', { count: failed })}</span>
+            </>
+          )}
+        </span>
+      </h2>
+      <div className="divide-y divide-border rounded-md border border-border bg-card">
+        {cases.map((c, k) => (
+          <CaseSection key={c.id} c={c} device={device} displayNo={k + 1} showDevice {...p} />
+        ))}
+      </div>
+    </section>
+  )
+}
+
+function CaseSection({
+  c,
+  device,
+  displayNo,
+  showDevice,
+  run,
+  caseOpen,
+  onToggleCase,
+  manualSlot,
+  ...rest
+}: CaseListProps & { c: RunCase; device: Device; displayNo?: number; showDevice?: boolean }) {
   const open = caseOpen[c.id] ?? defaultCaseOpen(run, c)
   const bodyId = `case-body-${c.id}`
   const isSlot = manualSlot?.caseId === c.id
@@ -73,10 +132,11 @@ function CaseSection({ c, run, caseOpen, onToggleCase, manualSlot, ...rest }: Ca
           className="flex min-h-10 w-full flex-wrap items-center gap-x-2.5 gap-y-1 px-3 py-2 text-left transition-colors duration-150 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset max-sm:min-h-11"
         >
           <ChevronRight className={cn('size-4 shrink-0 text-muted-foreground transition-transform duration-150 motion-reduce:transition-none', open && 'rotate-90')} aria-hidden />
-          <span className="w-4 shrink-0 text-right text-xs text-muted-foreground tabular">{c.position}</span>
+          <span className="w-4 shrink-0 text-right text-xs text-muted-foreground tabular">{displayNo ?? c.position}</span>
           <KeyBadge>{c.test_case_key}</KeyBadge>
           <span className="min-w-0 flex-1 basis-40 text-sm font-medium sm:truncate">{c.title}</span>
-          <span className="flex items-center gap-2.5 max-sm:w-full max-sm:pl-[3.25rem]">
+          <span className="flex flex-wrap items-center gap-2.5 max-sm:w-full max-sm:pl-[3.25rem]">
+            {showDevice && <DeviceChip device={device} className="max-sm:order-last" />}
             <ManualBadge execution={c.execution} />
             <span className="text-xs whitespace-nowrap text-muted-foreground tabular sm:w-20 sm:text-right">{stepLabel}</span>
             <StatusBadge status={isSlot ? 'awaiting_manual' : c.status} />
@@ -102,7 +162,7 @@ function CaseSection({ c, run, caseOpen, onToggleCase, manualSlot, ...rest }: Ca
                   c.execution === 'manual' ? (
                     <ManualStepReport key={s.id} c={c} s={s} onOpenMedia={rest.onOpenMedia} />
                   ) : (
-                    <StepRow key={s.id} s={s} {...rest} />
+                    <StepRow key={s.id} s={s} category={device.category} {...rest} />
                   ),
                 )}
               </ol>
@@ -128,7 +188,10 @@ function StepRow({
   shotIndex,
   screenshots,
   onOpenScreenshot,
-}: Omit<CaseListProps, 'run' | 'caseOpen' | 'onToggleCase' | 'manualSlot' | 'onOpenMedia'> & { s: RunStep }) {
+  category,
+}: Omit<CaseListProps, 'run' | 'caseOpen' | 'onToggleCase' | 'manualSlot' | 'onOpenMedia'> & { s: RunStep; category: DeviceCategory }) {
+  const { t } = useTranslation(['runs', 'devices'])
+  const notApplicable = notRunOn(s, category)
   const expandable = hasDetail(s)
   const open = expandable && (stepOpen[s.id] ?? defaultStepOpen(s))
   const fail = isFailStep(s.status)
@@ -144,6 +207,15 @@ function StepRow({
       <span className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:gap-3">
         <span className="shrink-0 font-mono text-xs text-muted-foreground sm:w-28 sm:truncate">{s.action}</span>
         <StepSummaryText text={s.summary} className={cn('text-sm break-words', s.status === 'skipped' && 'text-muted-foreground')} />
+        {notApplicable && (
+          <span
+            className="inline-flex h-5 shrink-0 items-center gap-1 self-start rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground"
+            title={t('steps.notRunOnTitle', { list: onlyOnWords(s.only_on) })}
+          >
+            <DeviceIcon category={category} className="size-3" />
+            {t('steps.notRunOn', { category: categoryWord(category) })}
+          </span>
+        )}
       </span>
     </>
   )
@@ -198,6 +270,7 @@ function StepDetail({ s, shot, onOpenShot }: { s: RunStep; shot?: MediaItem; onO
   const d = s.details
   const ea = d && 'expected' in d && 'actual' in d ? { expected: String(d.expected ?? ''), actual: String(d.actual ?? '') } : null
   const http = d && 'request' in d ? (d as unknown as HttpDetails) : null
+  const offenders = d && Array.isArray((d as { offenders?: unknown }).offenders) ? ((d as { offenders: unknown[] }).offenders.map(String)) : null
   const fail = isFailStep(s.status)
   const { t } = useTranslation('runs')
 
@@ -216,6 +289,7 @@ function StepDetail({ s, shot, onOpenShot }: { s: RunStep; shot?: MediaItem; onO
             <ValueBox label={t('steps.actual')} value={ea.actual} tone={fail ? 'failed' : undefined} />
           </div>
         )}
+        {offenders && offenders.length > 0 && <Offenders list={offenders} expected={ea?.expected} />}
         {s.error_message && (
           <pre className="font-mono text-xs leading-5 break-words whitespace-pre-wrap text-status-failed">{s.error_message}</pre>
         )}
@@ -238,6 +312,37 @@ function StepDetail({ s, shot, onOpenShot }: { s: RunStep; shot?: MediaItem; onO
         )}
       </div>
       {shot && <Thumb item={shot} size="lg" onOpen={onOpenShot} />}
+    </div>
+  )
+}
+
+/**
+ * `expect_no_horizontal_scroll` offenders: "tag#id.class (right edge 452px)" → selector + edge, plus how far
+ * past the viewport ("+59") when the expected text carries the viewport width ("content width ≤ 393px").
+ */
+function Offenders({ list, expected }: { list: string[]; expected?: string }) {
+  const { t } = useTranslation('runs')
+  const client = Number(/≤\s*(\d+)\s*px/.exec(expected ?? '')?.[1] ?? NaN)
+  return (
+    <div className="grid min-w-0 gap-1">
+      <span className="text-xs font-medium text-muted-foreground">{t('steps.overflow')}</span>
+      <ol className="grid min-w-0 divide-y divide-border rounded-sm border border-border bg-background">
+        {list.map((raw, i) => {
+          const m = /^(.*) \(right edge (\d+)px\)$/.exec(raw)
+          const edge = m ? Number(m[2]) : null
+          return (
+            <li key={i} className="flex min-w-0 items-baseline gap-3 px-2 py-1 font-mono text-xs">
+              <span className="min-w-0 flex-1 break-all">{m ? m[1] : raw}</span>
+              {edge != null && (
+                <span className="shrink-0 text-muted-foreground tabular">
+                  {edge}px
+                  {Number.isFinite(client) && edge > client && <span className="ml-1.5 font-medium text-status-failed">+{edge - client}</span>}
+                </span>
+              )}
+            </li>
+          )
+        })}
+      </ol>
     </div>
   )
 }

@@ -41,4 +41,15 @@ button:disabled { opacity: .5; cursor: not-allowed; }
 .muted, .empty { color: var(--muted); }
 .row { display: flex; gap: 8px; }
 .footer { text-align: center; color: var(--muted); padding: 24px; font-size: .85rem; }
+/* Main navigation: hamburger below 768 px (responsive testing demo). */
+.nav-toggle { display: none; background: #fff; color: var(--ink); border-color: #d1d5db; }
+@media (max-width: 767px) {
+  .nav-toggle { display: inline-block; }
+  .topbar nav { display: none; order: 10; width: 100%; flex-direction: column; gap: 4px; padding-top: 4px; }
+  .topbar nav.open { display: flex; }
+  .topbar nav a { padding: 6px 0; }
+}
+/* Size chart: min-width without a scroll wrapper = the intentional overflow bug on phones. */
+.size-chart table { min-width: 560px; border-collapse: collapse; background: #fff; }
+.size-chart th, .size-chart td { border: 1px solid var(--line); padding: 6px 10px; text-align: left; white-space: nowrap; }
 @media (max-width: 720px) { .columns { grid-template-columns: 1fr; } .cart-line { grid-template-columns: 1fr 1fr; } }

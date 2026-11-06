@@ -263,6 +263,18 @@ export const ACTIONS: ActionDef[] = [
     [sel(), param('op', 'operator', 'select', { options: [{ value: 'eq', label: '=' }, { value: 'gte', label: '≥' }, { value: 'lte', label: '≤' }] }),
       param('value', 'count', 'number', { required: true })],
     sum('expect_count', (s) => ({ selector: s.selector ?? '', op: countOp(s.op), value: s.value ?? '' }))),
+  action('set_viewport', 'navigation', 'ui',
+    [param('width', 'width', 'number', { required: true, placeholder: '768', helpKey: 'viewportWidth' }), param('height', 'height', 'number', { required: true, placeholder: '1024' })],
+    sum('set_viewport', (s) => ({ width: s.width ?? '', height: s.height ?? '' }))),
+  action('expect_no_horizontal_scroll', 'assert_ui', 'ui',
+    [
+      param('selector', 'container', 'selector', { placeholderKey: 'container', helpKey: 'container' }),
+      param('tolerance_px', 'tolerancePx', 'number', { placeholder: '0', helpKey: 'tolerancePx' }),
+    ],
+    (s, t) =>
+      s.selector
+        ? t('steps:actions.expect_no_horizontal_scroll.summaryIn', { selector: s.selector })
+        : t('steps:actions.expect_no_horizontal_scroll.summary')),
   // HTTP
   action('http_request', 'http', 'http',
     [
@@ -359,6 +371,8 @@ export function validateSteps(steps: Step[], execution: Execution = 'automated',
     if (!step.id) errors.push({ path: `${p}.id`, message: t('steps:validation.idRequired') })
     else if (seen.has(step.id)) errors.push({ path: `${p}.id`, message: t('steps:validation.idDuplicate', { id: step.id }) })
     seen.add(step.id)
+    const onlyOn = onlyOnIssue(step, t)
+    if (onlyOn) errors.push({ path: `${p}.only_on`, message: onlyOn })
 
     const def = ACTION_MAP[step.action]
     if (!def) {
@@ -403,6 +417,7 @@ export function validateSteps(steps: Step[], execution: Execution = 'automated',
       warnings.push({ path: `${p}.selector`, message: t('steps:validation.xpath') })
     }
     if (step.action === 'http_request') validateHttpExtras(step, p, t, errors)
+    validateResponsive(step, p, t, errors)
     const seenFn = new Set<string>()
     for (const { field, issue } of fnIssues(step)) {
       const fe = { path: `${p}.${field}`, message: t(`steps:validation.${issue.key}`, issue.values) }
@@ -440,6 +455,41 @@ function validateHttpExtras(step: Step, p: string, t: Translate, errors: FieldEr
       if (key) errors.push({ path: `${p}.save_regex`, message: t(`steps:validation.${key}`, { name }) })
     }
   }
+}
+
+/** Whole number (or numeric string, like dsl.go intIn) in [min, max]. */
+const intIn = (v: unknown, min: number, max: number) => {
+  const n = typeof v === 'string' && v.trim() !== '' ? Number(v) : v
+  return typeof n === 'number' && Number.isInteger(n) && n >= min && n <= max
+}
+
+/** Device categories of the common `only_on` field (docs/14). */
+export const ONLY_ON_VALUES = ['mobile', 'tablet', 'desktop'] as const
+
+/** set_viewport width/height, expect_no_horizontal_scroll tolerance_px, common only_on (docs/14-responsive-testing.md). */
+function validateResponsive(step: Step, p: string, t: Translate, errors: FieldError[]) {
+  if (step.action === 'set_viewport') {
+    if (present(step.width) && !intIn(step.width, 320, 3840)) errors.push({ path: `${p}.width`, message: t('steps:validation.viewportWidth') })
+    if (present(step.height) && !intIn(step.height, 320, 2160)) errors.push({ path: `${p}.height`, message: t('steps:validation.viewportHeight') })
+  }
+  if (step.action === 'expect_no_horizontal_scroll' && present(step.tolerance_px) && !intIn(step.tolerance_px, 0, 50)) {
+    errors.push({ path: `${p}.tolerance_px`, message: t('steps:validation.tolerance') })
+  }
+}
+
+/** Common `only_on`: absent/null = every device; else a non-empty list of distinct categories (same checks/messages as dsl.go). */
+function onlyOnIssue(step: Step, t: Translate): string | null {
+  const v = (step as { only_on?: unknown }).only_on
+  if (v === undefined || v === null) return null
+  if (!Array.isArray(v)) return t('steps:validation.onlyOnNotList')
+  if (v.length === 0) return t('steps:validation.onlyOnEmpty')
+  const seen = new Set<string>()
+  for (const c of v) {
+    if (typeof c !== 'string' || !(ONLY_ON_VALUES as readonly string[]).includes(c)) return t('steps:validation.onlyOnUnknown', { value: String(c) })
+    if (seen.has(c)) return t('steps:validation.onlyOnDuplicate', { value: c })
+    seen.add(c)
+  }
+  return null
 }
 
 /** Index error per step berdasarkan path `steps[i].field`. */

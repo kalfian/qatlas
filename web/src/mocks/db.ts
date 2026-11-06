@@ -33,6 +33,7 @@ import type {
   UserRef,
   UserStatus,
 } from '@/api/types'
+import { devicesOf } from '@/lib/device-catalog'
 
 /* ------------------------------------------------------------------ tabel mock */
 
@@ -287,8 +288,8 @@ export interface MockState {
   googleAuth?: DbGoogleAuth
 }
 
-/** Naikkan saat bentuk/isi seed berubah → data lama di localStorage di-seed ulang. v4: seed demo berbahasa Inggris. v6: contoh API testing (SHOP-T23…T27, SHOP-F4, PAY baru). */
-export const STATE_VERSION = 6
+/** Naikkan saat bentuk/isi seed berubah → data lama di localStorage di-seed ulang. v4: seed demo berbahasa Inggris. v6: contoh API testing (SHOP-T23…T27, SHOP-F4, PAY baru). v7: devices / device_index / only_on (docs/14). */
+export const STATE_VERSION = 8
 const STORAGE_KEY = 'qatlas.mock.db'
 
 /* ------------------------------------------------------------------ persistence */
@@ -464,10 +465,16 @@ export function toProject(p: DbProject, user: DbUser): Project {
     description: p.description,
     archived_at: p.archived_at,
     my_role: roleIn(user, p.id) ?? 'viewer',
-    default_run_options: p.default_run_options,
+    default_run_options: withDevices(p.default_run_options),
     artifact_retention_days: p.artifact_retention_days,
     created_at: p.created_at,
   }
+}
+
+/** Options as the API returns them: `devices` always present, `viewport` = size of devices[0]. */
+export function withDevices(o: RunOptions): RunOptions {
+  const devices = devicesOf(o)
+  return { ...o, devices, viewport: { width: devices[0].width, height: devices[0].height } }
 }
 
 export function projectRuns(projectId: string): DbRun[] {
@@ -684,7 +691,7 @@ export function toRunSummary(r: DbRun): RunSummary {
 export function toRun(r: DbRun): Run {
   return {
     ...toRunSummary(r),
-    options: r.options,
+    options: withDevices(r.options),
     shared_session: r.shared_session,
     stop_on_failure: r.stop_on_failure,
     error_message: r.error_message,
@@ -693,6 +700,7 @@ export function toRun(r: DbRun): Run {
     cases: r.cases.map((c) => ({
       id: c.id,
       position: c.position,
+      device_index: c.device_index ?? 0,
       test_case_id: c.test_case_id,
       test_case_key: c.test_case_key,
       test_case_revision: c.test_case_revision,
@@ -713,6 +721,7 @@ export function toRun(r: DbRun): Run {
         summary: s.summary,
         description: s.description,
         expected: s.expected,
+        only_on: s.only_on ?? null,
         status: s.status,
         duration_ms: s.duration_ms,
         error_message: s.error_message,

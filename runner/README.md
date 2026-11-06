@@ -30,6 +30,12 @@ Env: `QATLAS_RUNNER_LOG_LEVEL=debug|info|warn|error` (stderr), `PLAYWRIGHT_BROWS
   HTTP-only cases use a standalone `request.newContext()` and never launch a browser.
 - The context is created when the case's **first** step runs (even if that step is HTTP), so HTTP
   steps in a mixed case go through `context.request` and share cookies with the page.
+- **Device emulation** (docs/14): with `options.device` the context gets `viewport`,
+  `deviceScaleFactor`, `hasTouch`, `isMobile` (never on Firefox, which Playwright does not support
+  there) and the `userAgent` of `devices[device.playwright]` from the installed Playwright (no
+  descriptor → no UA override, no error); the video size is the viewport (`src/session.ts`
+  `contextOptions`). Without `device` the context is exactly the plain `viewport` one. Pages without
+  `<meta name="viewport" content="width=device-width">` lay out at 980 px under `isMobile` (Chromium).
 - Shutdown: **stdin EOF** → stop accepting, let in-flight runs finish, close browsers, exit 0.
   **SIGTERM/SIGINT** or a broken stdout (EPIPE) → cancel in-flight runs (normal cancel events),
   close browsers, exit 0 (second signal forces exit). `uncaughtException` → `runner.error`, exit 1.
@@ -58,7 +64,8 @@ Env: `QATLAS_RUNNER_LOG_LEVEL=debug|info|warn|error` (stderr), `PLAYWRIGHT_BROWS
   `{request:{method,url}, response:{status,time_ms,body}}` with `body` = parsed JSON when the body
   is JSON and ≤ 8 KB, else the text truncated to 8 KB (+ `…[truncated]`); on a network failure
   `response` is `null`. A polling `http_request` (`poll_timeout_ms > 0`) adds `attempts` (number of
-  requests sent) and reports the **last** response. All other actions → `null`.
+  requests sent) and reports the **last** response. A failed `expect_no_horizontal_scroll` adds
+  `offenders` (≤ 5 strings). All other actions → `null`.
 - Paths in `screenshot` / `video` are absolute, under `artifact_dir/<case_id>/`:
   `step-NN-<step_id>[-<name>][-attemptN].png`, `video.webm`.
 - Secret values are masked (`••••`) in every emitted event as defence in depth (values ≥ 3 chars);
@@ -146,6 +153,18 @@ Probes never block: `allTextContents()`, `evaluateAll()`, `count()`, `page.url()
   `Polling GET <url> timed out after N ms (K attempts); still missing: …`. Each request's own timeout
   is `min(step timeout, time left)` (≥ 1 s).
 - Interactions (`click`, `fill`, …) use Playwright auto-wait with the step timeout and are strict.
+- `set_viewport` `width` 320–3840 / `height` 320–2160 (integers; numeric strings accepted) →
+  `page.setViewportSize`; size only (isMobile/UA/touch are fixed per context). `details` null.
+- `expect_no_horizontal_scroll` (`src/overflow.ts`): polls until `scrollWidth ≤ clientWidth +
+  tolerance_px` (0–50, default 0) of the container — `selector` (**strict**, one element) or
+  `document.scrollingElement`. `details {expected: "content width ≤ {clientWidth}px" (+ " (+Npx
+  tolerance)" when N > 0), actual: "content width {scrollWidth}px"}`; on failure also `offenders`:
+  up to 5 visible descendants whose right edge passes the visible right edge (+ tolerance), widest
+  first, `"tag#id.c1.c2.c3… (right edge Npx)"` (px from the container's left edge). Elements with
+  `visibility:hidden` or clipped by an inner `overflow-x` container are not offenders. Chromium's
+  `isMobile` shrink-to-fit reports an overflowing document's `scrollWidth` about 1 px wider.
+- `only_on` is resolved by the server (non-matching steps arrive `enabled:false`); the runner
+  ignores the key.
 
 ## Layout
 
@@ -153,7 +172,8 @@ Probes never block: `allTextContents()`, `evaluateAll()`, `count()`, `page.url()
 src/main.ts         stdin/stdout loop, run registry, shutdown
 src/run.ts          RunExecution: validation, cases/segments, retries, stop_on_failure, video, cancel
 src/actions.ts      every catalog action + post-step screenshots
-src/session.ts      BrowserContext/Page or standalone APIRequestContext of a case/segment
+src/session.ts      BrowserContext/Page (device emulation) or standalone APIRequestContext of a case/segment
+src/overflow.ts     in-page scan for expect_no_horizontal_scroll (widths + offenders)
 src/browsers.ts     shared Browser pool
 src/selectors.ts    DSL selector → locator (+ description)
 src/interpolate.ts  {{…}} interpolation and fn.* (fn.totp → src/totp.ts)
@@ -161,7 +181,8 @@ src/decode.ts       regex_decode (quoted-printable, HTML entities) for http_requ
 src/poll.ts, match.ts, jsonpath.ts, errors.ts, emitter.ts (NDJSON + masking), log.ts (stderr)
 scripts/            smoke.mjs, shop-cases.mjs (seed SHOP cases in wire format)
 test/               node:test integration tests (spawn dist/main.js + demo-target / a local HTTP
-                    server for polling + save_regex) and unit.test.mjs (TOTP RFC 6238 vectors, decoding)
+                    server for polling + save_regex; responsive.test.mjs: devices, set_viewport, overflow)
+                    and unit.test.mjs (TOTP RFC 6238 vectors, decoding)
 ```
 
 ## Known limitations

@@ -36,7 +36,7 @@ diterjemahkan, mis. **Add step** = **Tambah step**, **Save** = **Simpan**, **My 
 6. [Menulis test case](#6-menulis-test-case) (termasuk [API testing](#api-testing))
 7. [Test case manual](#7-test-case-manual)
 8. [Flow](#8-flow)
-9. [Menjalankan test](#9-menjalankan-test)
+9. [Menjalankan test](#9-menjalankan-test) (termasuk [Testing responsive](#testing-responsive))
 10. [Membaca report](#10-membaca-report)
 11. [Eksekusi manual](#11-eksekusi-manual)
 12. [Riwayat run dan dashboard](#12-riwayat-run-dan-dashboard)
@@ -541,7 +541,7 @@ dan pilihan terakhirmu.
 |---|---|
 | Environment | Variable dan secret yang dipakai (default: environment berbintang) |
 | Browser | Chromium, Firefox, WebKit (hanya browser yang terpasang di worker yang bisa jalan; instalasi default hanya Chromium) |
-| Viewport | Desktop 1280×720, laptop, mobile, atau ukuran custom |
+| Devices | Satu atau beberapa device (maks 6): desktop, laptop, tablet, HP, atau ukuran custom. Lihat [Testing responsive](#testing-responsive) |
 | Screenshot | Off, On failure, Every step |
 | Video | Off, On failure (tetap merekam, lalu videonya dibuang kalau case lolos), Always |
 | Retries per test case | 0, 1, 2 |
@@ -557,6 +557,56 @@ setiap step begitu selesai, dengan waktu berjalan.
 **Cancel** menghentikan step yang sedang jalan dan menandai sisanya Skipped; hasil yang sudah ada
 tetap disimpan. **Re-run** mengulang run dengan opsi yang sama; menunya juga punya **Re-run
 failed** (hanya test case yang gagal di flow) dan **Change options & run…**.
+
+### Testing responsive
+
+Cek apakah halaman tetap benar di HP, tablet, dan desktop dalam satu run.
+
+**1. Pilih device.** Di dialog Run, **Devices** membuka daftar yang dikelompokkan Desktop, Tablet,
+dan Mobile. Centang maksimal enam, atau tambah **ukuran custom** (lebar × tinggi). HP dan tablet
+diemulasi sungguhan, bukan sekadar jendela yang lebih kecil: touch, pixel ratio, flag mobile, dan
+user agent device, sama dengan daftar device Playwright. Simpan set favorit sebagai default
+project di **Settings → Run defaults**.
+
+![Pemilih device di dialog Run](img/run-devices-picker.png)
+
+| Grup | Device |
+|---|---|
+| Desktop | Desktop 1280×720, Laptop 1440×900, Desktop Full HD 1920×1080 |
+| Tablet | iPad Pro 11 834×1194, iPad Mini 768×1024, Galaxy Tab S4 712×1138 |
+| Mobile | iPhone 15 393×659, iPhone SE 320×568, Pixel 7 412×839, Galaxy S9+ 320×658 |
+
+Setiap test case dijalankan sekali per device, device demi device; screenshot dan video disimpan
+per device. Dengan **stop on failure**, kegagalan hanya menghentikan sisa case di device *itu*;
+device berikutnya tetap jalan. Case manual diulang per device dan tester melihat device yang harus
+dipakai ("Test this on iPhone 15 · 393×659"). Firefox tidak bisa mengemulasi flag mobile; ukuran,
+touch, dan user agent tetap berlaku.
+
+**2. Baca matrix.** Run dengan beberapa device dibuka di tab **Matrix**: satu baris per test case,
+satu kolom per device. Klik sel untuk membuka case itu di device tersebut pada tab **Steps**.
+
+![Matrix run: test case × device](img/run-matrix.png)
+
+**3. Tulis step responsive.** Di editor step:
+
+- **Only on** (di *Advanced* pada step apa pun): jalankan step hanya di mobile, tablet, dan/atau
+  desktop. Di device lain step tampil *Not run on desktop* dan tidak dihitung gagal. Contoh umum:
+  klik menu hamburger hanya di HP.
+- **`expect_no_horizontal_scroll`**: gagal bila halaman (atau container `selector`) lebih lebar
+  dari layar, dan menyebut elemen yang menonjol beserta tepi kanannya, dari yang terlebar.
+  `tolerance_px` memberi toleransi beberapa piksel.
+- **`set_viewport`**: ubah ukuran jendela di tengah test (mis. 320×640 lalu 1280×800). Flag mobile,
+  touch, dan user agent device tetap.
+
+![Cek overflow yang gagal beserta elemen penyebabnya](img/run-overflow-offenders.png)
+
+**Demo:** flow **SHOP-F5 Responsive smoke** (SHOP-T28…T30) dijalankan di Desktop, iPad Mini, dan
+iPhone 15. Halaman produk sengaja gagal di HP: tabel ukuran di toko demo terlalu lebar untuk layar
+393 px.
+
+MCP dan API menerima device yang sama: `options.devices` berisi id preset (`desktop`, `ipad-mini`,
+`iphone-15`, …) atau `{ "id": "custom", "width": 390, "height": 844 }` (MCP: `"custom:390x844"`).
+Detail: [docs/14](../14-responsive-testing.md).
 
 ## 10. Membaca report
 

@@ -5,11 +5,29 @@ export type ScreenshotMode = 'off' | 'on_failure' | 'every_step'
 export type VideoMode = 'off' | 'on_failure' | 'always'
 export type StepStatus = 'passed' | 'failed' | 'error' | 'skipped'
 export type RunStatus = 'passed' | 'failed' | 'error' | 'cancelled'
+export type DeviceCategory = 'mobile' | 'tablet' | 'desktop'
+
+/** Emulated device of a run segment (docs/14; catalog: api/devices.json). */
+export interface RunDevice {
+  id: string
+  label: string
+  category: DeviceCategory
+  width: number
+  height: number
+  device_scale_factor: number
+  is_mobile: boolean
+  has_touch: boolean
+  /** Playwright descriptor name (devices[...]) supplying the user agent; null → no UA override. */
+  playwright: string | null
+}
 
 export interface RunOptions {
   browser: BrowserName
   headless: boolean
+  /** Always the device size when `device` is set (the worker sends both). */
   viewport: { width: number; height: number }
+  /** Absent → plain desktop context of `viewport` size, exactly as before devices existed. */
+  device?: RunDevice
   screenshot: ScreenshotMode
   video: VideoMode
   step_timeout_ms: number
@@ -107,6 +125,8 @@ export const ACTION_KIND: Record<string, 'ui' | 'http' | 'common' | 'manual'> = 
   expect_url: 'ui',
   expect_title: 'ui',
   expect_count: 'ui',
+  set_viewport: 'ui',
+  expect_no_horizontal_scroll: 'ui',
   http_request: 'http',
   expect_status: 'http',
   expect_json: 'http',

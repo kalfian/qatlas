@@ -408,7 +408,7 @@ paths:
               properties:
                 name: { type: string }
                 description: { type: string }
-                default_run_options: { $ref: '#/components/schemas/RunOptions' }
+                default_run_options: { $ref: '#/components/schemas/RunOptionsInput' }
                 artifact_retention_days: { type: integer, minimum: 1, maximum: 365 }
       responses:
         '200': { description: OK, content: { application/json: { schema: { $ref: '#/components/schemas/Project' } } } }
@@ -1463,6 +1463,8 @@ components:
         - expect_url
         - expect_title
         - expect_count
+        - set_viewport
+        - expect_no_horizontal_scroll
         - http_request
         - expect_status
         - expect_json
@@ -1486,6 +1488,15 @@ components:
         continue_on_failure: { type: boolean }
         enabled: { type: boolean }
         screenshot: { type: boolean }
+        only_on:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { $ref: '#/components/schemas/DeviceCategory' }
+          description: Run this step only on devices of these categories (docs/14-responsive-testing.md); absent = every device. Elsewhere the step is skipped.
+        width: { type: integer, minimum: 320, maximum: 3840, description: set_viewport }
+        height: { type: integer, minimum: 320, maximum: 2160, description: set_viewport }
+        tolerance_px: { type: integer, minimum: 0, maximum: 50, description: 'expect_no_horizontal_scroll: allowed overflow in px (default 0)' }
         selector: { type: string }
         url: { type: string }
         value: { type: [string, number, boolean] }
@@ -1701,9 +1712,33 @@ components:
     RunKind: { type: string, enum: [test_case, flow] }
     RunTrigger: { type: string, enum: [manual, mcp, api, schedule] }
     StepStatus: { type: string, enum: [pending, running, passed, failed, blocked, skipped, error] }
-    RunOptions:
+    DeviceCategory: { type: string, enum: [mobile, tablet, desktop] }
+    Device:
+      description: A resolved device (preset from api/devices.json or custom), docs/14-responsive-testing.md.
       type: object
-      required: [browser, headless, viewport, screenshot, video, step_timeout_ms, retries]
+      required: [id, label, category, width, height, device_scale_factor, is_mobile, has_touch]
+      properties:
+        id: { type: string, description: 'Preset id (e.g. iphone-15) or "custom"', example: iphone-15 }
+        label: { type: string, example: iPhone 15 }
+        category: { $ref: '#/components/schemas/DeviceCategory' }
+        width: { type: integer }
+        height: { type: integer }
+        device_scale_factor: { type: number }
+        is_mobile: { type: boolean }
+        has_touch: { type: boolean }
+    DeviceInput:
+      description: 'A preset `{ "id": "iphone-15" }` or a custom size `{ "id": "custom", "width": 390, "height": 844 }` (category defaults from the width: < 768 mobile, < 1024 tablet, else desktop; label defaults to "{w}×{h}").'
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        width: { type: integer, minimum: 320, maximum: 3840 }
+        height: { type: integer, minimum: 320, maximum: 2160 }
+        category: { $ref: '#/components/schemas/DeviceCategory' }
+        label: { type: string, maxLength: 40 }
+    RunOptionsInput:
+      description: Partial run options; missing keys come from the project defaults. `devices` wins over `viewport` (a lone `viewport` becomes one device).
+      type: object
       properties:
         browser: { type: string, enum: [chromium, firefox, webkit] }
         headless: { type: boolean }
@@ -1713,6 +1748,34 @@ components:
           properties:
             width: { type: integer }
             height: { type: integer }
+        devices:
+          type: array
+          minItems: 1
+          maxItems: 6
+          items: { $ref: '#/components/schemas/DeviceInput' }
+        screenshot: { type: string, enum: [off, on_failure, every_step] }
+        video: { type: string, enum: [off, on_failure, always] }
+        step_timeout_ms: { type: integer }
+        retries: { type: integer, minimum: 0, maximum: 2 }
+    RunOptions:
+      type: object
+      required: [browser, headless, viewport, devices, screenshot, video, step_timeout_ms, retries]
+      properties:
+        browser: { type: string, enum: [chromium, firefox, webkit] }
+        headless: { type: boolean }
+        viewport:
+          description: Size of devices[0] (kept for older clients).
+          type: object
+          required: [width, height]
+          properties:
+            width: { type: integer }
+            height: { type: integer }
+        devices:
+          description: Devices the run executes every case on, in report column order (1–6).
+          type: array
+          minItems: 1
+          maxItems: 6
+          items: { $ref: '#/components/schemas/Device' }
         screenshot: { type: string, enum: [off, on_failure, every_step] }
         video: { type: string, enum: [off, on_failure, always] }
         step_timeout_ms: { type: integer }
@@ -1723,22 +1786,7 @@ components:
         test_case: { type: string, description: Key test case, example: SHOP-T12 }
         flow: { type: string, description: Key flow, example: SHOP-F3 }
         environment_id: { type: [string, 'null'] }
-        options:
-          description: Opsi parsial; sisanya dari default project.
-          type: object
-          properties:
-            browser: { type: string, enum: [chromium, firefox, webkit] }
-            headless: { type: boolean }
-            viewport:
-              type: object
-              required: [width, height]
-              properties:
-                width: { type: integer }
-                height: { type: integer }
-            screenshot: { type: string, enum: [off, on_failure, every_step] }
-            video: { type: string, enum: [off, on_failure, always] }
-            step_timeout_ms: { type: integer }
-            retries: { type: integer, minimum: 0, maximum: 2 }
+        options: { $ref: '#/components/schemas/RunOptionsInput' }
         assignee_id: { type: [string, 'null'], description: Tester untuk bagian manual (default pemicu) }
     Counts:
       type: object
@@ -1806,10 +1854,11 @@ components:
             cases: { type: array, items: { $ref: '#/components/schemas/RunCase' } }
     RunCase:
       type: object
-      required: [id, position, test_case_id, test_case_key, test_case_revision, title, execution, status, executed_by, started_at, finished_at, duration_ms, video, attachments, steps]
+      required: [id, position, device_index, test_case_id, test_case_key, test_case_revision, title, execution, status, executed_by, started_at, finished_at, duration_ms, video, attachments, steps]
       properties:
         id: { type: string }
-        position: { type: integer }
+        position: { type: integer, description: Unique in the run; device by device (device 0 = 1..N, device 1 = N+1..2N, …) }
+        device_index: { type: integer, minimum: 0, description: Index into run.options.devices }
         test_case_id: { type: string }
         test_case_key: { type: string }
         test_case_revision: { type: integer }
@@ -1831,7 +1880,7 @@ components:
         steps: { type: array, items: { $ref: '#/components/schemas/RunStep' } }
     RunStep:
       type: object
-      required: [id, position, step_id, action, summary, description, expected, status, duration_ms, error_message, actual_result, screenshot, details]
+      required: [id, position, step_id, action, summary, description, expected, only_on, status, duration_ms, error_message, actual_result, screenshot, details]
       properties:
         id: { type: string }
         position: { type: integer }
@@ -1840,6 +1889,10 @@ components:
         summary: { type: string, description: Ringkasan human-readable (variable ter-interpolasi, secret dimask) }
         description: { type: string }
         expected: { type: string }
+        only_on:
+          description: Snapshot of the step's only_on; a step not meant for this case's device category is stored disabled (status skipped).
+          type: [array, 'null']
+          items: { $ref: '#/components/schemas/DeviceCategory' }
         status: { $ref: '#/components/schemas/StepStatus' }
         duration_ms: { type: [integer, 'null'] }
         error_message: { type: [string, 'null'] }

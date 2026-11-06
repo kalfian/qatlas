@@ -1,3 +1,4 @@
+import { presetDevice } from '@/lib/device-catalog'
 import { DEFAULT_RUN_OPTIONS, buildSeed, historySpecs } from './seed'
 import { registerSeed, setState, type MockState } from './db'
 import { advance, completeManualCase, createRun, fastForward, rngFor } from './simulator'
@@ -20,7 +21,7 @@ export function populateHistory(state: MockState) {
       kind: spec.kind,
       targetId: target.id,
       env,
-      options: { ...DEFAULT_RUN_OPTIONS, ...spec.options },
+      options: { ...DEFAULT_RUN_OPTIONS, ...spec.options, ...(spec.devices ? { devices: spec.devices.map((id) => presetDevice(id)!) } : {}) },
       userId: spec.user,
       trigger: spec.trigger ?? 'manual',
       assigneeId: spec.assignee,
@@ -28,6 +29,11 @@ export function populateHistory(state: MockState) {
       queuedAt: new Date(queuedMs).toISOString(),
     })
     state.runs.push(run)
+    if (spec.failStep) {
+      const f = spec.failStep
+      const step = run.cases.find((c) => c.device_index === f.device && c.test_case_key === f.caseKey)?.steps[f.stepIndex]
+      if (step) step.sim = { outcome: 'failed', error: f.error, duration_ms: 10_000 }
+    }
     let t = queuedMs + 1500
     if (spec.infraError) {
       advance(run, t)

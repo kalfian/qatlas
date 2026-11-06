@@ -16,6 +16,7 @@ import (
 	"github.com/kalfian/qatlas/backend/internal/auth"
 	"github.com/kalfian/qatlas/backend/internal/authz"
 	"github.com/kalfian/qatlas/backend/internal/db"
+	"github.com/kalfian/qatlas/backend/internal/devices"
 	"github.com/kalfian/qatlas/backend/internal/dsl"
 	"github.com/kalfian/qatlas/backend/internal/events"
 	"github.com/kalfian/qatlas/backend/internal/httpx"
@@ -58,6 +59,7 @@ type EnvSnapshot struct {
 type CaseSnapshot struct {
 	RunCaseID         uuid.UUID       `json:"run_case_id"`
 	Position          int             `json:"position"`
+	DeviceIndex       int             `json:"device_index"` // index into Snapshot.Options devices
 	TestCaseID        uuid.UUID       `json:"test_case_id"`
 	TestCaseKey       string          `json:"test_case_key"`
 	Revision          int             `json:"revision"`
@@ -293,24 +295,94 @@ var DefaultRunOptions = map[string]any{
 }
 
 // mergeOptions = {...defaults, ...projectDefaults, ...partial} (shallow, like
-// the mock) followed by validation. Unknown keys are kept.
+// the mock) followed by validation. Unknown keys are kept. Devices
+// (docs/14): partial.devices (DeviceInput list, resolved and validated) →
+// else a lone partial.viewport as one device → else the project's devices
+// (or its legacy viewport). The result always has "devices" and "viewport"
+// = the size of devices[0].
 func mergeOptions(projectDefaults, partial json.RawMessage) (json.RawMessage, error) {
 	m := maps.Clone(DefaultRunOptions)
 	var pd map[string]any
 	if len(projectDefaults) > 0 && json.Unmarshal(projectDefaults, &pd) == nil {
 		maps.Copy(m, pd)
 	}
+	var po map[string]any
 	if p := strings.TrimSpace(string(partial)); p != "" && p != "null" {
-		var po map[string]any
 		if err := json.Unmarshal(partial, &po); err != nil {
 			return nil, httpx.Unprocessable("Invalid run options", httpx.Field("options", "Must be an object"))
 		}
 		maps.Copy(m, po)
 	}
-	if errs := validateOptions(m); len(errs) > 0 {
+	errs := validateOptions(m)
+	var devs []devices.Device
+	switch {
+	case po["devices"] != nil:
+		list, derrs := devices.ResolveJSON(po["devices"], "options.devices")
+		errs = append(errs, derrs...)
+		devs = list
+	case po["viewport"] != nil:
+		if w, h, ok := viewportOf(m); ok {
+			devs = []devices.Device{devices.FromViewport(w, h)}
+		}
+	default:
+		devs = devices.FromOptions(projectDefaults)
+	}
+	if len(errs) > 0 {
 		return nil, httpx.Unprocessable("Invalid run options", errs...)
 	}
+	setDevices(m, devs)
 	return json.Marshal(m)
+}
+
+// setDevices stores devs and viewport = the size of devs[0].
+func setDevices(m map[string]any, devs []devices.Device) {
+	m["devices"] = devs
+	m["viewport"] = map[string]any{"width": devs[0].Width, "height": devs[0].Height}
+}
+
+// viewportOf reads options.viewport as two positive integers.
+func viewportOf(m map[string]any) (int, int, bool) {
+	vp, ok := m["viewport"].(map[string]any)
+	if !ok {
+		return 0, 0, false
+	}
+	w, wok := vp["width"].(float64)
+	h, hok := vp["height"].(float64)
+	if !wok || !hok || w < 1 || h < 1 {
+		return 0, 0, false
+	}
+	return int(w), int(h), true
+}
+
+// NormalizeOptions returns stored run options that always carry "devices"
+// (runs created before docs/14 get one device from their viewport) with
+// viewport = the size of devices[0], plus the devices. Options that are
+// already complete are returned unchanged.
+func NormalizeOptions(raw json.RawMessage) (json.RawMessage, []devices.Device) {
+	var probe struct {
+		Devices  json.RawMessage `json:"devices"`
+		Viewport *struct {
+			Width  int `json:"width"`
+			Height int `json:"height"`
+		} `json:"viewport"`
+	}
+	if json.Unmarshal(raw, &probe) == nil {
+		if list, ok := devices.DecodeStored(probe.Devices); ok && probe.Viewport != nil &&
+			probe.Viewport.Width == list[0].Width && probe.Viewport.Height == list[0].Height {
+			return raw, list
+		}
+	}
+	devs := devices.FromOptions(raw)
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil || m == nil {
+		m = map[string]any{}
+	}
+	setDevices(m, devs)
+	out, err := json.Marshal(m)
+	if err != nil {
+		return raw, devs
+	}
+	return out, devs
 }
 
 func validateOptions(m map[string]any) []httpx.FieldError {
@@ -393,8 +465,9 @@ type runSpec struct {
 }
 
 type plannedCase struct {
-	snap  CaseSnapshot
-	steps []dsl.Step
+	snap     CaseSnapshot
+	steps    []dsl.Step
+	category string // device category: steps whose only_on excludes it are stored disabled
 }
 
 func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, actor *auth.Actor, sp runSpec) (uuid.UUID, error) {
@@ -403,7 +476,10 @@ func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, actor *auth.Actor, s
 		envVars = sp.env.Variables
 	}
 
-	// Plan cases.
+	// Plan cases: every enabled case once per device, device by device
+	// (device 0 = positions 1..N, device 1 = N+1..2N, …).
+	opts, devs := NormalizeOptions(sp.options)
+	sp.options = opts
 	var (
 		cases       []plannedCase
 		targetID    uuid.UUID
@@ -412,19 +488,16 @@ func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, actor *auth.Actor, s
 		shared      bool
 		stop        = true
 	)
-	addCase := func(tc *testCaseRow, cont bool) {
-		pc := plannedCase{steps: tc.Steps, snap: CaseSnapshot{
-			RunCaseID: db.NewID(), Position: len(cases) + 1, TestCaseID: tc.ID, TestCaseKey: tc.Key,
-			Revision: tc.Revision, Title: tc.Title, Execution: tc.Execution, ContinueOnFailure: cont,
-			Variables: tc.Variables, Steps: tc.Steps,
-		}}
-		cases = append(cases, pc)
+	type caseItem struct {
+		tc   *testCaseRow
+		cont bool
 	}
+	var items []caseItem
 	snap := Snapshot{Kind: sp.kind, Options: sp.options, RerunOf: sp.rerunOf}
 	switch sp.kind {
 	case KindTestCase:
 		targetID, targetKey, targetTitle = sp.testCase.ID, sp.testCase.Key, sp.testCase.Title
-		addCase(sp.testCase, false)
+		items = append(items, caseItem{sp.testCase, false})
 	case KindFlow:
 		f := sp.flow
 		targetID, targetKey, targetTitle = f.ID, f.Key, f.Name
@@ -438,10 +511,20 @@ func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, actor *auth.Actor, s
 			if sp.onlyCases != nil && !sp.onlyCases[it.TestCaseID] {
 				continue
 			}
-			addCase(it.TestCase, it.ContinueOnFailure)
+			items = append(items, caseItem{it.TestCase, it.ContinueOnFailure})
 		}
 	default:
 		return uuid.Nil, fmt.Errorf("unknown run kind %q", sp.kind)
+	}
+	for d, dev := range devs {
+		for _, it := range items {
+			tc := it.tc
+			cases = append(cases, plannedCase{steps: tc.Steps, category: dev.Category, snap: CaseSnapshot{
+				RunCaseID: db.NewID(), Position: len(cases) + 1, DeviceIndex: d, TestCaseID: tc.ID, TestCaseKey: tc.Key,
+				Revision: tc.Revision, Title: tc.Title, Execution: tc.Execution, ContinueOnFailure: it.cont,
+				Variables: tc.Variables, Steps: tc.Steps,
+			}})
+		}
 	}
 	snap.Target = Target{ID: targetID.String(), Key: targetKey, Title: targetTitle}
 	snap.Cases = make([]CaseSnapshot, len(cases))
@@ -517,15 +600,24 @@ func (s *Service) insertRun(ctx context.Context, tx pgx.Tx, actor *auth.Actor, s
 	batch := &pgx.Batch{}
 	for _, c := range cases {
 		cs := c.snap
-		batch.Queue(`INSERT INTO run_cases (id, run_id, position, test_case_id, test_case_key, test_case_revision, title, execution, continue_on_failure)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-			cs.RunCaseID, runID, cs.Position, cs.TestCaseID, cs.TestCaseKey, cs.Revision, cs.Title, cs.Execution, cs.ContinueOnFailure)
+		batch.Queue(`INSERT INTO run_cases (id, run_id, position, device_index, test_case_id, test_case_key, test_case_revision, title, execution, continue_on_failure)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			cs.RunCaseID, runID, cs.Position, cs.DeviceIndex, cs.TestCaseID, cs.TestCaseKey, cs.Revision, cs.Title, cs.Execution, cs.ContinueOnFailure)
 		for i, st := range c.steps {
 			disp := dsl.DisplayStep(st, envVars)
-			batch.Queue(`INSERT INTO run_steps (id, run_case_id, position, step_id, action, summary, description, expected, continue_on_failure, enabled)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+			// A step whose only_on excludes the device category is stored
+			// disabled and already skipped (also for manual cases: the
+			// tester does not mark it).
+			applies := st.AppliesTo(c.category)
+			status := StepPending
+			if !applies {
+				status = StepSkipped
+			}
+			batch.Queue(`INSERT INTO run_steps (id, run_case_id, position, step_id, action, summary, description, expected, continue_on_failure, enabled, only_on, status)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 				db.NewID(), cs.RunCaseID, i+1, st.ID(), st.Action(), dsl.Summarize(disp),
-				disp.Str("description"), disp.Str("expected"), st.Bool("continue_on_failure"), st.Enabled())
+				disp.Str("description"), disp.Str("expected"), st.Bool("continue_on_failure"),
+				st.Enabled() && applies, st.OnlyOn(), status)
 		}
 	}
 	if batch.Len() > 0 {

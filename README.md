@@ -36,6 +36,11 @@ instance (Go backend, worker, Playwright runner) against the bundled demo shop.
 - **Asynchronous runs on real browsers.** Chromium, Firefox, or WebKit, any viewport,
   screenshots (off / on failure / every step), video (off / on failure / always), retries,
   live progress, cancel, re-run failed.
+- **Responsive testing.** Run a test case or flow on up to six devices at once (desktop,
+  iPad, iPhone, Pixel, … with real mobile emulation: touch, pixel ratio, user agent) and read the
+  result as a case × device matrix. Steps can be limited to mobile/tablet/desktop (`only_on`),
+  resize mid-test (`set_viewport`) and catch layouts that overflow sideways
+  (`expect_no_horizontal_scroll`). See [docs/14](docs/14-responsive-testing.md).
 - **Reports that explain the failure.** Expected vs actual, the Playwright error, a screenshot
   of the failing step, video, and HTTP request/response details.
 - **Manual testing when it's needed.** Manual test cases with instructions and expected results;

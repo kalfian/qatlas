@@ -87,9 +87,16 @@ func JUnitXML(run Run) ([]byte, error) {
 	}
 	suite.Properties = junitProperties(run)
 
-	keyCount := map[string]int{}
+	// Runs on several devices (docs/14): every case once per device, named
+	// "{title} [{device label}]"; the classname stays the project key.
+	multiDevice := len(run.Devices()) > 1
+	type caseOnDevice struct {
+		key    string
+		device int
+	}
+	keyCount := map[caseOnDevice]int{}
 	for _, c := range run.Cases {
-		keyCount[c.TestCaseKey]++
+		keyCount[caseOnDevice{c.TestCaseKey, c.DeviceIndex}]++
 	}
 	for _, c := range run.Cases {
 		jc := junitCase{
@@ -97,7 +104,10 @@ func JUnitXML(run Run) ([]byte, error) {
 			Name:      strings.TrimSpace(c.TestCaseKey + " " + c.Title),
 			Time:      seconds(c.DurationMS),
 		}
-		if keyCount[c.TestCaseKey] > 1 { // the same case twice in a flow: keep names unique
+		if multiDevice {
+			jc.Name += " [" + run.DeviceOf(c).Label + "]"
+		}
+		if keyCount[caseOnDevice{c.TestCaseKey, c.DeviceIndex}] > 1 { // the same case twice in a flow: keep names unique
 			jc.Name += " [#" + strconv.Itoa(c.Position) + "]"
 		}
 		switch c.Status {

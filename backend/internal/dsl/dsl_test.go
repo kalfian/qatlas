@@ -186,3 +186,72 @@ func TestValidateExpectStatusIn(t *testing.T) {
 		t.Fatalf("expect_status without value/in: %+v", errs)
 	}
 }
+
+func TestResponsiveSteps(t *testing.T) {
+	errs, _ := Validate([]Step{
+		{"id": "a", "action": "goto", "url": "/", "only_on": []any{"mobile", "tablet"}},
+		{"id": "b", "action": "set_viewport", "width": float64(768), "height": float64(1024)},
+		{"id": "c", "action": "set_viewport", "width": "320", "height": float64(2160), "only_on": []any{"desktop"}},
+		{"id": "d", "action": "expect_no_horizontal_scroll"},
+		{"id": "e", "action": "expect_no_horizontal_scroll", "selector": "testid=cart", "tolerance_px": float64(50)},
+		{"id": "f", "action": "click", "selector": "#x", "only_on": nil},
+	}, "automated")
+	if len(errs) != 0 {
+		t.Fatalf("valid responsive steps rejected: %+v", errs)
+	}
+	if e, _ := Validate([]Step{{"id": "m", "action": "manual", "description": "Rotate the phone", "only_on": []any{"mobile"}}}, "manual"); len(e) != 0 {
+		t.Fatalf("only_on on a manual step: %+v", e)
+	}
+
+	errs, _ = Validate([]Step{
+		{"id": "a", "action": "set_viewport"},
+		{"id": "b", "action": "set_viewport", "width": float64(319), "height": float64(2161)},
+		{"id": "c", "action": "set_viewport", "width": float64(800.5), "height": "tall"},
+		{"id": "d", "action": "expect_no_horizontal_scroll", "tolerance_px": float64(51)},
+		{"id": "e", "action": "expect_no_horizontal_scroll", "tolerance_px": float64(-1)},
+		{"id": "f", "action": "goto", "url": "/", "only_on": []any{}},
+		{"id": "g", "action": "goto", "url": "/", "only_on": []any{"mobile", "mobile"}},
+		{"id": "h", "action": "goto", "url": "/", "only_on": []any{"watch"}},
+		{"id": "i", "action": "goto", "url": "/", "only_on": "mobile"},
+		{"id": "j", "action": "teleport", "only_on": []any{"tv"}},
+	}, "automated")
+	want := []string{
+		"steps[0].width", "steps[0].height",
+		"steps[1].width", "steps[1].height",
+		"steps[2].width", "steps[2].height",
+		"steps[3].tolerance_px", "steps[4].tolerance_px",
+		"steps[5].only_on", "steps[6].only_on", "steps[7].only_on", "steps[8].only_on",
+		"steps[9].only_on", "steps[9].action",
+	}
+	var got []string
+	for _, e := range errs {
+		got = append(got, e.Path)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("paths:\n%v\nwant\n%v\n(%+v)", got, want, errs)
+	}
+	if errs[11].Message != "Only on must be a list of device categories (mobile, tablet, desktop)" || !strings.Contains(errs[9].Message, "listed twice") {
+		t.Fatalf("messages: %+v", errs)
+	}
+
+	for want, st := range map[string]Step{
+		"Set viewport 768×1024":                      {"action": "set_viewport", "width": float64(768), "height": float64(1024)},
+		"Expect no horizontal scroll":                {"action": "expect_no_horizontal_scroll"},
+		"Expect no horizontal scroll in testid=cart": {"action": "expect_no_horizontal_scroll", "selector": "testid=cart", "tolerance_px": float64(4)},
+	} {
+		if got := Summarize(st); got != want {
+			t.Errorf("Summarize(%v) = %q, want %q", st, got, want)
+		}
+	}
+
+	st := Step{"id": "a", "action": "goto", "only_on": []any{"mobile", "tablet"}}
+	if !reflect.DeepEqual(st.OnlyOn(), []string{"mobile", "tablet"}) || !st.AppliesTo("tablet") || st.AppliesTo("desktop") {
+		t.Fatalf("only_on accessors: %v", st.OnlyOn())
+	}
+	if all := (Step{"id": "b"}); all.OnlyOn() != nil || !all.AppliesTo("desktop") {
+		t.Fatal("no only_on = every device")
+	}
+	if a, ok := Lookup("set_viewport"); !ok || a.Kind != KindUI || !(Step{"action": "expect_no_horizontal_scroll"}).IsUI() {
+		t.Fatal("responsive actions are UI actions")
+	}
+}

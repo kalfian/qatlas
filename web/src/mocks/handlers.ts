@@ -8,12 +8,15 @@ import type {
   GoogleAuthSettingsInput,
   ProjectRole,
   RunCreate,
+  DeviceInput,
   RunOptions,
+  RunOptionsInput,
   RunStatus,
   StorageSettingsInput,
   SystemRole,
   TestCaseInput,
 } from '@/api/types'
+import { deviceFromViewport, devicesOf, resolveDeviceInput, validateDeviceInputs } from '@/lib/devices'
 import { can, type ProjectAction } from '@/lib/permissions'
 import { validateSteps } from '@/lib/steps'
 import {
@@ -154,8 +157,28 @@ function snapshotRevision(tc: DbTestCase, authorId: string, note: string) {
   db().revisions.push({ test_case_id: tc.id, revision: tc.revision, author_id: authorId, change_note: note, created_at: nowIso(), snapshot: testCaseInput(tc) })
 }
 
-function mergeOptions(project: DbProject, partial?: Partial<RunOptions>): RunOptions {
-  return { ...DEFAULT_RUN_OPTIONS, ...project.default_run_options, ...(partial ?? {}) }
+/**
+ * Applies partial run options over `base` like the backend (docs/14): `devices` wins (validated → 422 for a run,
+ * 400 for PATCH project default_run_options, with
+ * `{path}`, `{path}[i].id`, …), else a lone `viewport` becomes one device (legacy rule), else the base
+ * devices stay. `viewport` is always the size of devices[0].
+ */
+function applyRunOptions(base: RunOptions, input: RunOptionsInput | undefined, path: string, status: 400 | 422): RunOptions {
+  const { devices: devicesIn, viewport: viewportIn, ...rest } = input ?? {}
+  let devices = devicesOf(base)
+  if (devicesIn !== undefined) {
+    const errors = validateDeviceInputs(devicesIn, { path, lng: 'en' })
+    if (errors.length) fail(status, 'validation_failed', 'Invalid run options', errors)
+    devices = (devicesIn as DeviceInput[]).map((d) => resolveDeviceInput(d)!)
+  } else if (viewportIn) {
+    // legacy: a lone viewport keeps its old (loose) check in the backend; the mock doesn't tighten it
+    devices = [deviceFromViewport(viewportIn)]
+  }
+  return { ...base, ...rest, devices, viewport: { width: devices[0].width, height: devices[0].height } }
+}
+
+function mergeOptions(project: DbProject, partial?: RunOptionsInput): RunOptions {
+  return applyRunOptions({ ...DEFAULT_RUN_OPTIONS, ...project.default_run_options }, partial, 'options.devices', 422)
 }
 
 function flowValidation(input: FlowInput): FieldError[] {
@@ -429,10 +452,13 @@ export const handlers = [
   })),
   http.patch(`${API}/projects/:key`, m(async ({ params, request }) => {
     const { user, project } = requireProject(params.key as string, 'manage_settings')
-    const b = await body<{ name?: string; description?: string; default_run_options?: RunOptions; artifact_retention_days?: number }>(request)
+    const b = await body<{ name?: string; description?: string; default_run_options?: RunOptionsInput; artifact_retention_days?: number }>(request)
+    const runOptions = b.default_run_options
+      ? applyRunOptions({ ...DEFAULT_RUN_OPTIONS, ...project.default_run_options }, b.default_run_options, 'default_run_options.devices', 400)
+      : undefined
     if (b.name !== undefined) project.name = b.name
     if (b.description !== undefined) project.description = b.description
-    if (b.default_run_options) project.default_run_options = { ...project.default_run_options, ...b.default_run_options }
+    if (runOptions) project.default_run_options = runOptions
     if (b.artifact_retention_days) project.artifact_retention_days = b.artifact_retention_days
     return HttpResponse.json(toProject(project, user))
   })),

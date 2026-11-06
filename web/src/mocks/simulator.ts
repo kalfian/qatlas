@@ -1,4 +1,5 @@
-import type { RunOptions, RunTrigger, Step, StepStatus } from '@/api/types'
+import type { Device, DeviceCategory, RunOptions, RunTrigger, Step, StepStatus } from '@/api/types'
+import { devicesOf } from '@/lib/devices'
 import { getAction, summarizeStep } from '@/lib/steps'
 import {
   activeStorageBackend,
@@ -28,6 +29,53 @@ const MOCK_TRUTH: Record<string, string> = {
   'testid=cart-count': '1',
   'testid=stock-label': 'Stock: 12',
   "role=heading[name='Order placed']": 'Order placed',
+}
+
+/**
+ * Layout of the fake target app for `expect_no_horizontal_scroll`, mirroring demo-target (Tokoku): its
+ * product pages have a size chart table with a fixed 560px min-width that ends at 650px (the intentional
+ * responsive bug, demo-target/README.md); every other page fits from 320px up. The runner reports only
+ * the outermost overflowing element, so the table's rows and cells are not listed. Any viewport narrower
+ * than 650px scrolls horizontally → fails on phones, passes on tablets (768px) and desktops.
+ */
+const WIDE_PAGES: { path: RegExp; elements: [selector: string, rightEdge: number][] }[] = [
+  { path: /\/products\/[\w-]+/, elements: [['table', 650]] },
+]
+
+/** Viewport + device category of the case being planned (set_viewport changes the width). */
+export interface ScreenContext {
+  width: number
+  category: DeviceCategory
+  /** URL of the last `goto` (interpolated). */
+  pageUrl: string
+}
+
+/** Result of `expect_no_horizontal_scroll` against the fake layout (same shape as the runner's details). */
+export function horizontalOverflow(
+  screen: ScreenContext,
+  tolerancePx = 0,
+  forceFail = false,
+  selector?: string,
+): { pass: boolean; error?: string; details?: Record<string, unknown> } {
+  const client = screen.width
+  const page = WIDE_PAGES.find((p) => p.path.test(screen.pageUrl))
+  const elements = [...(page?.elements ?? [])]
+  if (forceFail) elements.push(['div.fail-marker', client + 24])
+  const offenders = elements.filter(([, right]) => right > client).sort((a, b) => b[1] - a[1])
+  const scrollWidth = Math.max(client, ...offenders.map(([, right]) => right))
+  // same texts as runner/src/actions.ts expectNoHorizontalScroll
+  const expected = `content width ≤ ${client}px${tolerancePx > 0 ? ` (+${tolerancePx}px tolerance)` : ''}`
+  const actual = `content width ${scrollWidth}px`
+  if (scrollWidth <= client + tolerancePx) return { pass: true, details: { expected, actual } }
+  const list = offenders.filter(([, right]) => right > client + tolerancePx).slice(0, 5).map(([sel, right]) => `${sel} (right edge ${right}px)`)
+  const describe = selector ? locatorExpr(selector) : 'the page'
+  return {
+    pass: false,
+    error:
+      `Expected ${describe} to have no horizontal scroll, but its content is ${scrollWidth}px wide in ${client}px` +
+      `${tolerancePx > 0 ? ` (tolerance ${tolerancePx}px)` : ''}${list.length ? `; widest: ${list[0]}` : ''}`,
+    details: { expected, actual, offenders: list },
+  }
 }
 
 export type Rng = () => number
@@ -612,8 +660,15 @@ function planStep(
   rng: Rng,
   vctx: { env: Record<string, string>; vars: Record<string, string> } = { env: {}, vars: {} },
   api: ApiSim = newApiSim(),
+  screen?: ScreenContext,
 ): StepPlan {
   if (step.action === 'manual') return { outcome: 'passed', duration_ms: 0 }
+  if (step.action === 'expect_no_horizontal_scroll') {
+    const r = horizontalOverflow(screen ?? { width: 1280, category: 'desktop', pageUrl: '' }, Number(interpolated.tolerance_px ?? 0) || 0, containsFailMarker(step), interpolated.selector?.trim() || undefined)
+    return r.pass
+      ? { outcome: 'passed', duration_ms: between(rng, 20, 90), details: r.details }
+      : { outcome: 'failed', error: r.error, details: r.details, duration_ms: between(rng, 20, 90) }
+  }
   let fail = containsFailMarker(step)
   if (!fail && (step.action === 'expect_text' || step.action === 'expect_value')) {
     const truth = MOCK_TRUTH[interpolated.selector ?? '']
@@ -710,6 +765,9 @@ function planStep(
   return { outcome: 'passed', duration_ms: duration ?? normalDuration(step, rng), details, saves }
 }
 
+/** A step runs on a device unless its `only_on` excludes the device category (docs/14). */
+export const appliesTo = (step: Pick<Step, 'only_on'>, category: DeviceCategory) => !step.only_on?.length || step.only_on.includes(category)
+
 function buildCase(
   run: Pick<DbRun, 'options'>,
   tc: DbTestCase,
@@ -717,19 +775,29 @@ function buildCase(
   ctx: VarContext,
   rng: Rng,
   continueOnFailure: boolean,
+  device: Device,
+  deviceIndex: number,
 ): DbRunCase {
-  const enabled = tc.steps.filter((s) => s.enabled !== false)
+  const isOn = (s: Step) => s.enabled !== false && appliesTo(s, device.category)
+  const enabled = tc.steps.filter(isOn)
   const lastAssertIdx = enabled.map((s) => s.action.startsWith('expect_')).lastIndexOf(true)
   let assertCounter = -1
   const runtime: Record<string, string> = {} // hasil save / save_regex / set_variable
   const api = newApiSim() // state API palsu per test case (token, produk, payment intent, refund)
+  const screen: ScreenContext = { width: device.width, category: device.category, pageUrl: '' }
   const steps: DbRunStep[] = tc.steps.map((step, i): DbRunStep => {
     const vars = { ...tc.variables, ...ctx.vars, ...runtime }
     const interp = interpolateStep(step, { ...ctx, vars })
     const timeout = step.timeout_ms ?? run.options.step_timeout_ms
-    if (step.enabled !== false && step.action.startsWith('expect_')) assertCounter += 1
-    const plan = step.enabled === false ? undefined : planStep(step, tc, assertCounter === lastAssertIdx && step.action.startsWith('expect_'), timeout, interp, rng, { env: ctx.env, vars }, api)
+    const on = isOn(step)
+    if (on && step.action.startsWith('expect_')) assertCounter += 1
+    const plan = on ? planStep(step, tc, assertCounter === lastAssertIdx && step.action.startsWith('expect_'), timeout, interp, rng, { env: ctx.env, vars }, api, { ...screen }) : undefined
     if (plan?.outcome === 'passed' && plan.saves) Object.assign(runtime, plan.saves)
+    if (on && step.action === 'goto') screen.pageUrl = interp.url ?? ''
+    if (on && step.action === 'set_viewport' && Number.isInteger(step.width)) screen.width = Number(step.width)
+    // A step whose only_on excludes the device category is stored disabled and already skipped, in
+    // automated and manual cases alike (backend runs/create.go): the tester never has to mark it.
+    const preSkipped = !appliesTo(step, device.category)
     return {
       id: newId('rs'),
       position: i + 1,
@@ -738,7 +806,8 @@ function buildCase(
       summary: summarizeStep(interp, { lng: 'en' }), // data run dari server → English
       description: interp.description ?? '',
       expected: interp.expected ?? '',
-      status: 'pending' as StepStatus,
+      status: (preSkipped ? 'skipped' : 'pending') as StepStatus,
+      only_on: step.only_on?.length ? [...step.only_on] : null,
       duration_ms: null,
       error_message: null,
       actual_result: null,
@@ -747,7 +816,7 @@ function buildCase(
       sim: plan ? { outcome: plan.outcome, error: plan.error, duration_ms: plan.duration_ms } : undefined,
       sim_details: plan?.details,
       continue_on_failure: step.continue_on_failure,
-      enabled: step.enabled !== false,
+      enabled: on,
       is_ui: getAction(step.action)?.kind === 'ui',
       force_screenshot: step.screenshot === true || step.action === 'screenshot',
     }
@@ -755,6 +824,7 @@ function buildCase(
   return {
     id: newId('rc'),
     position,
+    device_index: deviceIndex,
     test_case_id: tc.id,
     test_case_key: tc.key,
     test_case_revision: tc.revision,
@@ -804,11 +874,13 @@ export function createRun(a: CreateRunArgs): DbRun {
   let targetKey = ''
   let shared = false
   let stopOnFailure = true
+  // Every case runs once per device, device by device: device d = positions d·N+1 … (d+1)·N (docs/14).
+  const devices = devicesOf(a.options)
   if (a.kind === 'test_case') {
     const tc = s.testCases.find((t) => t.id === a.targetId)!
     title = tc.title
     targetKey = tc.key
-    cases = [buildCase(a, tc, 1, envContext(a.env), rng, false)]
+    cases = devices.map((d, di) => buildCase(a, tc, di + 1, envContext(a.env), rng, false, d, di))
   } else {
     const flow = s.flows.find((f) => f.id === a.targetId)!
     title = flow.name
@@ -816,15 +888,17 @@ export function createRun(a: CreateRunArgs): DbRun {
     shared = flow.shared_session
     stopOnFailure = flow.stop_on_failure
     const ctx = envContext(a.env, flow.variables)
-    let pos = 0
+    const items: { tc: DbTestCase; continueOnFailure: boolean }[] = []
     for (const item of flow.items) {
       if (!item.enabled) continue
       if (a.onlyTestCaseIds && !a.onlyTestCaseIds.includes(item.test_case_id)) continue
       const tc = s.testCases.find((t) => t.id === item.test_case_id && !t.deleted_at)
       if (!tc) continue
-      pos += 1
-      cases.push(buildCase(a, tc, pos, ctx, rng, item.continue_on_failure))
+      items.push({ tc, continueOnFailure: item.continue_on_failure })
     }
+    devices.forEach((d, di) => {
+      items.forEach((it, k) => cases.push(buildCase(a, it.tc, di * items.length + k + 1, ctx, rng, it.continueOnFailure, d, di)))
+    })
   }
   const firstIsManual = cases[0]?.execution === 'manual'
   const run: DbRun = {
@@ -838,7 +912,7 @@ export function createRun(a: CreateRunArgs): DbRun {
     environment_id: a.env?.id ?? null,
     environment_name: a.env?.name ?? null,
     status: firstIsManual ? 'awaiting_manual' : 'queued',
-    options: a.options,
+    options: { ...a.options, devices, viewport: { width: devices[0].width, height: devices[0].height } },
     trigger: a.trigger,
     triggered_by_id: a.userId,
     assignee_id: cases.some((c) => c.execution === 'manual') ? (a.assigneeId ?? a.userId) : null,
@@ -917,7 +991,8 @@ function finishCase(run: DbRun, c: DbRunCase, at: string) {
   const hasUi = c.steps.some((s) => s.is_ui && s.status !== 'skipped')
   if (c.execution === 'automated' && hasUi) {
     const wantVideo = run.options.video === 'always' || (run.options.video === 'on_failure' && c.status === 'failed')
-    const sharedAlready = run.shared_session && run.cases.some((x) => x.video_id)
+    // shared session = one browser session (and video) per device
+    const sharedAlready = run.shared_session && run.cases.some((x) => x.video_id && x.device_index === c.device_index)
     if (wantVideo && !sharedAlready) c.video_id = addArtifact(run, c, null, 'video', at).id
   }
 }
@@ -968,7 +1043,10 @@ export function advance(run: DbRun, at: number): boolean {
 
   if (c.status === 'pending') {
     // flow: cek stop_on_failure
-    const prevFailed = run.cases.some((x) => x.position < c.position && (x.status === 'failed' || x.status === 'error' || x.status === 'blocked') && !x.continue_on_failure)
+    // stop_on_failure only within the same device: the next device starts fresh (docs/14)
+    const prevFailed = run.cases.some(
+      (x) => x.device_index === c.device_index && x.position < c.position && (x.status === 'failed' || x.status === 'error' || x.status === 'blocked') && !x.continue_on_failure,
+    )
     if (run.kind === 'flow' && run.stop_on_failure && prevFailed) {
       skipRemaining(c)
       c.status = 'skipped'

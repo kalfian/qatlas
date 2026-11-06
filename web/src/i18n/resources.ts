@@ -18,9 +18,10 @@ import en_runs from './locales/en/runs'
 import en_mock from './locales/en/mock'
 import en_storage from './locales/en/storage'
 import en_googleAuth from './locales/en/googleAuth'
+import en_devices from './locales/en/devices'
 
 export const resources = {
-  en: { common: en_common, nav: en_nav, status: en_status, steps: en_steps, auth: en_auth, account: en_account, admin: en_admin, tasks: en_tasks, projects: en_projects, dashboard: en_dashboard, environments: en_environments, settings: en_settings, testcases: en_testcases, flows: en_flows, runs: en_runs, mock: en_mock, storage: en_storage, googleAuth: en_googleAuth, },
+  en: { common: en_common, nav: en_nav, status: en_status, steps: en_steps, auth: en_auth, account: en_account, admin: en_admin, tasks: en_tasks, projects: en_projects, dashboard: en_dashboard, environments: en_environments, settings: en_settings, testcases: en_testcases, flows: en_flows, runs: en_runs, mock: en_mock, storage: en_storage, googleAuth: en_googleAuth, devices: en_devices, },
 } as const
 
-export const namespaces = ['common', 'nav', 'status', 'steps', 'auth', 'account', 'admin', 'tasks', 'projects', 'dashboard', 'environments', 'settings', 'testcases', 'flows', 'runs', 'mock', 'storage', 'googleAuth', ] as const
+export const namespaces = ['common', 'nav', 'status', 'steps', 'auth', 'account', 'admin', 'tasks', 'projects', 'dashboard', 'environments', 'settings', 'testcases', 'flows', 'runs', 'mock', 'storage', 'googleAuth', 'devices', ] as const

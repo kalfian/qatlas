@@ -319,14 +319,11 @@ func (s *Service) Update(ctx context.Context, actor *auth.Actor, key string, in 
 			return err
 		}
 		if len(in.DefaultRunOptions) > 0 && string(in.DefaultRunOptions) != "null" {
-			merged, err := MergeRunOptions(p.DefaultRunOptions, in.DefaultRunOptions)
+			merged, err := ApplyRunOptionsInput(opts, in.DefaultRunOptions)
 			if err != nil {
-				return optionsDecodeError(err)
+				return err
 			}
-			if errs := merged.Validate("default_run_options."); len(errs) > 0 {
-				return httpx.BadRequest("Invalid run options", errs...)
-			}
-			if merged != opts {
+			if !merged.Equal(opts) {
 				opts = merged
 				fields = append(fields, "default_run_options")
 			}

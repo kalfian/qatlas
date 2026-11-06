@@ -82,3 +82,42 @@ func TestStepSchemaExamples(t *testing.T) {
 		}
 	}
 }
+
+// TestStepSchemaResponsive: the responsive actions and only_on pass both the
+// JSON Schema and dsl.Validate; out-of-range values are rejected by both.
+func TestStepSchemaResponsive(t *testing.T) {
+	r := resolvedStepSchema(t)
+	good := []map[string]any{
+		{"id": "r1", "action": "set_viewport", "width": 768.0, "height": 1024.0},
+		{"id": "r2", "action": "expect_no_horizontal_scroll", "selector": "testid=cart", "tolerance_px": 2.0, "only_on": []any{"mobile", "tablet"}},
+		{"id": "r3", "action": "click", "selector": "role=button[name='Menu']", "only_on": []any{"mobile"}},
+	}
+	steps := make([]dsl.Step, len(good))
+	for i, st := range good {
+		if err := r.Validate(st); err != nil {
+			t.Errorf("schema rejected %v: %v", st, err)
+		}
+		steps[i] = dsl.Step(st)
+	}
+	if errs, _ := dsl.Validate(steps, "automated"); len(errs) > 0 {
+		t.Errorf("dsl.Validate: %v", errs)
+	}
+	for _, bad := range []map[string]any{
+		{"id": "r1", "action": "set_viewport", "width": 768.0},                                  // height missing
+		{"id": "r1", "action": "set_viewport", "width": 200.0, "height": 1024.0},                // < 320
+		{"id": "r1", "action": "expect_no_horizontal_scroll", "tolerance_px": 60.0},             // > 50
+		{"id": "r1", "action": "click", "selector": "#x", "only_on": []any{}},                   // empty
+		{"id": "r1", "action": "click", "selector": "#x", "only_on": []any{"watch"}},            // unknown category
+		{"id": "r1", "action": "click", "selector": "#x", "only_on": []any{"mobile", "mobile"}}, // duplicate
+	} {
+		if err := r.Validate(bad); err == nil {
+			t.Errorf("schema accepted %v", bad)
+		}
+		if errs, _ := dsl.Validate([]dsl.Step{dsl.Step(bad)}, "automated"); len(errs) == 0 {
+			t.Errorf("dsl.Validate accepted %v", bad)
+		}
+	}
+	if !strings.Contains(stepDSLMarkdown(), "| set_viewport | navigation | width, height |  |") {
+		t.Fatal("markdown action table is missing set_viewport")
+	}
+}

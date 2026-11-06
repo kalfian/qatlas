@@ -4,7 +4,7 @@ import * as React from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 import { errorMessage } from '@/api/client'
 import { useCreateRun, useEnvironments, useMembers, useProject } from '@/api/queries'
-import type { RunOptions } from '@/api/types'
+import type { Device, RunOptions, RunOptionsInput } from '@/api/types'
 import { useAuth, useCan } from '@/app/auth'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -13,6 +13,8 @@ import { Label } from '@/components/ui/label'
 import { Segmented } from '@/components/ui/segmented'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
+import { devicesOf, restoreDevices, sortDevices, toDeviceInput } from '@/lib/devices'
+import { DevicePicker } from './DevicePicker'
 
 export interface RunTarget {
   kind: 'test_case' | 'flow'
@@ -23,13 +25,6 @@ export interface RunTarget {
   /** Flow berisi case manual → tampilkan pilihan assignee juga. */
   hasManual?: boolean
 }
-
-const VIEWPORTS = {
-  desktop: { width: 1280, height: 720 },
-  laptop: { width: 1440, height: 900 },
-  mobile: { width: 390, height: 844 },
-} as const
-type ViewportPreset = keyof typeof VIEWPORTS | 'custom'
 
 const storageKey = (projectKey: string) => `qatlas.runOptions.${projectKey}`
 
@@ -42,9 +37,19 @@ function loadLast(projectKey: string): Partial<RunOptions> | null {
   }
 }
 
-function presetOf(v: { width: number; height: number }): ViewportPreset {
-  const hit = (Object.keys(VIEWPORTS) as (keyof typeof VIEWPORTS)[]).find((k) => VIEWPORTS[k].width === v.width && VIEWPORTS[k].height === v.height)
-  return hit ?? 'custom'
+/** Options without the device fields (devices are resolved separately; `viewport` follows devices[0]). */
+function withoutDevices(o: Partial<RunOptions> | null | undefined): Partial<RunOptions> {
+  if (!o) return {}
+  const { devices: _devices, viewport: _viewport, ...rest } = o
+  return rest
+}
+
+/**
+ * Initial devices: the run being re-run ("Change options & run…") → last choice in this browser
+ * (an older stored `viewport` maps through the legacy rule) → project default.
+ */
+function initialDevices(projectDefault: RunOptions, last: Partial<RunOptions> | null, initial?: Partial<RunOptions>): Device[] {
+  return sortDevices(restoreDevices(initial) ?? restoreDevices(last) ?? devicesOf(projectDefault))
 }
 
 /**
@@ -72,20 +77,25 @@ export function RunDialog({
   const members = useMembers(projectKey)
   const canReassign = useCan('reassign_manual', projectKey)
   const create = useCreateRun(projectKey)
-  const { t } = useTranslation(['runs', 'common'])
+  const { t } = useTranslation(['runs', 'common', 'devices'])
 
   const [envId, setEnvId] = React.useState<string>('')
   const [opts, setOpts] = React.useState<RunOptions | null>(null)
-  const [preset, setPreset] = React.useState<ViewportPreset>('desktop')
   const [advanced, setAdvanced] = React.useState(false)
   const [assignee, setAssignee] = React.useState(me.user.id)
 
   // inisialisasi saat dibuka: pilihan terakhir project → default project
   React.useEffect(() => {
     if (!open || !project.data) return
-    const base = { ...project.data.default_run_options, ...(loadLast(projectKey) ?? {}), ...(initial?.options ?? {}) }
-    setOpts(base)
-    setPreset(presetOf(base.viewport))
+    const last = loadLast(projectKey)
+    const devices = initialDevices(project.data.default_run_options, last, initial?.options)
+    setOpts({
+      ...project.data.default_run_options,
+      ...withoutDevices(last),
+      ...withoutDevices(initial?.options),
+      devices,
+      viewport: { width: devices[0].width, height: devices[0].height },
+    })
     setAssignee(initial?.assigneeId ?? me.user.id)
     if (initial?.environmentId) setEnvId(initial.environmentId)
     create.reset()
@@ -99,6 +109,14 @@ export function RunDialog({
   }, [open, envs.data, envId])
 
   const set = <K extends keyof RunOptions>(k: K, v: RunOptions[K]) => setOpts((o) => (o ? { ...o, [k]: v } : o))
+  const setDevices = (devices: Device[]) =>
+    setOpts((o) => (o ? { ...o, devices, viewport: { width: devices[0].width, height: devices[0].height } } : o))
+
+  // 422 on options.devices… → show it under the picker as well as in the error box
+  const deviceError =
+    create.error && 'details' in create.error && Array.isArray(create.error.details)
+      ? create.error.details.find((d) => d.path.startsWith('options.devices'))?.message
+      : undefined
 
   const eligibleAssignees = (members.data?.data ?? []).filter((m) => m.role !== 'viewer')
   const showAssignee = (target.manualOnly || target.hasManual) && canReassign
@@ -107,15 +125,20 @@ export function RunDialog({
     e.preventDefault()
     if (!opts) return
     try {
-      localStorage.setItem(storageKey(projectKey), JSON.stringify(opts))
+      // manual-only runs only choose devices: keep the stored automated options untouched
+      const stored = target.manualOnly ? { ...(loadLast(projectKey) ?? {}), devices: opts.devices, viewport: opts.viewport } : opts
+      localStorage.setItem(storageKey(projectKey), JSON.stringify(stored))
     } catch {
       // abaikan
     }
+    const devices = opts.devices.map(toDeviceInput)
+    const { viewport: _viewport, devices: _devices, ...rest } = opts
+    const options: RunOptionsInput = target.manualOnly ? { devices } : { ...rest, devices }
     create.mutate(
       {
         ...(target.kind === 'test_case' ? { test_case: target.key } : { flow: target.key }),
         environment_id: envId || null,
-        options: target.manualOnly ? undefined : opts,
+        options,
         assignee_id: showAssignee ? assignee : undefined,
       },
       {
@@ -178,9 +201,18 @@ export function RunDialog({
           )}
 
           {target.manualOnly ? (
-            <p className="text-sm text-muted-foreground">
-              <Trans t={t} i18nKey="dialog.manualOnly" components={{ b: <strong className="font-medium text-foreground" /> }} />
-            </p>
+            <>
+              <p className="text-sm text-muted-foreground">
+                <Trans t={t} i18nKey="dialog.manualOnly" components={{ b: <strong className="font-medium text-foreground" /> }} />
+              </p>
+              {opts && (
+                <div className="grid gap-1.5">
+                  <Label id="run-devices-label" htmlFor="run-devices">{t('devices:picker.label')}</Label>
+                  <DevicePicker id="run-devices" labelId="run-devices-label" value={opts.devices} onChange={setDevices} error={deviceError} />
+                  <p className="text-xs text-muted-foreground">{t('dialog.manualDevicesHint')}</p>
+                </div>
+              )}
+            </>
           ) : (
             opts && (
               <>
@@ -201,35 +233,8 @@ export function RunDialog({
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label htmlFor="run-viewport">{t('dialog.viewport')}</Label>
-                  <div className="flex gap-2">
-                    <Select
-                      value={preset}
-                      onValueChange={(v) => {
-                        const p = v as ViewportPreset
-                        setPreset(p)
-                        if (p !== 'custom') set('viewport', { width: VIEWPORTS[p].width, height: VIEWPORTS[p].height })
-                      }}
-                    >
-                      <SelectTrigger id="run-viewport" className="flex-1">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {(Object.keys(VIEWPORTS) as (keyof typeof VIEWPORTS)[]).map((k) => (
-                          <SelectItem key={k} value={k}>
-                            {t(`dialog.viewports.${k}`, { width: String(VIEWPORTS[k].width), height: String(VIEWPORTS[k].height) })}
-                          </SelectItem>
-                        ))}
-                        <SelectItem value="custom">{t('dialog.viewports.custom')}</SelectItem>
-                      </SelectContent>
-                    </Select>
-                    {preset === 'custom' && (
-                      <>
-                        <Input aria-label={t('dialog.width')} type="number" min={320} className="w-20 font-mono" value={opts.viewport.width} onChange={(e) => set('viewport', { ...opts.viewport, width: Number(e.target.value) })} />
-                        <Input aria-label={t('dialog.height')} type="number" min={320} className="w-20 font-mono" value={opts.viewport.height} onChange={(e) => set('viewport', { ...opts.viewport, height: Number(e.target.value) })} />
-                      </>
-                    )}
-                  </div>
+                  <Label id="run-devices-label" htmlFor="run-devices">{t('devices:picker.label')}</Label>
+                  <DevicePicker id="run-devices" labelId="run-devices-label" value={opts.devices} onChange={setDevices} browser={opts.browser} error={deviceError} />
                 </div>
                 <div className="grid gap-1.5">
                   <Label>{t('dialog.screenshot')}</Label>

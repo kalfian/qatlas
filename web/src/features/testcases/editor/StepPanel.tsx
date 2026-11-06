@@ -1,7 +1,8 @@
 import { ChevronRight, CircleAlert, Ellipsis, MousePointerClick, TriangleAlert } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
-import type { FieldError, Step, StepStatus } from '@/api/types'
+import type { DeviceCategory, FieldError, Step, StepStatus } from '@/api/types'
+import { DeviceIcon } from '@/components/devices'
 import { StatusBadge } from '@/components/status'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DropdownMenu, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -9,6 +10,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { i18n } from '@/i18n'
+import { DEVICE_CATEGORIES, categoryLabel, onlyOnLabel } from '@/lib/devices'
 import { SECTION_HELP, SECTION_LABELS, getAction, type ParamDef, type ParamSection } from '@/lib/steps'
 import { cn } from '@/lib/utils'
 import { actionIcon, setStepField } from '../lib'
@@ -51,7 +53,7 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
   const set = (name: string, value: unknown) => onChange(setStepField(step, name, value))
   const fid = (name: string) => `step-${step.id}-${name}`
 
-  const advancedSet = step.timeout_ms !== undefined || step.continue_on_failure || step.screenshot
+  const advancedSet = step.timeout_ms !== undefined || step.continue_on_failure || step.screenshot || step.only_on !== undefined || fieldErr('only_on').length > 0
   const [advOpen, setAdvOpen] = React.useState(!!advancedSet)
   const { t } = useTranslation('testcases')
 
@@ -135,6 +137,7 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
             <Field id={fid('expected')} label={t('panel.expected')} optional errors={[]}>
               {(a) => <VarField {...a} multiline rows={3} value={step.expected ?? ''} onValueChange={(v) => set('expected', v)} placeholder={t('panel.expectedPlaceholder')} />}
             </Field>
+            <OnlyOnField id={fid('only_on')} value={step.only_on} errors={fieldErr('only_on')} onChange={(v) => set('only_on', v)} />
           </>
         ) : (
           <>
@@ -187,6 +190,7 @@ export const StepPanel = React.forwardRef<HTMLElement, StepPanelProps>(function 
                   </Field>
                   <CheckField id={fid('continue_on_failure')} label={t('panel.continueOnFailure')} help={t('panel.continueOnFailureHelp')} checked={!!step.continue_on_failure} onChange={(v) => set('continue_on_failure', v || undefined)} />
                   <CheckField id={fid('screenshot')} label={t('panel.alwaysScreenshot')} help={t('panel.alwaysScreenshotHelp')} checked={!!step.screenshot} onChange={(v) => set('screenshot', v || undefined)} />
+                  <OnlyOnField id={fid('only_on')} value={step.only_on} errors={fieldErr('only_on')} onChange={(v) => set('only_on', v)} />
                 </div>
               )}
             </div>
@@ -252,6 +256,48 @@ function CheckField({ id, label, help, checked, onChange }: { id: string; label:
         )}
       </div>
     </div>
+  )
+}
+
+/**
+ * Common step field `only_on` (docs/14): run the step only on these device categories; none ticked = the
+ * field is removed (every device). Order follows desktop → tablet → mobile.
+ */
+function OnlyOnField({ id, value, errors, onChange }: { id: string; value: Step['only_on']; errors: FieldError[]; onChange: (v: DeviceCategory[] | undefined) => void }) {
+  const { t } = useTranslation(['devices', 'testcases'])
+  const selected = new Set(value ?? [])
+  const toggle = (c: DeviceCategory, on: boolean) => {
+    const next = DEVICE_CATEGORIES.filter((x) => (x === c ? on : selected.has(x)))
+    onChange(next.length ? next : undefined)
+  }
+  const helpId = `${id}-help`
+  const errId = `${id}-err`
+  return (
+    <fieldset className="flex flex-col gap-1.5" aria-describedby={[errors.length ? errId : null, helpId].filter(Boolean).join(' ')} aria-invalid={errors.length ? true : undefined}>
+      <legend className="mb-1.5 flex items-baseline gap-1.5 text-sm font-medium">
+        {t('devices:onlyOn.label')}
+        <span className="text-xs font-normal text-muted-foreground">{onlyOnLabel(value) ?? t('devices:onlyOn.all')}</span>
+      </legend>
+      <div className="flex flex-wrap gap-x-4 gap-y-2">
+        {DEVICE_CATEGORIES.map((c) => (
+          <div key={c} className="flex items-center gap-2">
+            <Checkbox id={`${id}-${c}`} checked={selected.has(c)} onCheckedChange={(v) => toggle(c, v === true)} />
+            <Label htmlFor={`${id}-${c}`} className="flex items-center gap-1.5 font-normal">
+              <DeviceIcon category={c} className="text-muted-foreground" />
+              {categoryLabel(c)}
+            </Label>
+          </div>
+        ))}
+      </div>
+      {errors.length > 0 && (
+        <p id={errId} className="flex items-center gap-1 text-xs text-destructive">
+          <CircleAlert className="size-3.5 shrink-0" aria-hidden /> {errors.map((e) => e.message).join(' · ')}
+        </p>
+      )}
+      <p id={helpId} className="text-xs text-muted-foreground">
+        {t('devices:onlyOn.help')}
+      </p>
+    </fieldset>
   )
 }
 
@@ -412,7 +458,7 @@ function ParamField({ param, step, id, errors, onSet }: { param: ParamDef; step:
 
 function ReadOnlyStep({ step }: { step: Step }) {
   const def = getAction(step.action)
-  const { t } = useTranslation('testcases')
+  const { t } = useTranslation(['testcases', 'devices'])
   const rows: { label: string; value: React.ReactNode; mono?: boolean }[] = []
   if (step.action === 'manual') {
     rows.push({ label: t('panel.instruction'), value: step.description || '—' })
@@ -446,6 +492,8 @@ function ReadOnlyStep({ step }: { step: Step }) {
     if (step.continue_on_failure) rows.push({ label: t('panel.continueOnFailureShort'), value: t('panel.yes') })
     if (step.screenshot) rows.push({ label: t('panel.screenshot'), value: t('panel.always') })
   }
+  const onlyOn = onlyOnLabel(step.only_on)
+  if (onlyOn) rows.push({ label: t('devices:onlyOn.label'), value: onlyOn })
   return (
     <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-2 text-sm">
       {rows.map((r) => (

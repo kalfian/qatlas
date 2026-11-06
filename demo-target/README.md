@@ -67,6 +67,12 @@ Header on every page: `testid=cart-count` (number of distinct cart lines) and a 
 "Akun saya" menu button with menu items (account / "Log out" / "Keluar"). Logging out always works
 (also for guests) → `/login`.
 
+**Responsive layout** (for [responsive testing](../docs/14-responsive-testing.md)): below 768 px the
+main navigation collapses behind a "☰ Menu" button (`aria-controls="main-nav"`, `aria-expanded`);
+the links ("Home", "Categories", "Cart") are hidden until it is clicked. From 768 px (iPad Mini and
+up) the links are always shown and the button is hidden. Product pages have a "Size chart" / "Tabel
+ukuran" table (`testid=size-chart`).
+
 **Accounts:** `qa.bot@tokoku.id` ("QA Bot") and `qa.2fa@tokoku.id` ("QA 2FA", TOTP enabled), both
 with `DEMO_QA_PASSWORD`. `qa.2fa` gets `/login/2fa` after the password; the code is RFC 6238 (SHA-1,
 6 digits, 30 s) from `DEMO_TOTP_SEED`, and the previous/next period are accepted too. In QAtlas:
@@ -89,6 +95,11 @@ same product/size merges into that line (`cart-count` stays `1`).
 **Intentional bug:** voucher `HEMAT10` shows "Voucher HEMAT10 applied" / "Voucher HEMAT10 dipakai"
 and a 10% discount line, but `testid=grand-total` stays **Rp 90.000** (the seeded voucher case
 expects Rp 81.000 and fails).
+
+**Intentional responsive bug:** the size chart table has a fixed `min-width: 560px` and no scroll
+wrapper, so every product page scrolls horizontally on phones (650 px of content on a 393 px iPhone
+15, 320 px iPhone SE). `expect_no_horizontal_scroll` fails there and names the table as the offender;
+tablets (768 px) and desktops pass. Every other page fits from 320 px up.
 
 ## JSON API
 

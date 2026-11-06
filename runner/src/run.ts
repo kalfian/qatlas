@@ -33,6 +33,8 @@ export function validateRunStart(msg: RunStartMessage): string | null {
   if (browser !== undefined && !['chromium', 'firefox', 'webkit'].includes(browser)) {
     return `run.start: unsupported browser "${String(browser)}"`
   }
+  const deviceError = validateDevice(msg.options?.device)
+  if (deviceError) return deviceError
   for (const [ci, c] of msg.cases.entries()) {
     if (!c || typeof c.case_id !== 'string' || !c.case_id) return `run.start: cases[${ci}].case_id is required`
     if (!Array.isArray(c.steps)) return `run.start: cases[${ci}].steps must be an array`
@@ -47,9 +49,39 @@ export function validateRunStart(msg: RunStartMessage): string | null {
   return null
 }
 
+const positiveNumber = (v: unknown) => typeof v === 'number' && Number.isFinite(v) && v > 0
+
+/** `options.device` is optional; when present the context is built from it, so its numbers must be sane. */
+function validateDevice(device: unknown): string | null {
+  if (device === undefined || device === null) return null
+  if (typeof device !== 'object' || Array.isArray(device)) return 'run.start: options.device must be an object'
+  const d = device as Record<string, unknown>
+  for (const key of ['width', 'height'] as const) {
+    if (!positiveNumber(d[key]) || !Number.isInteger(d[key])) return `run.start: options.device.${key} must be a positive integer`
+  }
+  if (!positiveNumber(d.device_scale_factor)) return 'run.start: options.device.device_scale_factor must be a positive number'
+  if (d.playwright !== undefined && d.playwright !== null && typeof d.playwright !== 'string') {
+    return 'run.start: options.device.playwright must be a string or null'
+  }
+  return null
+}
+
 function mergeOptions(o: Partial<RunOptions> | undefined): RunOptions {
   const opts = { ...DEFAULT_OPTIONS, ...(o ?? {}) }
-  opts.viewport = { ...DEFAULT_OPTIONS.viewport, ...(o?.viewport ?? {}) }
+  const device = o?.device ?? undefined
+  // The worker sends the device size as `viewport` too; fall back to the device size if it did not.
+  const deviceSize = device ? { width: device.width, height: device.height } : {}
+  opts.viewport = { ...DEFAULT_OPTIONS.viewport, ...deviceSize, ...(o?.viewport ?? {}) }
+  if (device) {
+    opts.device = {
+      ...device,
+      is_mobile: device.is_mobile === true,
+      has_touch: device.has_touch === true,
+      playwright: typeof device.playwright === 'string' && device.playwright ? device.playwright : null,
+    }
+  } else {
+    delete opts.device
+  }
   opts.step_timeout_ms = Number(opts.step_timeout_ms) > 0 ? Number(opts.step_timeout_ms) : DEFAULT_OPTIONS.step_timeout_ms
   opts.retries = Math.max(0, Math.min(MAX_RETRIES, Math.trunc(Number(opts.retries) || 0)))
   return opts

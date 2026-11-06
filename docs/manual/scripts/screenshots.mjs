@@ -72,6 +72,15 @@ async function fixtures() {
   failedRun ??= await ensureRun({ test_case: 'SHOP-T12' }, 'failed')
 }
 
+// Responsive smoke flow on three devices (docs/14): the product page fails on the iPhone on purpose.
+let responsiveRun
+async function responsiveFixture() {
+  responsiveRun ??= await ensureRun({ flow: 'SHOP-F5' }, 'failed', {
+    options: { devices: [{ id: 'desktop' }, { id: 'ipad-mini' }, { id: 'iphone-15' }] },
+    pred: (r) => r.options?.devices?.length === 3,
+  })
+}
+
 /* ------------------------------------------------------------------ shots */
 
 const shots = {
@@ -170,6 +179,42 @@ const shots = {
     await page.waitForTimeout(500)
     await shot(page, 'run-dialog')
     await page.keyboard.press('Escape')
+  },
+
+  async 'run-devices-picker'() {
+    await page.goto('/p/SHOP/flows')
+    await settle(page)
+    await page.getByRole('button', { name: 'Run SHOP-F5 Responsive smoke' }).click()
+    await page.getByRole('dialog').getByRole('button', { name: /^Devices / }).click()
+    for (const name of ['iPad Mini 768×1024', 'iPhone 15 393×659']) {
+      const box = page.getByRole('checkbox', { name })
+      if ((await box.getAttribute('data-state')) !== 'checked') await box.click()
+    }
+    await page.waitForTimeout(400)
+    await shot(page, 'run-devices-picker')
+    await page.keyboard.press('Escape')
+    await page.keyboard.press('Escape')
+  },
+
+  async 'run-matrix'() {
+    await responsiveFixture()
+    await page.goto(`/p/SHOP/runs/${responsiveRun.key}`)
+    await settle(page, 900)
+    await shot(page, 'run-matrix')
+  },
+
+  async 'run-overflow-offenders'() {
+    await responsiveFixture()
+    await page.goto(`/p/SHOP/runs/${responsiveRun.key}`)
+    await settle(page, 900)
+    await page
+      .getByRole('table', { name: 'Results per test case and device' })
+      .getByRole('button', { name: /SHOP-T29 .* on iPhone 15 · 393×659: Failed/ })
+      .click()
+    const offenders = page.getByRole('region', { name: /^Cases on iPhone 15/ }).getByText('Elements past the right edge')
+    await offenders.scrollIntoViewIfNeeded()
+    await page.waitForTimeout(500)
+    await shot(page, 'run-overflow-offenders')
   },
 
   async 'run-live'() {

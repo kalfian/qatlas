@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/kalfian/qatlas/backend/internal/devices"
 	"github.com/kalfian/qatlas/backend/internal/dsl"
 	"github.com/kalfian/qatlas/backend/internal/runs"
 )
@@ -295,9 +296,92 @@ func TestParseSnapshotAndWireSteps(t *testing.T) {
 }
 
 func TestRunnerOptions(t *testing.T) {
-	got := runnerOptions(map[string]any{"browser": "webkit", "retries": 1.0, "run_timeout_ms": 5.0, "video": nil})
-	if len(got) != 2 || got["browser"] != "webkit" || got["retries"] != 1.0 {
+	got := runnerOptions(map[string]any{"browser": "webkit", "retries": 1.0, "run_timeout_ms": 5.0, "video": nil,
+		"viewport": map[string]any{"width": 1.0, "height": 1.0}}, devices.Default())
+	if len(got) != 4 || got["browser"] != "webkit" || got["retries"] != 1.0 {
 		t.Fatalf("runnerOptions: %v", got)
+	}
+	iphone, _ := devices.Preset("iphone-15")
+	raw, _ := json.Marshal(runnerOptions(map[string]any{"browser": "chromium"}, iphone))
+	want := `{"browser":"chromium","device":{"category":"mobile","device_scale_factor":3,"has_touch":true,"height":659,"id":"iphone-15","is_mobile":true,"label":"iPhone 15","playwright":"iPhone 15","width":393},"viewport":{"height":659,"width":393}}`
+	if string(raw) != want {
+		t.Fatalf("device options:\n%s\nwant\n%s", raw, want)
+	}
+	raw, _ = json.Marshal(runnerOptions(map[string]any{}, devices.Custom(800, 1280, "", "Kiosk"))["device"])
+	if string(raw) != `{"category":"tablet","device_scale_factor":1,"has_touch":false,"height":1280,"id":"custom","is_mobile":false,"label":"Kiosk","playwright":null,"width":800}` {
+		t.Fatalf("custom device: %s", raw)
+	}
+	// A stored preset (decoded from runs.options, no playwright field) still gets its descriptor.
+	rc := &runCtx{devices: devices.FromOptions(json.RawMessage(`{"devices":[{"id":"desktop","label":"Desktop","category":"desktop","width":1280,"height":720,"device_scale_factor":1},{"id":"pixel-7","label":"Pixel 7","category":"mobile","width":412,"height":839,"device_scale_factor":2.625,"is_mobile":true,"has_touch":true}]}`))}
+	if d := runnerOptions(nil, rc.deviceFor(1))["device"].(map[string]any); *(d["playwright"].(*string)) != "Pixel 7" {
+		t.Fatalf("stored preset descriptor: %v", d)
+	}
+	if rc.deviceFor(7).ID != "desktop" {
+		t.Fatal("out-of-range device index falls back to the first device")
+	}
+}
+
+func dcs(pos, dev int, exec, status string, cof bool) CaseState {
+	c := cs(pos, exec, status, cof)
+	c.DeviceIndex = dev
+	return c
+}
+
+func TestNextPlanDevices(t *testing.T) {
+	const A, M = "automated", "manual"
+	tests := []struct {
+		name  string
+		cases []CaseState
+		stop  bool
+		kind  PlanKind
+		seg   []int
+		pos   int
+		skip  []int
+	}{
+		{name: "segment stops at the device boundary",
+			cases: []CaseState{dcs(1, 0, A, "pending", false), dcs(2, 0, A, "pending", false), dcs(3, 1, A, "pending", false), dcs(4, 1, A, "pending", false)},
+			stop:  true, kind: PlanSegment, seg: []int{1, 2}},
+		{name: "next device gets its own segment",
+			cases: []CaseState{dcs(1, 0, A, "passed", false), dcs(2, 0, A, "passed", false), dcs(3, 1, A, "pending", false), dcs(4, 1, A, "pending", false), dcs(5, 2, A, "pending", false)},
+			stop:  true, kind: PlanSegment, seg: []int{3, 4}},
+		{name: "failure on device 0 skips only the rest of device 0",
+			cases: []CaseState{dcs(1, 0, A, "failed", false), dcs(2, 0, M, "pending", false), dcs(3, 0, A, "pending", false), dcs(4, 1, A, "pending", false), dcs(5, 1, A, "pending", false)},
+			stop:  true, kind: PlanSkipRest, skip: []int{2, 3}},
+		{name: "after the skip the next device runs",
+			cases: []CaseState{dcs(1, 0, A, "failed", false), dcs(2, 0, A, "skipped", false), dcs(3, 1, A, "pending", false), dcs(4, 1, A, "pending", false)},
+			stop:  true, kind: PlanSegment, seg: []int{3, 4}},
+		{name: "a failure on another device does not stop this one",
+			cases: []CaseState{dcs(1, 0, A, "passed", false), dcs(2, 0, A, "error", false), dcs(3, 1, A, "passed", false), dcs(4, 1, A, "pending", false)},
+			stop:  true, kind: PlanSegment, seg: []int{4}},
+		{name: "failure later on the same device stops it",
+			cases: []CaseState{dcs(1, 0, A, "passed", false), dcs(2, 1, A, "blocked", false), dcs(3, 1, A, "pending", false), dcs(4, 2, A, "pending", false)},
+			stop:  true, kind: PlanSkipRest, skip: []int{3}},
+		{name: "manual case of device 1 parks at its position",
+			cases: []CaseState{dcs(1, 0, A, "passed", false), dcs(2, 0, M, "passed", false), dcs(3, 1, A, "passed", false), dcs(4, 1, M, "pending", false)},
+			stop:  true, kind: PlanAwaitManual, pos: 4},
+		{name: "segment ends at a manual case before the boundary",
+			cases: []CaseState{dcs(1, 0, A, "pending", false), dcs(2, 0, M, "pending", false), dcs(3, 1, A, "pending", false), dcs(4, 1, M, "pending", false)},
+			kind:  PlanSegment, seg: []int{1}},
+		{name: "test case run: one case per device, stop off",
+			cases: []CaseState{dcs(1, 0, A, "failed", false), dcs(2, 1, A, "pending", false), dcs(3, 2, A, "pending", false)},
+			kind:  PlanSegment, seg: []int{2}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := NextPlan(tt.cases, tt.stop)
+			if p.Kind != tt.kind {
+				t.Fatalf("kind = %v, want %v (%+v)", p.Kind, tt.kind, p)
+			}
+			if got := positions(p.Segment); !equalInts(got, tt.seg) {
+				t.Errorf("segment = %v, want %v", got, tt.seg)
+			}
+			if got := positions(p.Skip); !equalInts(got, tt.skip) {
+				t.Errorf("skip = %v, want %v", got, tt.skip)
+			}
+			if p.Position != tt.pos {
+				t.Errorf("position = %d, want %d", p.Position, tt.pos)
+			}
+		})
 	}
 }
 

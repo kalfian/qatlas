@@ -5,6 +5,7 @@ import { regexDecodeMode, textForRegex, type RegexDecode } from './decode.js'
 import { toVarString } from './interpolate.js'
 import { evalJsonPath } from './jsonpath.js'
 import { matchMode, matchPhrase, matches, normalizeWs, toRegExp, type MatchMode } from './match.js'
+import { scanOverflow, type ScanArg } from './overflow.js'
 import { pollUntil, sleep, withCancel } from './poll.js'
 import type { WireStep } from './protocol.js'
 import { resolveSelector, type ResolvedLocator } from './selectors.js'
@@ -254,6 +255,79 @@ async function expectCount(ctx: StepContext, step: WireStep): Promise<StepOutcom
   const actual = r.value === undefined ? 'unknown' : String(r.value)
   if (r.ok) return ok({ expected, actual })
   throw assertionFailure(`Expected count of ${describe} to be ${expected}, received ${actual}`, expected, actual)
+}
+
+/* ------------------------------------------------------------------ responsive (docs/14) */
+
+const VIEWPORT_LIMITS = { width: [320, 3840], height: [320, 2160] } as const
+const MAX_TOLERANCE_PX = 50
+const MAX_OFFENDERS = 5
+
+/** Integer step param within [min, max] (numeric strings accepted: params may be interpolated). */
+function intParam(step: WireStep, name: string, min: number, max: number): number {
+  const v = requireParam(step, name)
+  const n = typeof v === 'number' ? v : Number(String(v).trim())
+  if (!Number.isInteger(n) || n < min || n > max) {
+    throw new StepFailure(`${step.action}: "${name}" must be an integer between ${min} and ${max}, got ${JSON.stringify(v)}`)
+  }
+  return n
+}
+
+async function setViewport(ctx: StepContext, step: WireStep): Promise<StepOutcome> {
+  const width = intParam(step, 'width', ...VIEWPORT_LIMITS.width)
+  const height = intParam(step, 'height', ...VIEWPORT_LIMITS.height)
+  const page = await ctx.session.page()
+  await pw(ctx, `set_viewport ${width}×${height}`, () => page.setViewportSize({ width, height }))
+  return ok()
+}
+
+function tolerancePx(step: WireStep): number {
+  const n = optionalNumber(step, 'tolerance_px') ?? 0
+  if (n < 0 || n > MAX_TOLERANCE_PX) throw new StepFailure(`"tolerance_px" must be between 0 and ${MAX_TOLERANCE_PX}, got ${JSON.stringify(step.tolerance_px)}`)
+  return n
+}
+
+/**
+ * Fails when the container (selector, strict) or the document scrolls horizontally:
+ * scrollWidth > clientWidth + tolerance_px. Polls like the other expects so a page that is still
+ * laying out gets until the step timeout; offenders are only collected for the failure report.
+ */
+async function expectNoHorizontalScroll(ctx: StepContext, step: WireStep): Promise<StepOutcome> {
+  const page = await ctx.session.page()
+  const tolerance = tolerancePx(step)
+  const hasSelector = typeof step.selector === 'string' && step.selector.trim() !== ''
+  // The document variant still goes through evaluateAll (one serialised function for both); ':root'
+  // is only a carrier, scanOverflow measures document.scrollingElement.
+  const { locator, describe } = hasSelector ? resolveSelector(page, step.selector) : { locator: page.locator(':root'), describe: 'the page' }
+  const arg: ScanArg = { document: !hasSelector, tolerancePx: tolerance, withOffenders: false, maxOffenders: MAX_OFFENDERS }
+  const scan = (withOffenders: boolean) => locator.evaluateAll(scanOverflow, { ...arg, withOffenders })
+  const fits = (v: { count: number; scrollWidth: number; clientWidth: number }) => v.count === 1 && v.scrollWidth <= v.clientWidth + tolerance
+  const r = await pollUntil(() => scan(false), fits, ctx.timeoutMs, ctx.signal)
+
+  const v = r.value
+  if (!v) throw new StepFailure(`Could not measure ${describe} within ${ctx.timeoutMs}ms (${cleanPlaywrightMessage(r.error)})`)
+  if (v.count === 0) {
+    throw assertionFailure(`Expected ${describe} to have no horizontal scroll, but no element matched within ${ctx.timeoutMs}ms`, 'no horizontal scroll', '(element not found)')
+  }
+  if (v.count > 1) {
+    throw assertionFailure(
+      `Expected ${describe} to have no horizontal scroll, but the selector matched ${v.count} elements (make it unique)`,
+      'no horizontal scroll',
+      `(${v.count} elements)`,
+    )
+  }
+  const expected = `content width ≤ ${v.clientWidth}px${tolerance > 0 ? ` (+${tolerance}px tolerance)` : ''}`
+  const actual = `content width ${v.scrollWidth}px`
+  if (r.ok) return ok({ expected, actual })
+  // Offenders are a diagnostic: a failure to collect them never changes the step's outcome.
+  const offenders = await withCancel(scan(true), ctx.signal).then((x) => x.offenders, () => [] as string[])
+  if (ctx.signal.aborted) throw new CancelledError()
+  const widest = offenders.length ? `; widest: ${offenders[0]}` : ''
+  throw new StepFailure(
+    `Expected ${describe} to have no horizontal scroll, but its content is ${v.scrollWidth}px wide in ${v.clientWidth}px` +
+      `${tolerance > 0 ? ` (tolerance ${tolerance}px)` : ''}${widest}`,
+    { expected, actual, offenders },
+  )
 }
 
 /* ------------------------------------------------------------------ HTTP */
@@ -672,6 +746,10 @@ export async function executeStep(ctx: StepContext, step: WireStep): Promise<Ste
       return expectPage(ctx, step, 'title')
     case 'expect_count':
       return expectCount(ctx, step)
+    case 'set_viewport':
+      return setViewport(ctx, step)
+    case 'expect_no_horizontal_scroll':
+      return expectNoHorizontalScroll(ctx, step)
     case 'http_request':
       return httpRequest(ctx, step)
     case 'expect_status':

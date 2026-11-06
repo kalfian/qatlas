@@ -92,7 +92,7 @@ erDiagram
 | assignee_id | uuid null | tester yang mengerjakan bagian manual (default: pemicu run) |
 | resume_position | int null | posisi item flow untuk dilanjutkan setelah bagian manual selesai |
 | cancel_requested | bool | |
-| options | jsonb | browser, headless, viewport, screenshot, video, timeout, retries |
+| options | jsonb | browser, headless, viewport, devices (ter-resolve, 1–6), screenshot, video, timeout, retries |
 | snapshot | jsonb | test case/flow/env variable saat run dibuat (secret hanya nama, bukan nilai) |
 | trigger | enum `manual`,`mcp`,`api`,`schedule` | |
 | triggered_by | uuid | user (juga untuk token) |
@@ -101,9 +101,9 @@ erDiagram
 | error_message | text null | untuk status `error` (infra) |
 | queued_at, started_at, finished_at | timestamptz | |
 
-**run_cases** — `run_id`, `position`, `test_case_id`, `test_case_revision`, `title`, `execution` (`automated`/`manual`), `status`, `executed_by null` (manual), `started_at`, `finished_at`, `video_artifact_id null`
+**run_cases** — `run_id`, `position` (unik per run, device demi device), `device_index` (index ke `runs.options.devices`, [14](14-responsive-testing.md)), `test_case_id`, `test_case_revision`, `title`, `execution` (`automated`/`manual`), `status`, `executed_by null` (manual), `started_at`, `finished_at`, `video_artifact_id null`
 
-**run_steps** — `run_case_id`, `position`, `step_id`, `action`, `description`, `status` (`pending`,`running`,`passed`,`failed`,`blocked`,`skipped`,`error`), `duration_ms`, `error_message`, `actual_result text null` (catatan tester), `screenshot_artifact_id null`, `details jsonb` (mis. request/response ringkas untuk HTTP step, nilai aktual vs expected)
+**run_steps** — `run_case_id`, `position`, `step_id`, `action`, `description`, `only_on text[] null` (snapshot; step yang tidak berlaku untuk kategori device disimpan `enabled=false`), `status` (`pending`,`running`,`passed`,`failed`,`blocked`,`skipped`,`error`), `duration_ms`, `error_message`, `actual_result text null` (catatan tester), `screenshot_artifact_id null`, `details jsonb` (mis. request/response ringkas untuk HTTP step, nilai aktual vs expected)
 
 **artifacts** — `project_id`, `run_id`, `run_case_id null`, `run_step_id null`, `kind` (`screenshot`,`video`,`trace`,`log`,`attachment`), `uploaded_by null` (attachment dari tester), `storage_key`, `mime`, `size_bytes`, `expires_at`
 

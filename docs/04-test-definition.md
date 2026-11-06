@@ -40,6 +40,7 @@ Test case disimpan sebagai **data terstruktur (JSON)**, bukan kode. Alasannya:
 | `continue_on_failure` | tidak | Default `false` → step sisanya di-skip jika gagal |
 | `enabled` | tidak | Default `true` |
 | `screenshot` | tidak | Paksa screenshot setelah step ini, apa pun opsi run |
+| `only_on` | tidak | Array kategori device `mobile`/`tablet`/`desktop`: step hanya dijalankan di device kategori itu, di device lain berstatus *skipped* ("tidak berlaku"). Mis. `["mobile"]` untuk klik menu hamburger. Lihat [14 — Responsive testing](14-responsive-testing.md) |
 
 ## Action v1
 
@@ -62,6 +63,8 @@ Test case disimpan sebagai **data terstruktur (JSON)**, bukan kode. Alasannya:
 | `expect_value` | `selector`, `value`, `match` | Nilai input |
 | `expect_url`, `expect_title` | `value`, `match` | |
 | `expect_count` | `selector`, `value` (int), `op` (`eq`/`gte`/`lte`) | |
+| `set_viewport` | `width` (320–3840), `height` (320–2160) | Ubah ukuran viewport di tengah test (emulasi mobile/UA/touch tetap dari device run) |
+| `expect_no_horizontal_scroll` | `selector?`, `tolerance_px?` (0–50) | Gagal bila konten lebih lebar dari layar (atau container `selector`); detail menyebut ≤ 5 elemen penyebab |
 
 **Selector** dipetakan runner ke locator Playwright resmi:
 
@@ -239,3 +242,4 @@ Seed dari halaman setup 2FA aplikasi: `extract_text` (`save_as: "otp_seed"`) lal
 - `include` step: memanggil test case lain sebagai sub-routine (mis. "Login" dipakai ulang).
 - `upload_file`, iframe/multi-tab, `if`/loop sederhana, data-driven (satu test case × dataset CSV).
 - Import/export (YAML, CSV) dan import dari tool lain.
+- Visual regression: `expect_screenshot` terhadap baseline per device (threshold, tombol "approve baseline"). Device/viewport matrix sendiri sudah ada ([14](14-responsive-testing.md)).

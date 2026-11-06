@@ -12,7 +12,7 @@ import type {
   ProjectRole,
   RunCreate,
   RunKind,
-  RunOptions,
+  RunOptionsInput,
   RunStatus,
   RunTrigger,
   StorageSettings,
@@ -285,7 +285,7 @@ export function useCreateProject() {
 export function useUpdateProject(key: string) {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (body: { name?: string; description?: string; default_run_options?: RunOptions; artifact_retention_days?: number }) =>
+    mutationFn: (body: { name?: string; description?: string; default_run_options?: RunOptionsInput; artifact_retention_days?: number }) =>
       unwrap(api.PATCH('/projects/{key}', { params: { path: { key } }, body })),
     onSuccess: (p) => {
       qc.setQueryData(qk.project(key), p)

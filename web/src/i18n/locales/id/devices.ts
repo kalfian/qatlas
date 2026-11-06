@@ -1,0 +1,71 @@
+import type en from '../en/devices'
+import type { Translation } from '../../types'
+
+/** Namespace `devices` (Bahasa Indonesia). Must mirror the English keys. */
+export default {
+  category: {
+    desktop: 'Desktop',
+    tablet: 'Tablet',
+    mobile: 'Mobile',
+  },
+  categoryWord: {
+    desktop: 'desktop',
+    tablet: 'tablet',
+    mobile: 'mobile',
+  },
+  summary: {
+    count_one: '{{count}} device',
+    count_other: '{{count}} device',
+    ofCategory: '{{count}} {{category}}',
+  },
+  picker: {
+    label: 'Device',
+    trigger: 'Pilih device: {{summary}}',
+    hint: 'Setiap case dijalankan sekali per device. Maksimal {{max}}.',
+    selected: 'Device terpilih',
+    remove: 'Hapus {{label}}',
+    lastOne: 'Minimal satu device harus dipilih',
+    limitReached: 'Batas {{max}} device tercapai. Hapus satu untuk menambah yang lain.',
+    custom: 'Ukuran custom',
+    width: 'Lebar',
+    height: 'Tinggi',
+    widthAria: 'Lebar custom dalam piksel',
+    heightAria: 'Tinggi custom dalam piksel',
+    add: 'Tambah',
+    addAria: 'Tambah ukuran custom',
+    countsAs: 'Dihitung sebagai {{category}} · DPR 1 · tanpa touch',
+    added: '{{label}} ditambahkan',
+    firefoxNote: 'Firefox tidak bisa mengemulasi isMobile; ukuran, touch, dan user agent tetap dipakai.',
+    done: 'Selesai',
+  },
+  chip: {
+    customTitle: 'Ukuran custom (DPR 1, tanpa touch)',
+    presetTitle: '{{label}} · DPR {{dpr}}{{touch}}',
+    touch: ' · touch',
+  },
+  onlyOn: {
+    label: 'Hanya di',
+    help: 'Jalankan step ini hanya di jenis device ini; di device lain step dilewati. Tidak memilih = semua device.',
+    all: 'Semua device',
+    badgeOne: 'Hanya {{category}}',
+    badgeMany: '{{list}}',
+    join: ' + ',
+    a11y: 'hanya di {{list}}',
+  },
+  validation: {
+    notList: 'Harus berupa daftar device',
+    empty: 'Pilih minimal satu device',
+    tooMany: 'Pilih maksimal {{max}} device',
+    idRequired: 'Id device wajib diisi',
+    unknownId: 'Device "{{id}}" tidak dikenal. Pakai salah satu: {{ids}}, atau custom',
+    widthRequired: 'Lebar wajib diisi untuk device custom',
+    heightRequired: 'Tinggi wajib diisi untuk device custom',
+    range: 'Harus antara {{min}} dan {{max}}',
+    category: 'Pakai mobile, tablet, atau desktop',
+    label: 'Maksimal {{max}} karakter',
+    duplicate: 'Device {{label}} sudah dipilih (devices[{{index}}])',
+    width: 'Lebar harus bilangan bulat antara {{min}} dan {{max}}',
+    height: 'Tinggi harus bilangan bulat antara {{min}} dan {{max}}',
+    alreadyAdded: '{{label}} sudah ada di daftar',
+  },
+} satisfies Translation<typeof en>

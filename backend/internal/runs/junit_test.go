@@ -248,3 +248,54 @@ func TestJUnitTruncatesLongMessages(t *testing.T) {
 		t.Fatalf("text not truncated")
 	}
 }
+
+func TestJUnitXMLDevices(t *testing.T) {
+	run := junitFixture()
+	run.Kind = KindFlow
+	run.Options = json.RawMessage(`{"browser":"chromium","viewport":{"width":1280,"height":720},"devices":[
+		{"id":"desktop","label":"Desktop","category":"desktop","width":1280,"height":720,"device_scale_factor":1,"is_mobile":false,"has_touch":false},
+		{"id":"iphone-15","label":"iPhone 15","category":"mobile","width":393,"height":659,"device_scale_factor":3,"is_mobile":true,"has_touch":true}]}`)
+	login := run.Cases[0]
+	cart := run.Cases[1]
+	run.Cases = nil
+	for d := range 2 {
+		for i, c := range []RunCase{login, cart, login} {
+			c.Position, c.DeviceIndex = d*3+i+1, d
+			run.Cases = append(run.Cases, c)
+		}
+	}
+	out, err := JUnitXML(run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := parseJUnit(t, out)
+	var names []string
+	for _, c := range p.Suites[0].Cases {
+		names = append(names, c.Name)
+		if c.ClassName != "SHOP" {
+			t.Errorf("classname %q", c.ClassName)
+		}
+	}
+	want := []string{
+		"SHOP-T1 Login [Desktop] [#1]", "SHOP-T3 Cart <total> [Desktop]", "SHOP-T1 Login [Desktop] [#3]",
+		"SHOP-T1 Login [iPhone 15] [#4]", "SHOP-T3 Cart <total> [iPhone 15]", "SHOP-T1 Login [iPhone 15] [#6]",
+	}
+	if strings.Join(names, "|") != strings.Join(want, "|") {
+		t.Fatalf("names:\n%v\nwant\n%v", names, want)
+	}
+
+	// One device (also legacy runs without devices): names unchanged.
+	run.Options = json.RawMessage(`{"browser":"chromium","viewport":{"width":393,"height":659}}`)
+	run.Cases = []RunCase{login, cart}
+	p = parseJUnit(t, must(JUnitXML(run)))
+	if p.Suites[0].Cases[0].Name != "SHOP-T1 Login" || p.Suites[0].Cases[1].Name != "SHOP-T3 Cart <total>" {
+		t.Fatalf("single device names: %+v", p.Suites[0].Cases)
+	}
+}
+
+func must(b []byte, err error) []byte {
+	if err != nil {
+		panic(err)
+	}
+	return b
+}

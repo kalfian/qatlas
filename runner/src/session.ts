@@ -1,4 +1,4 @@
-import { request, type APIRequestContext, type BrowserContext, type Page } from 'playwright'
+import { devices, request, type APIRequestContext, type BrowserContext, type BrowserContextOptions, type Page } from 'playwright'
 import type { BrowserPool } from './browsers.js'
 import { CancelledError, InfraError, cleanPlaywrightMessage } from './errors.js'
 import { log } from './log.js'
@@ -14,6 +14,31 @@ export interface SessionInit {
   videoDir: string | null
   baseURL?: string
   signal: AbortSignal
+}
+
+/**
+ * BrowserContext options for a run segment. With `options.device` the context emulates the device
+ * (docs/14): DPR, touch, isMobile (not on Firefox, which Playwright does not support there) and the
+ * user agent of the installed Playwright descriptor when it exists (otherwise no UA override).
+ * Without a device the options are exactly the pre-device ones. The video size is the viewport.
+ */
+export function contextOptions(options: RunOptions, baseURL: string | undefined, videoDir: string | null): BrowserContextOptions {
+  const base: BrowserContextOptions = {
+    viewport: options.viewport,
+    baseURL,
+    acceptDownloads: false,
+    ...(videoDir ? { recordVideo: { dir: videoDir, size: options.viewport } } : {}),
+  }
+  const device = options.device
+  if (!device) return base
+  const userAgent = device.playwright ? devices[device.playwright]?.userAgent : undefined
+  return {
+    ...base,
+    deviceScaleFactor: device.device_scale_factor,
+    hasTouch: device.has_touch,
+    ...(options.browser === 'firefox' ? {} : { isMobile: device.is_mobile }),
+    ...(userAgent ? { userAgent } : {}),
+  }
 }
 
 /**
@@ -49,12 +74,7 @@ export class Session {
     if (signal.aborted) throw new CancelledError()
     let context: BrowserContext | null = null
     try {
-      context = await browser.newContext({
-        viewport: options.viewport,
-        baseURL,
-        acceptDownloads: false,
-        ...(videoDir ? { recordVideo: { dir: videoDir, size: options.viewport } } : {}),
-      })
+      context = await browser.newContext(contextOptions(options, baseURL, videoDir))
       context.setDefaultTimeout(options.step_timeout_ms)
       context.setDefaultNavigationTimeout(options.step_timeout_ms)
       const page = await context.newPage()

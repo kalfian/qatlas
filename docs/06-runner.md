@@ -9,7 +9,8 @@ Dipilih di dialog "Run" (FE), parameter MCP, atau body REST. Default bisa disimp
 | `environment` | environment project | env default |
 | `browser` | `chromium`, `firefox`, `webkit` | `chromium` |
 | `headless` | bool | `true` |
-| `viewport` | `{width, height}` / preset (`desktop`, `mobile`) | 1280×720 |
+| `devices` | 1–6 device: preset (`desktop`, `ipad-mini`, `iphone-15`, …) atau `custom` lebar×tinggi; setiap case dijalankan per device (emulasi `isMobile`/touch/DPR/user agent) — [14](14-responsive-testing.md) | `desktop` |
+| `viewport` | `{width, height}` — lama; = ukuran device pertama. Dikirim sendiri → jadi satu device | 1280×720 |
 | `screenshot` | `off`, `on_failure`, `every_step` | `on_failure` |
 | `video` | `off`, `on_failure`, `always` | `off` |
 | `step_timeout_ms` | int | 10000 |

@@ -6,6 +6,7 @@ import "sort"
 type CaseState struct {
 	ID                string
 	Position          int
+	DeviceIndex       int    // index into the run's options.devices (docs/14)
 	Execution         string // automated | manual
 	Status            string // pending | running | passed | failed | blocked | skipped | error
 	ContinueOnFailure bool
@@ -17,7 +18,8 @@ type PlanKind int
 const (
 	// PlanFinalize: nothing left to execute; compute the final status.
 	PlanFinalize PlanKind = iota
-	// PlanSkipRest: stop_on_failure tripped; mark Skip as skipped, then finalize.
+	// PlanSkipRest: stop_on_failure tripped on the device of the next case; mark Skip
+	// (the open cases of that device) as skipped, then continue with the next device.
 	PlanSkipRest
 	// PlanAwaitManual: the next case is manual; park the run at Position.
 	PlanAwaitManual
@@ -28,8 +30,8 @@ const (
 // Plan is the planner's decision.
 type Plan struct {
 	Kind     PlanKind
-	Segment  []CaseState // PlanSegment
-	Skip     []CaseState // PlanSkipRest: every open case
+	Segment  []CaseState // PlanSegment: consecutive automated cases of one device
+	Skip     []CaseState // PlanSkipRest: every open case of the device
 	Position int         // PlanAwaitManual
 }
 
@@ -45,9 +47,14 @@ func stops(c CaseState) bool {
 // (pending/running) one by position — that is the case at resume_position after a manual
 // case was completed, or position 1 on the first job. A stale "running" case (left by a
 // crashed worker) counts as open and is executed again.
+//
+// Devices (docs/14): positions go device by device. A segment never crosses a device
+// boundary (each device gets its own run.start, so a shared session is per device), and
+// stop_on_failure only looks at earlier cases of the same device: a failure on device d
+// skips the open cases of d, later devices still run.
 func NextPlan(cases []CaseState, stopOnFailure bool) Plan {
 	cs := append([]CaseState(nil), cases...)
-	sort.Slice(cs, func(i, j int) bool { return cs[i].Position < cs[j].Position })
+	sort.SliceStable(cs, func(i, j int) bool { return cs[i].Position < cs[j].Position })
 
 	first := -1
 	for i, c := range cs {
@@ -59,12 +66,13 @@ func NextPlan(cases []CaseState, stopOnFailure bool) Plan {
 	if first < 0 {
 		return Plan{Kind: PlanFinalize}
 	}
+	dev := cs[first].DeviceIndex
 	if stopOnFailure {
 		for _, c := range cs[:first] {
-			if stops(c) {
+			if c.DeviceIndex == dev && stops(c) {
 				var open []CaseState
 				for _, x := range cs[first:] {
-					if isOpen(x.Status) {
+					if x.DeviceIndex == dev && isOpen(x.Status) {
 						open = append(open, x)
 					}
 				}
@@ -77,7 +85,7 @@ func NextPlan(cases []CaseState, stopOnFailure bool) Plan {
 	}
 	var seg []CaseState
 	for _, c := range cs[first:] {
-		if c.Execution == "manual" || !isOpen(c.Status) {
+		if c.DeviceIndex != dev || c.Execution == "manual" || !isOpen(c.Status) {
 			break
 		}
 		seg = append(seg, c)

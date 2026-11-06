@@ -1255,7 +1255,7 @@ export interface components {
         /** @enum {string} */
         Execution: "automated" | "manual";
         /** @enum {string} */
-        StepAction: "goto" | "click" | "dblclick" | "hover" | "fill" | "type" | "press" | "select_option" | "check" | "uncheck" | "wait_for" | "screenshot" | "extract_text" | "expect_visible" | "expect_hidden" | "expect_text" | "expect_value" | "expect_url" | "expect_title" | "expect_count" | "http_request" | "expect_status" | "expect_json" | "expect_header" | "expect_response_time" | "set_variable" | "wait" | "manual";
+        StepAction: "goto" | "click" | "dblclick" | "hover" | "fill" | "type" | "press" | "select_option" | "check" | "uncheck" | "wait_for" | "screenshot" | "extract_text" | "expect_visible" | "expect_hidden" | "expect_text" | "expect_value" | "expect_url" | "expect_title" | "expect_count" | "set_viewport" | "expect_no_horizontal_scroll" | "http_request" | "expect_status" | "expect_json" | "expect_header" | "expect_response_time" | "set_variable" | "wait" | "manual";
         /**
          * @description Satu step DSL. Field parameter bergantung pada `action` (lihat docs/04-test-definition.md);
          *     skema per-action yang ketat ada di `step-dsl.schema.json` (Phase 2).
@@ -1269,6 +1269,14 @@ export interface components {
             continue_on_failure?: boolean;
             enabled?: boolean;
             screenshot?: boolean;
+            /** @description Run this step only on devices of these categories (docs/14-responsive-testing.md); absent = every device. Elsewhere the step is skipped. */
+            only_on?: components["schemas"]["DeviceCategory"][];
+            /** @description set_viewport */
+            width?: number;
+            /** @description set_viewport */
+            height?: number;
+            /** @description expect_no_horizontal_scroll: allowed overflow in px (default 0) */
+            tolerance_px?: number;
             selector?: string;
             url?: string;
             value?: string | number | boolean;
@@ -1464,14 +1472,60 @@ export interface components {
         RunTrigger: "manual" | "mcp" | "api" | "schedule";
         /** @enum {string} */
         StepStatus: "pending" | "running" | "passed" | "failed" | "blocked" | "skipped" | "error";
+        /** @enum {string} */
+        DeviceCategory: "mobile" | "tablet" | "desktop";
+        /** @description A resolved device (preset from api/devices.json or custom), docs/14-responsive-testing.md. */
+        Device: {
+            /**
+             * @description Preset id (e.g. iphone-15) or "custom"
+             * @example iphone-15
+             */
+            id: string;
+            /** @example iPhone 15 */
+            label: string;
+            category: components["schemas"]["DeviceCategory"];
+            width: number;
+            height: number;
+            device_scale_factor: number;
+            is_mobile: boolean;
+            has_touch: boolean;
+        };
+        /** @description A preset `{ "id": "iphone-15" }` or a custom size `{ "id": "custom", "width": 390, "height": 844 }` (category defaults from the width: < 768 mobile, < 1024 tablet, else desktop; label defaults to "{w}×{h}"). */
+        DeviceInput: {
+            id: string;
+            width?: number;
+            height?: number;
+            category?: components["schemas"]["DeviceCategory"];
+            label?: string;
+        };
+        /** @description Partial run options; missing keys come from the project defaults. `devices` wins over `viewport` (a lone `viewport` becomes one device). */
+        RunOptionsInput: {
+            /** @enum {string} */
+            browser?: "chromium" | "firefox" | "webkit";
+            headless?: boolean;
+            viewport?: {
+                width: number;
+                height: number;
+            };
+            devices?: components["schemas"]["DeviceInput"][];
+            /** @enum {string} */
+            screenshot?: "off" | "on_failure" | "every_step";
+            /** @enum {string} */
+            video?: "off" | "on_failure" | "always";
+            step_timeout_ms?: number;
+            retries?: number;
+        };
         RunOptions: {
             /** @enum {string} */
             browser: "chromium" | "firefox" | "webkit";
             headless: boolean;
+            /** @description Size of devices[0] (kept for older clients). */
             viewport: {
                 width: number;
                 height: number;
             };
+            /** @description Devices the run executes every case on, in report column order (1–6). */
+            devices: components["schemas"]["Device"][];
             /** @enum {string} */
             screenshot: "off" | "on_failure" | "every_step";
             /** @enum {string} */
@@ -1491,22 +1545,7 @@ export interface components {
              */
             flow?: string;
             environment_id?: string | null;
-            /** @description Opsi parsial; sisanya dari default project. */
-            options?: {
-                /** @enum {string} */
-                browser?: "chromium" | "firefox" | "webkit";
-                headless?: boolean;
-                viewport?: {
-                    width: number;
-                    height: number;
-                };
-                /** @enum {string} */
-                screenshot?: "off" | "on_failure" | "every_step";
-                /** @enum {string} */
-                video?: "off" | "on_failure" | "always";
-                step_timeout_ms?: number;
-                retries?: number;
-            };
+            options?: components["schemas"]["RunOptionsInput"];
             /** @description Tester untuk bagian manual (default pemicu) */
             assignee_id?: string | null;
         };
@@ -1561,7 +1600,10 @@ export interface components {
         };
         RunCase: {
             id: string;
+            /** @description Unique in the run; device by device (device 0 = 1..N */
             position: number;
+            /** @description Index into run.options.devices */
+            device_index: number;
             test_case_id: string;
             test_case_key: string;
             test_case_revision: number;
@@ -1587,6 +1629,8 @@ export interface components {
             summary: string;
             description: string;
             expected: string;
+            /** @description Snapshot of the step's only_on; a step not meant for this case's device category is stored disabled (status skipped). */
+            only_on: components["schemas"]["DeviceCategory"][] | null;
             status: components["schemas"]["StepStatus"];
             duration_ms: number | null;
             error_message: string | null;
@@ -2319,7 +2363,7 @@ export interface operations {
                 "application/json": {
                     name?: string;
                     description?: string;
-                    default_run_options?: components["schemas"]["RunOptions"];
+                    default_run_options?: components["schemas"]["RunOptionsInput"];
                     artifact_retention_days?: number;
                 };
             };

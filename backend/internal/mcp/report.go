@@ -26,20 +26,21 @@ const (
 type reportInput struct {
 	RunKey             string `json:"run_key" jsonschema:"Run key, e.g. SHOP-R210"`
 	IncludeScreenshots string `json:"include_screenshots,omitempty" jsonschema:"none | failed (default) | all"`
-	Case               string `json:"case,omitempty" jsonschema:"Only report this test case key (useful for long flow runs)"`
+	Case               string `json:"case,omitempty" jsonschema:"Only report this test case key (useful for long flow runs; every device of it)"`
 }
 
 type reportStep struct {
-	Position     int     `json:"position"`
-	StepID       string  `json:"step_id"`
-	Action       string  `json:"action"`
-	Summary      string  `json:"summary"`
-	Status       string  `json:"status"`
-	DurationMS   *int64  `json:"duration_ms,omitempty"`
-	Description  string  `json:"description,omitempty"`
-	Expected     string  `json:"expected,omitempty"`
-	Error        *string `json:"error,omitempty"`
-	ActualResult *string `json:"actual_result,omitempty"`
+	Position     int      `json:"position"`
+	StepID       string   `json:"step_id"`
+	Action       string   `json:"action"`
+	Summary      string   `json:"summary"`
+	Status       string   `json:"status"`
+	OnlyOn       []string `json:"only_on,omitempty"` // device categories the step runs on (skipped elsewhere)
+	DurationMS   *int64   `json:"duration_ms,omitempty"`
+	Description  string   `json:"description,omitempty"`
+	Expected     string   `json:"expected,omitempty"`
+	Error        *string  `json:"error,omitempty"`
+	ActualResult *string  `json:"actual_result,omitempty"`
 	// Details are the runner's {expected, actual} (assertions) or
 	// {request, response} (http_request), truncated.
 	Details    any    `json:"details,omitempty"`
@@ -48,6 +49,7 @@ type reportStep struct {
 
 type reportCase struct {
 	Position       int          `json:"position"`
+	Device         string       `json:"device"` // "iPhone 15 · 393×659"
 	TestCase       string       `json:"test_case"`
 	Revision       int          `json:"revision"`
 	Title          string       `json:"title"`
@@ -103,6 +105,10 @@ func (s *Server) getRunReport(ctx context.Context, actor *auth.Actor, in reportI
 	if !runs.IsFinal(run.Status) {
 		report["note"] = "The run is not finished (" + run.Status + "); results are partial."
 	}
+	report["devices"] = deviceNames(run)
+	if pd := perDevice(run); pd != nil {
+		report["device_summary"] = pd
+	}
 
 	var (
 		images   []sdk.Content
@@ -127,6 +133,9 @@ func (s *Server) getRunReport(ctx context.Context, actor *auth.Actor, in reportI
 		}
 		n := len(images)/2 + 1
 		caption := fmt.Sprintf("Screenshot %d: %s step %s (%s) — %s", n, c.TestCaseKey, st.StepID, st.Status, st.Summary)
+		if len(run.Devices()) > 1 {
+			caption = fmt.Sprintf("Screenshot %d: %s on %s, step %s (%s) — %s", n, c.TestCaseKey, run.DeviceOf(c).Display(), st.StepID, st.Status, st.Summary)
+		}
 		images = append(images, &sdk.TextContent{Text: caption}, &sdk.ImageContent{Data: data, MIMEType: a.MIME})
 		imgNotes = append(imgNotes, caption)
 		return fmt.Sprintf("attached as image %d", n)
@@ -137,7 +146,7 @@ func (s *Server) getRunReport(ctx context.Context, actor *auth.Actor, in reportI
 		if onlyCase != "" && c.TestCaseKey != onlyCase {
 			continue
 		}
-		rc := reportCase{Position: c.Position, TestCase: c.TestCaseKey, Revision: c.TestCaseRevision, Title: c.Title,
+		rc := reportCase{Position: c.Position, Device: run.DeviceOf(c).Display(), TestCase: c.TestCaseKey, Revision: c.TestCaseRevision, Title: c.Title,
 			Execution: c.Execution, Status: c.Status, DurationMS: c.DurationMS, Steps: []reportStep{}}
 		if c.ExecutedBy != nil {
 			rc.ExecutedBy = c.ExecutedBy.Name
@@ -154,7 +163,7 @@ func (s *Server) getRunReport(ctx context.Context, actor *auth.Actor, in reportI
 				rc.StepsOmitted++
 				continue
 			}
-			rs := reportStep{Position: st.Position, StepID: st.StepID, Action: st.Action, Summary: st.Summary, Status: st.Status, DurationMS: st.DurationMS}
+			rs := reportStep{Position: st.Position, StepID: st.StepID, Action: st.Action, Summary: st.Summary, Status: st.Status, OnlyOn: st.OnlyOn, DurationMS: st.DurationMS}
 			if failed || c.Execution == runs.ExecutionManual {
 				rs.Description = truncate(st.Description, maxTextChars)
 				rs.Expected = truncate(st.Expected, maxTextChars)

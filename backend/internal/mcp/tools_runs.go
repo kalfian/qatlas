@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,6 +14,7 @@ import (
 
 	"github.com/kalfian/qatlas/backend/internal/auth"
 	"github.com/kalfian/qatlas/backend/internal/authz"
+	"github.com/kalfian/qatlas/backend/internal/devices"
 	"github.com/kalfian/qatlas/backend/internal/events"
 	"github.com/kalfian/qatlas/backend/internal/httpx"
 	"github.com/kalfian/qatlas/backend/internal/runs"
@@ -30,7 +33,30 @@ type runOptionsInput struct {
 	Video         string         `json:"video,omitempty" jsonschema:"off | on_failure | always (default off)"`
 	StepTimeoutMS int            `json:"step_timeout_ms,omitempty" jsonschema:"Default timeout per step in ms (default 10000)"`
 	Retries       *int           `json:"retries,omitempty" jsonschema:"Retries of a failed case, 0-2 (default 0)"`
-	Viewport      *viewportInput `json:"viewport,omitempty" jsonschema:"Browser viewport (default 1280x720)"`
+	Viewport      *viewportInput `json:"viewport,omitempty" jsonschema:"Browser viewport (default 1280x720); a single custom-size device. Ignored when devices is set"`
+	Devices       []string       `json:"devices,omitempty" jsonschema:"Devices to run every case on (1-6, report column order): preset ids (see the tool description) or custom:{width}x{height}, e.g. [\"desktop\", \"iphone-15\", \"custom:390x844\"]. Default = the project's run defaults"`
+}
+
+// deviceInput turns an MCP device string into a DeviceInput: "custom:390x844"
+// (also "custom:390×844") → a custom size, anything else → a preset id (an
+// unknown id is reported by run creation with the list of valid ids).
+func deviceInput(s string) map[string]any {
+	v := strings.TrimSpace(s)
+	if rest, ok := strings.CutPrefix(strings.ToLower(v), devices.CustomID+":"); ok {
+		w, h, ok := strings.Cut(strings.ReplaceAll(rest, "×", "x"), "x")
+		wi, werr := strconv.Atoi(strings.TrimSpace(w))
+		hi, herr := strconv.Atoi(strings.TrimSpace(h))
+		if ok && werr == nil && herr == nil {
+			return map[string]any{"id": devices.CustomID, "width": wi, "height": hi}
+		}
+	}
+	return map[string]any{"id": v}
+}
+
+// devicesHelp lists the preset ids for tool descriptions.
+func devicesHelp() string {
+	return "options.devices runs every case on several devices (max 6): preset ids " + strings.Join(devices.IDs(), ", ") +
+		", or custom:{width}x{height} (e.g. custom:390x844)."
 }
 
 func (o *runOptionsInput) raw() (json.RawMessage, error) {
@@ -59,6 +85,13 @@ func (o *runOptionsInput) raw() (json.RawMessage, error) {
 	if o.Viewport != nil {
 		m["viewport"] = map[string]int{"width": o.Viewport.Width, "height": o.Viewport.Height}
 	}
+	if o.Devices != nil {
+		list := make([]map[string]any, len(o.Devices))
+		for i, d := range o.Devices {
+			list[i] = deviceInput(d)
+		}
+		m["devices"] = list
+	}
 	if len(m) == 0 {
 		return nil, nil
 	}
@@ -71,6 +104,7 @@ func optionsTweak(s *jsonschema.Schema) {
 	enum(prop(s, "video"), "off", "on_failure", "always")
 	prop(s, "retries").Minimum, prop(s, "retries").Maximum = ptr(0.0), ptr(2.0)
 	prop(s, "step_timeout_ms").Minimum = ptr(1.0)
+	prop(s, "devices").MinItems, prop(s, "devices").MaxItems = ptr(1), ptr(devices.MaxDevices)
 }
 
 type runTestCaseInput struct {
@@ -109,18 +143,20 @@ var runStatuses = []string{runs.StatusQueued, runs.StatusRunning, runs.StatusAwa
 
 func (s *Server) registerRunTools() {
 	addTool(s, &sdk.Tool{
-		Name:        "run_test_case",
-		Title:       "Run a test case",
-		Description: "Queue a run of one test case. Returns run_key and status (queued, or awaiting_manual for a manual test case — a human executes those in the QAtlas UI). Then call wait_for_run. At most 3 runs started through MCP per token may be queued/running at once.",
+		Name:  "run_test_case",
+		Title: "Run a test case",
+		Description: "Queue a run of one test case. Returns run_key and status (queued, or awaiting_manual for a manual test case — a human executes those in the QAtlas UI). Then call wait_for_run. At most 3 runs started through MCP per token may be queued/running at once. " +
+			devicesHelp() + " With several devices the case runs once per device.",
 		Annotations: &sdk.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(true)},
 	}, auth.ScopeRun, func(sch *jsonschema.Schema) { optionsTweak(prop(sch, "options")) }, func(ctx context.Context, a *auth.Actor, in runTestCaseInput) (*sdk.CallToolResult, error) {
 		return s.startRun(ctx, a, "run_test_case", runs.KindTestCase, in.Key, in.Environment, in.Options)
 	})
 
 	addTool(s, &sdk.Tool{
-		Name:        "run_flow",
-		Title:       "Run a flow",
-		Description: "Queue a run of a flow (its enabled test cases in order). Returns run_key. Then call wait_for_run. The same per-token limit as run_test_case applies.",
+		Name:  "run_flow",
+		Title: "Run a flow",
+		Description: "Queue a run of a flow (its enabled test cases in order). Returns run_key. Then call wait_for_run. The same per-token limit as run_test_case applies. " +
+			devicesHelp() + " With several devices the whole flow runs device by device (stop_on_failure only stops the device that failed).",
 		Annotations: &sdk.ToolAnnotations{DestructiveHint: ptr(false), OpenWorldHint: ptr(true)},
 	}, auth.ScopeRun, func(sch *jsonschema.Schema) { optionsTweak(prop(sch, "options")) }, func(ctx context.Context, a *auth.Actor, in runFlowInput) (*sdk.CallToolResult, error) {
 		return s.startRun(ctx, a, "run_flow", runs.KindFlow, in.Key, in.Environment, in.Options)
@@ -231,7 +267,7 @@ func (s *Server) startRun(ctx context.Context, actor *auth.Actor, tool, kind, ke
 	out := map[string]any{
 		"run_key": run.Key, "status": run.Status, "kind": run.Kind,
 		"target": run.Target.Key + " " + run.Target.Title, "has_manual": run.HasManual,
-		"cases": len(run.Cases), "url": s.runURL(run),
+		"cases": len(run.Cases), "url": s.runURL(run), "devices": deviceNames(run),
 	}
 	if run.Environment != nil {
 		out["environment"] = run.Environment.Name
@@ -284,8 +320,83 @@ func (s *Server) waitForRun(ctx context.Context, actor *auth.Actor, in waitInput
 	return jsonResult(s.statusView(run))
 }
 
+// deviceNames lists the run's devices as "iPhone 15 · 393×659".
+func deviceNames(run runs.Run) []string {
+	devs := run.Devices()
+	out := make([]string, len(devs))
+	for i, d := range devs {
+		out[i] = d.Display()
+	}
+	return out
+}
+
+// deviceSummary is the per-device pass/fail summary of a run on several devices.
+type deviceSummary struct {
+	Device  string `json:"device"`
+	Status  string `json:"status"` // passed | failed | error | blocked | running | pending | skipped
+	Cases   int    `json:"cases"`
+	Passed  int    `json:"passed"`
+	Failed  int    `json:"failed"` // failed + error
+	Blocked int    `json:"blocked"`
+	Skipped int    `json:"skipped"`
+}
+
+// perDevice summarizes the cases of each device (nil for a single-device run).
+func perDevice(run runs.Run) []deviceSummary {
+	devs := run.Devices()
+	if len(devs) < 2 {
+		return nil
+	}
+	out := make([]deviceSummary, len(devs))
+	statuses := make([][]string, len(devs))
+	for i, d := range devs {
+		out[i].Device = d.Display()
+	}
+	for _, c := range run.Cases {
+		i := c.DeviceIndex
+		if i < 0 || i >= len(devs) {
+			i = 0
+		}
+		ds := &out[i]
+		ds.Cases++
+		switch c.Status {
+		case runs.StepPassed:
+			ds.Passed++
+		case runs.StepFailed, runs.StepError:
+			ds.Failed++
+		case runs.StepBlocked:
+			ds.Blocked++
+		case runs.StepSkipped:
+			ds.Skipped++
+		}
+		statuses[i] = append(statuses[i], c.Status)
+	}
+	for i := range out {
+		open := false
+		for _, st := range statuses[i] {
+			if st == runs.StepPending || st == runs.StepRunning {
+				open = true
+			}
+		}
+		switch {
+		case open && slices.Contains(statuses[i], runs.StepRunning):
+			out[i].Status = runs.StatusRunning
+		case open && runs.IsFinal(run.Status):
+			out[i].Status = runs.RunStatusFromCases(statuses[i])
+		case open:
+			out[i].Status = runs.StepPending
+		case len(statuses[i]) > 0 && out[i].Skipped == len(statuses[i]):
+			out[i].Status = runs.StepSkipped
+		default:
+			out[i].Status = runs.RunStatusFromCases(statuses[i])
+		}
+	}
+	return out
+}
+
 type failureLine struct {
 	Case    string  `json:"case"`
+	Device  string  `json:"device,omitempty"`
 	StepID  string  `json:"step_id,omitempty"`
 	Summary string  `json:"summary,omitempty"`
 	Status  string  `json:"status"`
@@ -313,6 +424,16 @@ func (s *Server) statusView(run runs.Run) map[string]any {
 	if run.CancelRequested && !done {
 		out["cancel_requested"] = true
 	}
+	multi := len(run.Devices()) > 1
+	if multi {
+		out["devices"] = perDevice(run)
+	}
+	deviceOf := func(c runs.RunCase) string {
+		if !multi {
+			return ""
+		}
+		return run.DeviceOf(c).Display()
+	}
 	switch {
 	case run.Status == runs.StatusAwaitingManual:
 		am := map[string]any{"message": "A human must execute the manual test case in the QAtlas UI. Stop waiting and tell the user (the run continues automatically afterwards)."}
@@ -323,6 +444,7 @@ func (s *Server) statusView(run runs.Run) map[string]any {
 			for _, c := range run.Cases {
 				if c.Position == *run.ResumePosition {
 					am["case"] = c.TestCaseKey + " " + c.Title
+					am["device"] = run.DeviceOf(c).Display()
 				}
 			}
 		}
@@ -337,12 +459,12 @@ func (s *Server) statusView(run runs.Run) map[string]any {
 				if st.Status == runs.StepFailed || st.Status == runs.StepError {
 					stepFound = true
 					if len(fails) < 5 {
-						fails = append(fails, failureLine{Case: c.TestCaseKey, StepID: st.StepID, Summary: st.Summary, Status: st.Status, Error: truncatePtr(st.ErrorMessage, 300)})
+						fails = append(fails, failureLine{Case: c.TestCaseKey, Device: deviceOf(c), StepID: st.StepID, Summary: st.Summary, Status: st.Status, Error: truncatePtr(st.ErrorMessage, 300)})
 					}
 				}
 			}
 			if caseFailed && !stepFound && len(fails) < 5 {
-				fails = append(fails, failureLine{Case: c.TestCaseKey, Status: c.Status})
+				fails = append(fails, failureLine{Case: c.TestCaseKey, Device: deviceOf(c), Status: c.Status})
 			}
 		}
 		if len(fails) > 0 {

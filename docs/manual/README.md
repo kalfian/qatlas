@@ -31,7 +31,7 @@ from a real instance: Go backend, worker, Playwright runner, and the demo shop.
 6. [Writing test cases](#6-writing-test-cases) (incl. [API testing](#api-testing))
 7. [Manual test cases](#7-manual-test-cases)
 8. [Flows](#8-flows)
-9. [Running tests](#9-running-tests)
+9. [Running tests](#9-running-tests) (incl. [Responsive testing](#responsive-testing))
 10. [Reading reports](#10-reading-reports)
 11. [Manual execution](#11-manual-execution)
 12. [Run history and dashboard](#12-run-history-and-dashboard)
@@ -534,7 +534,7 @@ run defaults and your own last choices.
 |---|---|
 | Environment | Which variables and secrets to use (default: the starred environment) |
 | Browser | Chromium, Firefox, WebKit (only the browsers installed on the worker can run; the default install has Chromium) |
-| Viewport | Desktop 1280×720, laptop, mobile, or custom size |
+| Devices | One or more devices (up to 6): desktop, laptop, tablets, phones, or a custom size. See [Responsive testing](#responsive-testing) |
 | Screenshot | Off, On failure, Every step |
 | Video | Off, On failure (records, then drops the video if the case passes), Always |
 | Retries per test case | 0, 1, 2 |
@@ -550,6 +550,56 @@ as it happens, with elapsed time.
 **Cancel** stops the running step and marks the rest Skipped; existing results are kept.
 **Re-run** repeats the run with the same options; its menu also has **Re-run failed** (only the
 failed test cases of a flow) and **Change options & run…**.
+
+### Responsive testing
+
+Check that a page works on phones, tablets and desktops in one run.
+
+**1. Pick devices.** In the Run dialog, **Devices** opens a list grouped into Desktop, Tablet and
+Mobile. Tick up to six, or add a **custom size** (width × height). Phones and tablets are real
+emulations, not just a smaller window: touch, pixel ratio, the mobile flag and the device's user
+agent, the same as Playwright's device list. Save a favourite set as the project default under
+**Settings → Run defaults**.
+
+![Device picker in the Run dialog](img/run-devices-picker.png)
+
+| Group | Devices |
+|---|---|
+| Desktop | Desktop 1280×720, Laptop 1440×900, Desktop Full HD 1920×1080 |
+| Tablet | iPad Pro 11 834×1194, iPad Mini 768×1024, Galaxy Tab S4 712×1138 |
+| Mobile | iPhone 15 393×659, iPhone SE 320×568, Pixel 7 412×839, Galaxy S9+ 320×658 |
+
+Every test case runs once per device, device after device; screenshots and videos are kept per
+device. With **stop on failure**, a failure stops only the rest of *that* device; the next device
+still runs. Manual cases are repeated per device and the tester sees which device to use
+("Test this on iPhone 15 · 393×659"). Firefox cannot emulate the mobile flag; size, touch and user
+agent still apply.
+
+**2. Read the matrix.** A run on several devices opens on the **Matrix** tab: one row per test
+case, one column per device. Select a cell to open that case on that device in the **Steps** tab.
+
+![Run matrix: test cases × devices](img/run-matrix.png)
+
+**3. Write responsive steps.** In the step editor:
+
+- **Only on** (under *Advanced* on any step): run the step only on mobile, tablet and/or desktop.
+  Elsewhere the step shows *Not run on desktop* and does not count as a failure. Typical use: click
+  the hamburger menu only on phones.
+- **`expect_no_horizontal_scroll`**: fails when the page (or a container `selector`) is wider than
+  the screen, and lists the elements that stick out with their right edge, widest first.
+  `tolerance_px` allows a few pixels.
+- **`set_viewport`**: resize the window mid-test (e.g. 320×640 then 1280×800). The device's
+  mobile flag, touch and user agent stay as they are.
+
+![Failed overflow check with the offending elements](img/run-overflow-offenders.png)
+
+**Demo:** the flow **SHOP-F5 Responsive smoke** (SHOP-T28…T30) runs on Desktop, iPad Mini and
+iPhone 15. The product page fails on the phone on purpose: the demo shop's size chart is too wide
+for a 393 px screen.
+
+MCP and the API take the same devices: `options.devices` with preset ids (`desktop`, `ipad-mini`,
+`iphone-15`, …) or `{ "id": "custom", "width": 390, "height": 844 }` (MCP:
+`"custom:390x844"`). Details: [docs/14](../14-responsive-testing.md).
 
 ## 10. Reading reports
 

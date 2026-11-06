@@ -79,6 +79,8 @@ var Catalog = []Action{
 	{"expect_url", "assert_ui", KindUI, []Param{p("value", "URL", true), matchOpt}},
 	{"expect_title", "assert_ui", KindUI, []Param{p("value", "Title", true), matchOpt}},
 	{"expect_count", "assert_ui", KindUI, []Param{selReq, p("op", "Operator", false), p("value", "Count", true)}},
+	{"set_viewport", "navigation", KindUI, []Param{p("width", "Width (px)", true), p("height", "Height (px)", true)}},
+	{"expect_no_horizontal_scroll", "assert_ui", KindUI, []Param{p("selector", "Container selector", false), p("tolerance_px", "Tolerance (px)", false)}},
 	{"http_request", "http", KindHTTP, []Param{p("method", "Method", true), p("url", "URL", true), p("headers", "Headers", false), p("query", "Query", false), p("body_type", "Body type", false), p("body", "Body", false), p("save", "Save to variables (name → JSONPath)", false), p("save_regex", "Save with regex (name → pattern)", false), p("regex_decode", "Decode body before regex", false), p("poll_timeout_ms", "Poll for up to (ms)", false), p("poll_interval_ms", "Poll interval (ms)", false), p("poll_until", "Poll until (JSONPath)", false)}},
 	{"expect_status", "assert_http", KindHTTP, []Param{p("value", "Status", true)}},
 	{"expect_json", "assert_http", KindHTTP, []Param{p("path", "JSONPath", true), p("op", "Operator", true), p("value", "Value", false)}},
@@ -182,6 +184,9 @@ func Validate(steps []Step, execution string) (errs, warnings []FieldError) {
 			errs = append(errs, FieldError{path + ".id", fmt.Sprintf("Step ID %q is a duplicate", id)})
 		}
 		seen[id] = true
+		if msg := onlyOnError(st); msg != "" {
+			errs = append(errs, FieldError{path + ".only_on", msg})
+		}
 
 		act := st.Action()
 		def, ok := Lookup(act)
@@ -237,6 +242,19 @@ func Validate(steps []Step, execution string) (errs, warnings []FieldError) {
 		}
 		if act == "http_request" {
 			errs = append(errs, validateHTTPExtras(st, path)...)
+		}
+		if act == "set_viewport" {
+			for _, r := range []struct {
+				name, label string
+				lo, hi      float64
+			}{{"width", "Width", ViewportMinWidth, ViewportMaxWidth}, {"height", "Height", ViewportMinHeight, ViewportMaxHeight}} {
+				if present(st[r.name]) && !st.intIn(r.name, r.lo, r.hi) {
+					errs = append(errs, FieldError{path + "." + r.name, fmt.Sprintf("%s must be a whole number between %g and %g", r.label, r.lo, r.hi)})
+				}
+			}
+		}
+		if act == "expect_no_horizontal_scroll" && present(st["tolerance_px"]) && !st.intIn("tolerance_px", 0, TolerancePxMax) {
+			errs = append(errs, FieldError{path + ".tolerance_px", fmt.Sprintf("Tolerance must be a whole number between 0 and %d px", TolerancePxMax)})
 		}
 		seenFn := map[string]bool{}
 		for _, fi := range fnIssues(st) {
@@ -321,6 +339,80 @@ func validateHTTPExtras(st Step, path string) []FieldError {
 		}
 	}
 	return errs
+}
+
+/* ------------------------------------------------------------------ responsive steps (docs/14) */
+
+// Limits of set_viewport and expect_no_horizontal_scroll.
+const (
+	ViewportMinWidth  = 320
+	ViewportMaxWidth  = 3840
+	ViewportMinHeight = 320
+	ViewportMaxHeight = 2160
+	TolerancePxMax    = 50
+)
+
+// DeviceCategories are the only_on values (OpenAPI DeviceCategory).
+var DeviceCategories = []string{"mobile", "tablet", "desktop"}
+
+// intIn reports whether a param is a whole number (number or numeric string) in [lo, hi].
+func (s Step) intIn(key string, lo, hi float64) bool {
+	n, ok := s.number(key)
+	return ok && n == math.Trunc(n) && n >= lo && n <= hi
+}
+
+// onlyOnError checks the common only_on field: absent (or null) = every
+// device; otherwise a non-empty list of distinct device categories.
+func onlyOnError(st Step) string {
+	v, ok := st["only_on"]
+	if !ok || v == nil {
+		return ""
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return "Only on must be a list of device categories (mobile, tablet, desktop)"
+	}
+	if len(list) == 0 {
+		return "Choose at least one device category, or remove only_on to run the step on every device"
+	}
+	seen := map[string]bool{}
+	for _, x := range list {
+		c, ok := x.(string)
+		if !ok || !slices.Contains(DeviceCategories, c) {
+			return fmt.Sprintf("Unknown device category %s; use mobile, tablet or desktop", Step{"v": x}.Str("v"))
+		}
+		if seen[c] {
+			return fmt.Sprintf("Device category %q is listed twice", c)
+		}
+		seen[c] = true
+	}
+	return ""
+}
+
+// OnlyOn returns the step's only_on categories (nil = every device). Values
+// that are not strings are dropped; the list is only meaningful for steps
+// that passed Validate.
+func (s Step) OnlyOn() []string {
+	list, ok := s["only_on"].([]any)
+	if !ok || len(list) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, x := range list {
+		if c, ok := x.(string); ok {
+			out = append(out, c)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// AppliesTo reports whether the step runs on a device of category (no only_on → always).
+func (s Step) AppliesTo(category string) bool {
+	only := s.OnlyOn()
+	return only == nil || slices.Contains(only, category)
 }
 
 /* ------------------------------------------------------------------ fn.* checks */
@@ -530,6 +622,13 @@ func Summarize(s Step) string {
 		return "Title " + matchWord(s.Str("match")) + " " + q(s.Str("value"))
 	case "expect_count":
 		return "Count of " + sel + " " + countOp(s.Str("op")) + " " + s.Str("value")
+	case "set_viewport":
+		return "Set viewport " + s.Str("width") + "×" + s.Str("height")
+	case "expect_no_horizontal_scroll":
+		if sel != "" {
+			return "Expect no horizontal scroll in " + sel
+		}
+		return "Expect no horizontal scroll"
 	case "http_request":
 		m := s.Str("method")
 		if m == "" {

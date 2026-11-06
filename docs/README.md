@@ -22,6 +22,8 @@ QAtlas adalah platform self-hosted untuk **mengelola test case**, **menyusun flo
 | 10 | [Roadmap & Phases](10-roadmap.md) | Phase 1 (FE end-to-end dengan mock) s/d phase 5 |
 | 11 | [Open Questions](11-open-questions.md) | Keputusan yang butuh konfirmasi + log keputusan |
 | 12 | [Deployment](12-deployment.md) | Proxmox LXC: docker-compose & manual (systemd) |
+| 13 | [Implementation guide](13-implementation-guide.md) | Panduan implementasi per komponen |
+| 14 | [Responsive testing](14-responsive-testing.md) | Device preset & emulasi, run multi-device (matrix), step `set_viewport` / `expect_no_horizontal_scroll` / `only_on` |
 
 ## Ringkasan keputusan utama
 

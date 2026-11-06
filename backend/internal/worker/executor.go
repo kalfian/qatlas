@@ -17,6 +17,7 @@ import (
 
 	"github.com/kalfian/qatlas/backend/internal/artifacts"
 	"github.com/kalfian/qatlas/backend/internal/db"
+	"github.com/kalfian/qatlas/backend/internal/devices"
 	"github.com/kalfian/qatlas/backend/internal/events"
 	"github.com/kalfian/qatlas/backend/internal/jobs"
 	"github.com/kalfian/qatlas/backend/internal/runs"
@@ -101,6 +102,7 @@ type runInfo struct {
 	StopOnFailure   bool
 	CancelRequested bool
 	Options         map[string]any
+	OptionsRaw      []byte
 	Snapshot        []byte
 	QueuedAt        time.Time
 }
@@ -108,6 +110,7 @@ type runInfo struct {
 // runCtx carries per-execution state.
 type runCtx struct {
 	run      *runInfo
+	devices  []devices.Device // options.devices (never empty)
 	snap     *runSnapshot
 	env      map[string]any
 	secrets  map[string]string
@@ -160,7 +163,7 @@ func (e *Executor) Execute(ctx context.Context, runID uuid.UUID) (err error) {
 		log.Info("run is not executable; skipping", "status", run.Status)
 		return nil
 	}
-	rc := &runCtx{run: run, mask: NewMasker(nil)}
+	rc := &runCtx{run: run, mask: NewMasker(nil), devices: devices.FromOptions(run.OptionsRaw)}
 
 	defer func() {
 		if p := recover(); p != nil {
@@ -232,6 +235,7 @@ func (e *Executor) Execute(ctx context.Context, runID uuid.UUID) (err error) {
 		}
 		return cause
 	}
+	lastDevice := -1
 	for {
 		cases, err := e.loadCaseStates(dbctx, runID)
 		if err != nil {
@@ -245,6 +249,14 @@ func (e *Executor) Execute(ctx context.Context, runID uuid.UUID) (err error) {
 				return fail(err)
 			}
 			return nil
+		}
+		// The run timeout caps the execution on one device: a job that moves on to the
+		// next device's segment (docs/14) starts a fresh budget.
+		if dev := plan.Segment[0].DeviceIndex; dev != lastDevice {
+			if lastDevice >= 0 {
+				rc.deadline = time.Now().Add(rc.timeout)
+			}
+			lastDevice = dev
 		}
 		out, err := e.runSegment(ctx, rc, plan.Segment)
 		if err != nil {
@@ -303,6 +315,7 @@ func (e *Executor) loadRun(ctx context.Context, id uuid.UUID) (*runInfo, error) 
 	if err != nil {
 		return nil, err
 	}
+	r.OptionsRaw = opts
 	if err := json.Unmarshal(opts, &r.Options); err != nil || r.Options == nil {
 		r.Options = map[string]any{}
 	}
@@ -311,14 +324,14 @@ func (e *Executor) loadRun(ctx context.Context, id uuid.UUID) (*runInfo, error) 
 
 func (e *Executor) loadCaseStates(ctx context.Context, runID uuid.UUID) ([]CaseState, error) {
 	rows, err := e.cfg.Pool.Query(ctx, `
-		SELECT id::text, position, execution, status, continue_on_failure
+		SELECT id::text, position, device_index, execution, status, continue_on_failure
 		FROM run_cases WHERE run_id = $1 ORDER BY position`, runID)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (CaseState, error) {
 		var c CaseState
-		err := row.Scan(&c.ID, &c.Position, &c.Execution, &c.Status, &c.ContinueOnFailure)
+		err := row.Scan(&c.ID, &c.Position, &c.DeviceIndex, &c.Execution, &c.Status, &c.ContinueOnFailure)
 		return c, err
 	})
 }
@@ -480,10 +493,11 @@ func (e *Executor) runSegment(ctx context.Context, rc *runCtx, seg []CaseState) 
 		return segAborted, err
 	}
 
+	// A segment never crosses a device boundary (NextPlan): one device per run.start.
 	msg := &RunStart{
 		RunID:         rc.run.ID.String(),
 		ArtifactDir:   rc.dir,
-		Options:       runnerOptions(rc.run.Options),
+		Options:       runnerOptions(rc.run.Options, rc.deviceFor(seg[0].DeviceIndex)),
 		SharedSession: rc.run.SharedSession,
 		StopOnFailure: rc.run.StopOnFailure,
 		Env:           rc.env,
@@ -652,15 +666,32 @@ func (e *Executor) runSegment(ctx context.Context, rc *runCtx, seg []CaseState) 
 	}
 }
 
-// runnerOptions passes the RunOptions the runner understands.
-func runnerOptions(o map[string]any) map[string]any {
+// runnerOptions passes the RunOptions the runner understands, with viewport = the
+// segment's device size and device = its emulation (docs/14: playwright is the
+// descriptor name supplying the user agent, null for custom devices).
+func runnerOptions(o map[string]any, dev devices.Device) map[string]any {
 	out := map[string]any{}
-	for _, k := range []string{"browser", "headless", "viewport", "screenshot", "video", "step_timeout_ms", "retries"} {
+	for _, k := range []string{"browser", "headless", "screenshot", "video", "step_timeout_ms", "retries"} {
 		if v, ok := o[k]; ok && v != nil {
 			out[k] = v
 		}
 	}
+	out["viewport"] = map[string]any{"width": dev.Width, "height": dev.Height}
+	out["device"] = map[string]any{
+		"id": dev.ID, "label": dev.Label, "category": dev.Category,
+		"width": dev.Width, "height": dev.Height, "device_scale_factor": dev.DeviceScaleFactor,
+		"is_mobile": dev.IsMobile, "has_touch": dev.HasTouch, "playwright": dev.PlaywrightName(),
+	}
 	return out
+}
+
+// deviceFor returns the run's device at index (the first device when the index is
+// out of range, which only a corrupted run could produce).
+func (rc *runCtx) deviceFor(index int) devices.Device {
+	if index >= 0 && index < len(rc.devices) {
+		return rc.devices[index]
+	}
+	return rc.devices[0]
 }
 
 func (e *Executor) loadSegment(ctx context.Context, caseIDs []uuid.UUID) ([]segCase, []segStep, error) {

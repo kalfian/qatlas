@@ -28,18 +28,22 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
+import { DeviceChip } from '@/components/devices'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { deviceLabel, devicesSummary } from '@/lib/devices'
 import { formatBytes, formatDateTime, formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { scrollToElement, useDelayedFlag, useNow, usePrefersReducedMotion } from './hooks'
 import { ManualWorkspace } from './ManualWorkspace'
 import { ExpiredArtifact, Lightbox, Thumb } from './media'
 import { RunDialog } from './RunDialog'
+import { RunMatrix } from './RunMatrix'
 import { CaseList } from './RunSteps'
 import {
   BROWSER_LABEL,
   collectScreenshots,
+  deviceOfCase,
   downloadJson,
   downloadText,
   failedStepCount,
@@ -49,6 +53,7 @@ import {
   isLive,
   kindLabel,
   manualCaseOf,
+  runDevices,
   screenshotLabel,
   tallySteps,
   triggerLabel,
@@ -56,7 +61,7 @@ import {
   type MediaItem,
 } from './runUtils'
 
-type Tab = 'steps' | 'screenshots' | 'video' | 'detail'
+type Tab = 'matrix' | 'steps' | 'screenshots' | 'video' | 'detail'
 
 export function RunPage() {
   const { key, runKey } = useParams({ from: '/_app/p/$key/runs/$runKey' })
@@ -123,7 +128,9 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
   const manualCase = manualCaseOf(run)
   const editable = !!manualCase && canExecute && run.assignee?.id === me.user.id
 
-  const [tab, setTab] = React.useState<Tab>('steps')
+  const multiDevice = runDevices(run).length > 1
+  // multi-device runs open on the matrix (docs/14); the grouped case list is one tab away
+  const [tab, setTab] = React.useState<Tab>(() => (multiDevice ? 'matrix' : 'steps'))
   const [caseOpen, setCaseOpen] = React.useState<Record<string, boolean>>({})
   const [stepOpen, setStepOpen] = React.useState<Record<string, boolean>>({})
   const [lightbox, setLightbox] = React.useState<{ items: MediaItem[]; index: number } | null>(null)
@@ -208,9 +215,15 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
     for (const c of run.cases) {
       const p = prev.cases.find((x) => x.id === c.id)
       if (!p || p.status === c.status) continue
-      if (c.status === 'running' && c.execution === 'automated') msgs.push(t('live.caseRunning', { n: String(c.position), key: c.test_case_key }))
+      const device = multiDevice ? deviceLabel(deviceOfCase(run, c)) : null
+      if (c.status === 'running' && c.execution === 'automated')
+        msgs.push(device ? t('live.caseRunningOn', { n: String(c.position), key: c.test_case_key, device }) : t('live.caseRunning', { n: String(c.position), key: c.test_case_key }))
       else if (c.status !== 'pending' && c.status !== 'running')
-        msgs.push(t('live.caseDone', { n: String(c.position), status: STATUS_META[c.status].label }))
+        msgs.push(
+          device
+            ? t('live.caseDoneOn', { n: String(c.position), device, status: STATUS_META[c.status].label })
+            : t('live.caseDone', { n: String(c.position), status: STATUS_META[c.status].label }),
+        )
     }
     if (prev.status !== run.status) {
       if (!isActive(run.status)) {
@@ -227,11 +240,25 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
       }
     }
     if (msgs.length) setAnnouncement(msgs.join('. '))
-  }, [run, t])
+  }, [run, t, multiDevice])
 
   const titleRef = React.useRef<HTMLHeadingElement>(null)
 
   const onToggleCase = (id: string, open: boolean) => setCaseOpen((o) => ({ ...o, [id]: open }))
+  /** Matrix cell → that case on that device, opened in the Steps tab, scrolled to and focused. */
+  const openCase = (id: string) => {
+    interacted.current = true
+    setPill(false)
+    setTab('steps')
+    setCaseOpen((o) => ({ ...o, [id]: true }))
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`case-${id}`)
+        scrollToElement(el, reduced)
+        el?.querySelector<HTMLButtonElement>(`#case-title-${id} button`)?.focus({ preventScroll: true })
+      }),
+    )
+  }
   const onToggleStep = (id: string, open: boolean) => setStepOpen((o) => ({ ...o, [id]: open }))
   const lightboxOrigin = React.useRef<HTMLElement | null>(null)
   const openShot = (index: number) => {
@@ -257,8 +284,9 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
       {run.cancel_requested && isLive(run.status) && (
         <p className="text-sm text-muted-foreground">{t('report.cancelRequested')}</p>
       )}
-      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="grid gap-4">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-4">
         <TabsList aria-label={t('report.tabsLabel')}>
+          {multiDevice && <TabsTrigger value="matrix">{t('report.tabs.matrix')}</TabsTrigger>}
           <TabsTrigger value="steps">{t('report.tabs.steps')}</TabsTrigger>
           <TabsTrigger value="screenshots">
             {t('report.tabs.screenshots')} <span className="text-xs text-muted-foreground tabular">{screenshots.length}</span>
@@ -268,6 +296,12 @@ function RunView({ run, projectKey }: { run: Run; projectKey: string }) {
           </TabsTrigger>
           <TabsTrigger value="detail">{t('report.tabs.detail')}</TabsTrigger>
         </TabsList>
+
+        {multiDevice && (
+          <TabsContent value="matrix">
+            <RunMatrix run={run} onOpenCase={openCase} />
+          </TabsContent>
+        )}
 
         <TabsContent value="steps">
           <CaseList
@@ -425,6 +459,8 @@ function RunHeader({ run, projectKey, titleRef }: { run: Run; projectKey: string
               <span>{BROWSER_LABEL[run.options.browser]}</span>
             </>
           )}
+          {sep}
+          <span>{devicesSummary(runDevices(run))}</span>
           {sep}
           <span>
             {t('report.by')} <span className="text-foreground">{run.triggered_by.name}</span>
@@ -779,7 +815,16 @@ function RunDetail({ run }: { run: Run }) {
           title={t('detail.options')}
           rows={[
             [t('detail.browser'), `${BROWSER_LABEL[o.browser]}${o.headless ? ' · headless' : ' · headed'}`],
-            [t('detail.viewport'), mono(`${o.viewport.width}×${o.viewport.height}`)],
+            [
+              t('detail.devices'),
+              <ul className="flex flex-wrap gap-1.5" aria-label={t('detail.devices')}>
+                {runDevices(run).map((d, i) => (
+                  <li key={i}>
+                    <DeviceChip device={d} />
+                  </li>
+                ))}
+              </ul>,
+            ],
             [t('detail.screenshot'), screenshotLabel(o.screenshot)],
             [t('detail.video'), videoLabel(o.video)],
             [t('detail.stepTimeout'), mono(`${o.step_timeout_ms} ms`)],

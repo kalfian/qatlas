@@ -215,3 +215,68 @@ describe('expect_status', () => {
     expect(validateSteps([steps[0], { id: 'b', action: 'expect_status' }], 'automated').errors.map((e) => e.path)).toEqual(['steps[1].value'])
   })
 })
+
+describe('responsive steps (docs/14)', () => {
+  afterEach(() => setLanguage('en'))
+  const run = (steps: Step[]) => validateSteps(steps, 'automated', { lng: 'en' })
+
+  it('summaries match docs/14', async () => {
+    expect(summarizeStep({ id: 'a', action: 'set_viewport', width: 768, height: 1024 })).toBe('Set viewport 768×1024')
+    expect(summarizeStep({ id: 'a', action: 'expect_no_horizontal_scroll' })).toBe('Expect no horizontal scroll')
+    expect(summarizeStep({ id: 'a', action: 'expect_no_horizontal_scroll', selector: 'main', tolerance_px: 4 })).toBe('Expect no horizontal scroll in main')
+    await setLanguage('id')
+    expect(summarizeStep({ id: 'a', action: 'set_viewport', width: 768, height: 1024 })).toBe('Ubah viewport 768×1024')
+    // run data is written by the server in English
+    expect(summarizeStep({ id: 'a', action: 'expect_no_horizontal_scroll', selector: 'main' }, { lng: 'en' })).toBe('Expect no horizontal scroll in main')
+  })
+
+  it('catalog: kind ui, groups, params', () => {
+    const vp = ACTIONS.find((a) => a.action === 'set_viewport')!
+    const ns = ACTIONS.find((a) => a.action === 'expect_no_horizontal_scroll')!
+    expect([vp.kind, vp.group, ns.kind, ns.group]).toEqual(['ui', 'navigation', 'ui', 'assert_ui'])
+    // same order as backend/internal/dsl/dsl.go: both right after expect_count
+    const order = ACTIONS.map((a) => a.action)
+    expect(order.slice(order.indexOf('expect_count'), order.indexOf('expect_count') + 3)).toEqual(['expect_count', 'set_viewport', 'expect_no_horizontal_scroll'])
+    expect(vp.params.map((p) => [p.name, p.type, !!p.required])).toEqual([['width', 'number', true], ['height', 'number', true]])
+    expect(ns.params.map((p) => [p.name, p.type, !!p.required])).toEqual([['selector', 'selector', false], ['tolerance_px', 'number', false]])
+  })
+
+  it('set_viewport needs width 320–3840 and height 320–2160', () => {
+    expect(run([{ id: 'a', action: 'set_viewport', width: 390, height: 844 }]).errors).toEqual([])
+    expect(run([{ id: 'a', action: 'set_viewport' }]).errors.map((e) => e.path)).toEqual(['steps[0].width', 'steps[0].height'])
+    expect(run([{ id: 'a', action: 'set_viewport', width: 300, height: 2161 }, { id: 'b', action: 'set_viewport', width: 390.5, height: 844 }]).errors).toEqual([
+      { path: 'steps[0].width', message: 'Width must be a whole number between 320 and 3840' },
+      { path: 'steps[0].height', message: 'Height must be a whole number between 320 and 2160' },
+      { path: 'steps[1].width', message: 'Width must be a whole number between 320 and 3840' },
+    ])
+  })
+
+  it('expect_no_horizontal_scroll: selector optional, tolerance 0–50', () => {
+    expect(run([{ id: 'a', action: 'expect_no_horizontal_scroll' }]).errors).toEqual([])
+    expect(run([{ id: 'a', action: 'expect_no_horizontal_scroll', selector: '.table-wrap', tolerance_px: 50 }]).errors).toEqual([])
+    expect(run([{ id: 'a', action: 'expect_no_horizontal_scroll', tolerance_px: 51 }]).errors).toEqual([
+      { path: 'steps[0].tolerance_px', message: 'Tolerance must be a whole number between 0 and 50 px' },
+    ])
+  })
+
+  it('only_on: a list, not empty, known categories, no duplicates; on any action incl. manual', () => {
+    expect(run([{ id: 'a', action: 'click', selector: '#menu', only_on: ['mobile', 'tablet'] }]).errors).toEqual([])
+    expect(validateSteps([{ id: 'a', action: 'manual', description: 'Swipe the gallery', only_on: ['mobile'] }], 'manual', { lng: 'en' }).errors).toEqual([])
+    expect(run([
+      { id: 'a', action: 'click', selector: '#x', only_on: [] },
+      { id: 'b', action: 'click', selector: '#x', only_on: ['mobile', 'mobile'] },
+      { id: 'c', action: 'click', selector: '#x', only_on: ['watch' as never] },
+      { id: 'd', action: 'click', selector: '#x', only_on: 'mobile' as never },
+      { id: 'e', action: 'nope' as never, only_on: [] },
+    ]).errors).toEqual([
+      { path: 'steps[0].only_on', message: 'Choose at least one device category, or remove only_on to run the step on every device' },
+      { path: 'steps[1].only_on', message: 'Device category "mobile" is listed twice' },
+      { path: 'steps[2].only_on', message: 'Unknown device category watch; use mobile, tablet or desktop' },
+      { path: 'steps[3].only_on', message: 'Only on must be a list of device categories (mobile, tablet, desktop)' },
+      // checked before the action, like dsl.go
+      { path: 'steps[4].only_on', message: 'Choose at least one device category, or remove only_on to run the step on every device' },
+      { path: 'steps[4].action', message: 'Unknown action "nope"' },
+    ])
+    expect(run([{ id: 'a', action: 'click', selector: '#x', only_on: null as never }]).errors).toEqual([])
+  })
+})

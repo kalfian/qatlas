@@ -2,13 +2,17 @@ package projects
 
 import (
 	"encoding/json"
+	"reflect"
 	"testing"
 	"time"
+
+	"github.com/kalfian/qatlas/backend/internal/devices"
+	"github.com/kalfian/qatlas/backend/internal/httpx"
 )
 
 func TestMergeRunOptions(t *testing.T) {
 	o, err := MergeRunOptions(nil, json.RawMessage(`null`))
-	if err != nil || o != DefaultRunOptions() {
+	if err != nil || !o.Equal(DefaultRunOptions()) {
 		t.Fatalf("defaults: %+v %v", o, err)
 	}
 	o, err = MergeRunOptions(
@@ -20,7 +24,8 @@ func TestMergeRunOptions(t *testing.T) {
 	}
 	want := DefaultRunOptions()
 	want.Browser, want.Video, want.Viewport = "firefox", "always", Viewport{Width: 1440, Height: 1080}
-	if o != want {
+	want.Devices = []devices.Device{devices.Custom(1440, 1080, "", "")}
+	if !o.Equal(want) {
 		t.Fatalf("merged: %+v", o)
 	}
 	if errs := o.Validate("x."); len(errs) != 0 {
@@ -32,6 +37,70 @@ func TestMergeRunOptions(t *testing.T) {
 	}
 	if _, err := MergeRunOptions(json.RawMessage(`"nope"`)); err == nil {
 		t.Fatal("non-object must fail")
+	}
+}
+
+func TestMergeRunOptionsDevices(t *testing.T) {
+	iphone, _ := devices.Preset("iphone-15")
+	// Stored resolved devices win; viewport = devices[0].
+	o, err := MergeRunOptions(json.RawMessage(`{"viewport":{"width":1280,"height":720},"devices":[{"id":"iphone-15","label":"iPhone 15","category":"mobile","width":393,"height":659,"device_scale_factor":3,"is_mobile":true,"has_touch":true},{"id":"desktop","label":"Desktop","category":"desktop","width":1280,"height":720,"device_scale_factor":1,"is_mobile":false,"has_touch":false}]}`))
+	if err != nil || len(o.Devices) != 2 || o.Devices[0].ID != "iphone-15" || o.Viewport != (Viewport{393, 659}) {
+		t.Fatalf("stored devices: %+v %v", o, err)
+	}
+	// Legacy options (no devices): one device from the viewport.
+	o, _ = MergeRunOptions(json.RawMessage(`{"viewport":{"width":1920,"height":1080}}`))
+	if len(o.Devices) != 1 || o.Devices[0].ID != "desktop-fhd" {
+		t.Fatalf("legacy: %+v", o.Devices)
+	}
+	// A later viewport-only layer replaces earlier devices.
+	o, _ = MergeRunOptions(json.RawMessage(`{"devices":[{"id":"iphone-15","label":"iPhone 15","category":"mobile","width":393,"height":659,"device_scale_factor":3,"is_mobile":true,"has_touch":true}]}`),
+		json.RawMessage(`{"viewport":{"width":1440,"height":900}}`))
+	if len(o.Devices) != 1 || o.Devices[0].ID != "laptop" || o.Viewport != (Viewport{1440, 900}) {
+		t.Fatalf("viewport layer: %+v", o)
+	}
+
+	cur := DefaultRunOptions()
+	got, err := ApplyRunOptionsInput(cur, json.RawMessage(`{"devices":[{"id":"iphone-15"},{"id":"custom","width":800,"height":1280,"label":"Kiosk"}],"viewport":{"width":1920,"height":1080},"video":"always"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Devices, []devices.Device{iphone, devices.Custom(800, 1280, "", "Kiosk")}) || got.Viewport != (Viewport{393, 659}) || got.Video != "always" {
+		t.Fatalf("devices input: %+v", got)
+	}
+	if !cur.Equal(DefaultRunOptions()) {
+		t.Fatal("ApplyRunOptionsInput must not modify cur")
+	}
+	got, _ = ApplyRunOptionsInput(got, json.RawMessage(`{"retries":1}`))
+	if len(got.Devices) != 2 || got.Retries != 1 {
+		t.Fatalf("other keys keep devices: %+v", got)
+	}
+	got, _ = ApplyRunOptionsInput(got, json.RawMessage(`{"viewport":{"width":1440,"height":900}}`))
+	if len(got.Devices) != 1 || got.Devices[0].ID != "laptop" {
+		t.Fatalf("lone viewport: %+v", got.Devices)
+	}
+	for _, c := range []struct {
+		raw   string
+		paths []string
+	}{
+		{`{"devices":[]}`, []string{"default_run_options.devices"}},
+		{`{"devices":[{"id":"nope"}],"browser":"ie"}`, []string{"default_run_options.browser", "default_run_options.devices[0].id"}},
+		{`{"devices":[{"id":"custom","width":100,"height":800}]}`, []string{"default_run_options.devices[0].width"}},
+		{`{"devices":[{"id":"desktop"},{"id":"desktop"}]}`, []string{"default_run_options.devices[1]"}},
+		{`{"viewport":{"width":100,"height":800}}`, []string{"default_run_options.viewport.width"}},
+		{`{"viewport":{"width":"wide"}}`, []string{"default_run_options.viewport.width"}},
+	} {
+		_, err := ApplyRunOptionsInput(cur, json.RawMessage(c.raw))
+		ae, ok := err.(*httpx.APIError)
+		if !ok || ae.Status != 400 {
+			t.Fatalf("%s: %v", c.raw, err)
+		}
+		var paths []string
+		for _, d := range ae.Details {
+			paths = append(paths, d.Path)
+		}
+		if !reflect.DeepEqual(paths, c.paths) {
+			t.Errorf("%s: %v, want %v", c.raw, paths, c.paths)
+		}
 	}
 }
 

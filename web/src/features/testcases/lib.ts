@@ -18,6 +18,8 @@ import {
   ListChecks,
   MousePointer2,
   MousePointerClick,
+  MoveHorizontal,
+  Scaling,
   ScanText,
   Square,
   SquareCheck,
@@ -248,6 +250,8 @@ export const ACTION_ICONS: Record<StepAction, LucideIcon> = {
   expect_url: Link,
   expect_title: Heading,
   expect_count: Hash,
+  set_viewport: Scaling,
+  expect_no_horizontal_scroll: MoveHorizontal,
   http_request: ArrowLeftRight,
   expect_status: CircleCheck,
   expect_json: Braces,
@@ -289,6 +293,8 @@ export const ACTION_ALIASES: Partial<Record<StepAction, string[]>> = {
   expect_json: ['json', 'body', 'respons', 'api', 'cek', 'jsonpath'],
   expect_header: ['header', 'respons', 'api', 'cek'],
   expect_response_time: ['waktu', 'cepat', 'lambat', 'latency', 'performa'],
+  set_viewport: ['ukuran', 'layar', 'resize', 'responsive', 'responsif', 'breakpoint', 'mobile', 'lebar'],
+  expect_no_horizontal_scroll: ['overflow', 'scroll', 'geser', 'responsive', 'responsif', 'mobile', 'lebar', 'layout', 'cek', 'assert'],
 }
 
 /* ------------------------------------------------------------------ JSON view */

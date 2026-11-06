@@ -18,6 +18,7 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 import type { Execution, FieldError, Step, StepAction, StepStatus } from '@/api/types'
 import { StepSummaryText } from '@/components/misc'
+import { DeviceIcon } from '@/components/devices'
 import { STATUS_META, StatusIcon } from '@/components/status'
 import { Button } from '@/components/ui/button'
 import {
@@ -30,6 +31,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Kbd } from '@/components/ui/kbd'
 import { i18n } from '@/i18n'
+import { onlyOnLabel, onlyOnWords, orderedCategories } from '@/lib/devices'
 import { summarizeStep } from '@/lib/steps'
 import { cn } from '@/lib/utils'
 import { actionIcon } from '../lib'
@@ -55,6 +57,8 @@ export function stepAccessibleName(step: Step, index: number, runStatus?: StepSt
   const parts: string[] = [t('stepList.stepN', { n: String(index + 1) })]
   if (step.action !== 'manual') parts.push(step.action)
   parts.push(summarizeStep(step))
+  const onlyOn = onlyOnLabel(step.only_on)
+  if (onlyOn) parts.push(i18n.t('devices:onlyOn.a11y', { list: onlyOnWords(step.only_on) }))
   if (step.enabled === false) parts.push(t('stepList.a11y.disabled'))
   if (errorCount) parts.push(t('stepList.a11y.errors', { count: errorCount }))
   if (runStatus && (RUN_WORD_STATUSES as readonly string[]).includes(runStatus)) parts.push(t(`stepList.a11y.run.${runStatus as RunWordStatus}`))
@@ -379,6 +383,7 @@ function StepRow({
   const disabled = step.enabled === false
   const hasError = errors.length > 0
   const summary = summarizeStep(step)
+  const onlyOn = onlyOnLabel(step.only_on)
   const showStatus = runStatus && runStatus !== 'pending'
   const { t } = useTranslation('testcases')
 
@@ -448,6 +453,16 @@ function StepRow({
         </div>
       )}
 
+      {onlyOn && (
+        <span className={cn('inline-flex h-5 shrink-0 items-center gap-1 rounded-sm bg-secondary px-1.5 text-xs text-secondary-foreground', disabled && 'opacity-60')} data-testid="only-on-badge">
+          <span className="flex items-center gap-0.5 text-muted-foreground" aria-hidden>
+            {orderedCategories(step.only_on).map((c) => (
+              <DeviceIcon key={c} category={c} className="size-3" />
+            ))}
+          </span>
+          <span className="max-sm:sr-only">{onlyOn}</span>
+        </span>
+      )}
       {disabled && <span className="shrink-0 rounded-sm bg-secondary px-1.5 text-xs text-muted-foreground">{t('stepList.disabledBadge')}</span>}
       {hasError ? (
         <span className="inline-flex shrink-0 items-center gap-0.5 text-xs text-destructive" title={errors.map((e) => e.message).join('\n')}>

@@ -136,8 +136,9 @@ func FinishCancelled(ctx context.Context, q db.Querier, runID uuid.UUID) error {
 // Continue decides what happens after a case (or an automated segment)
 // finished and nothing is running:
 //
-//  1. flow with stop_on_failure and an earlier failed/error/blocked case that
-//     is not continue_on_failure → every remaining pending case is skipped;
+//  1. flow with stop_on_failure and a failed/error/blocked case that is not
+//     continue_on_failure → the remaining pending cases of the SAME device
+//     are skipped (docs/14: later devices still run);
 //  2. no pending case left → FinalizeRun;
 //  3. next pending case is manual → awaiting_manual, resume_position = its position;
 //  4. otherwise → queued, resume_position = its position, enq.EnqueueRun in tx.
@@ -154,12 +155,12 @@ func Continue(ctx context.Context, tx pgx.Tx, enq jobs.Enqueuer, runID uuid.UUID
 	}
 	if kind == KindFlow && stop {
 		if _, err := tx.Exec(ctx, `
-			WITH blocked AS (
-				SELECT EXISTS (SELECT 1 FROM run_cases WHERE run_id = $1
-					AND status IN ('failed', 'error', 'blocked') AND NOT continue_on_failure) AS yes
+			WITH stopped AS (
+				SELECT DISTINCT device_index FROM run_cases WHERE run_id = $1
+					AND status IN ('failed', 'error', 'blocked') AND NOT continue_on_failure
 			), skipped AS (
 				UPDATE run_cases SET status = 'skipped'
-				WHERE run_id = $1 AND status = 'pending' AND (SELECT yes FROM blocked)
+				WHERE run_id = $1 AND status = 'pending' AND device_index IN (SELECT device_index FROM stopped)
 				RETURNING id
 			)
 			UPDATE run_steps SET status = 'skipped'

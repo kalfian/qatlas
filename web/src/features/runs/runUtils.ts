@@ -1,5 +1,6 @@
-import type { Artifact, Run, RunCase, RunKind, RunOptions, RunStatus, RunStep, RunTrigger, StepStatus } from '@/api/types'
+import type { Artifact, Device, DeviceCategory, Run, RunCase, RunKind, RunOptions, RunStatus, RunStep, RunTrigger, StepStatus } from '@/api/types'
 import { i18n } from '@/i18n'
+import { deviceLabel, devicesOf } from '@/lib/devices'
 
 /* ------------------------------------------------------------------ label */
 
@@ -65,6 +66,44 @@ export function failedStepCount(run: Run, skipCaseId?: string): number {
   return n
 }
 
+/* ------------------------------------------------------------------ devices (docs/14) */
+
+/** Devices of a run in report-column order (runs stored before devices existed → one device from `viewport`). */
+export const runDevices = (run: Pick<Run, 'options'>): Device[] => devicesOf(run.options)
+
+export const deviceOfCase = (run: Pick<Run, 'options'>, c: Pick<RunCase, 'device_index'>): Device => {
+  const list = runDevices(run)
+  return list[c.device_index ?? 0] ?? list[0]
+}
+
+/** Cases per device (index = device_index), each in flow order. */
+export function casesByDevice(run: Run): RunCase[][] {
+  const out: RunCase[][] = runDevices(run).map(() => [])
+  for (const c of [...run.cases].sort((a, b) => a.position - b.position)) (out[c.device_index ?? 0] ?? out[0]).push(c)
+  return out
+}
+
+/**
+ * Matrix rows: row k = the k-th case of every device (flows can contain the same test case twice, so rows
+ * follow flow order, not test case ids). A device can have fewer cases than another (shouldn't happen).
+ */
+export function matrixRows(run: Run): (RunCase | undefined)[][] {
+  const byDevice = casesByDevice(run)
+  const n = Math.max(0, ...byDevice.map((l) => l.length))
+  return Array.from({ length: n }, (_, k) => byDevice.map((l) => l[k]))
+}
+
+/** Status shown for a case: the manual case the run is waiting on reads "Awaiting manual". */
+export function caseDisplayStatus(run: Run, c: RunCase): StepStatus | 'awaiting_manual' {
+  if (run.status === 'awaiting_manual' && run.resume_position === c.position && c.execution === 'manual') return 'awaiting_manual'
+  return c.status
+}
+
+/** A skipped step whose `only_on` excludes the case's device category ("Not run on mobile"). */
+export function notRunOn(s: Pick<RunStep, 'status' | 'only_on'>, category: DeviceCategory): boolean {
+  return s.status === 'skipped' && !!s.only_on?.length && !s.only_on.includes(category)
+}
+
 /* ------------------------------------------------------------------ waktu */
 
 /** 00:42 / 1:02:03 — untuk durasi yang berjalan. */
@@ -94,14 +133,18 @@ export function isImage(a: Pick<Artifact, 'mime'>) {
   return a.mime.startsWith('image/')
 }
 
-export function stepCaption(c: RunCase, s: RunStep, lng?: string) {
-  return i18n.getFixedT(lng ?? null, 'runs')('media.stepCaption', { casePos: String(c.position), stepPos: String(s.position), action: s.action })
+/** "Case 2 · Step 3 · click"; multi-device runs add the device ("Case 5 · iPhone 15 · 393×659 · Step 3 · click"). */
+export function stepCaption(c: RunCase, s: RunStep, lng?: string, device?: Device) {
+  const t = i18n.getFixedT(lng ?? null, 'runs')
+  const values = { casePos: String(c.position), stepPos: String(s.position), action: s.action }
+  return device ? t('media.stepCaptionDevice', { ...values, device: deviceLabel(device) }) : t('media.stepCaption', values)
 }
 
 /** Semua screenshot run, urut case → step (dipakai galeri & lightbox ←/→). `lng` = bahasa caption/alt (default: aktif). */
 export function collectScreenshots(run: Run, lng?: string): MediaItem[] {
   const t = i18n.getFixedT(lng ?? null, 'runs')
   const out: MediaItem[] = []
+  const multi = runDevices(run).length > 1
   for (const c of run.cases)
     for (const s of c.steps)
       if (s.screenshot)
@@ -111,7 +154,7 @@ export function collectScreenshots(run: Run, lng?: string): MediaItem[] {
           name: s.screenshot.name,
           mime: s.screenshot.mime,
           expired: s.screenshot.expired,
-          caption: stepCaption(c, s, lng),
+          caption: stepCaption(c, s, lng, multi ? deviceOfCase(run, c) : undefined),
           alt: t('media.screenshotAlt', { stepPos: String(s.position), action: s.action, key: c.test_case_key }),
           status: s.status,
         })

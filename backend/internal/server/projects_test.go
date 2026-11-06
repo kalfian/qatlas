@@ -10,6 +10,7 @@ import (
 
 	"github.com/kalfian/qatlas/backend/internal/auth"
 	"github.com/kalfian/qatlas/backend/internal/db"
+	"github.com/kalfian/qatlas/backend/internal/devices"
 	"github.com/kalfian/qatlas/backend/internal/httpx"
 	"github.com/kalfian/qatlas/backend/internal/projects"
 )
@@ -119,7 +120,7 @@ func TestProjectCreate(t *testing.T) {
 	var p projects.Project
 	a.expect("POST", "/api/v1/projects", map[string]any{"key": "shop", "name": "  Shop  ", "description": "Web shop"}, 201, &p)
 	if p.Key != "SHOP" || p.Name != "Shop" || p.Description != "Web shop" || p.MyRole != "maintainer" || p.ArchivedAt != nil ||
-		p.ArtifactRetentionDays != 30 || p.DefaultRunOptions != projects.DefaultRunOptions() {
+		p.ArtifactRetentionDays != 30 || !p.DefaultRunOptions.Equal(projects.DefaultRunOptions()) {
 		t.Fatalf("created: %+v", p)
 	}
 	if n := e.count(`SELECT count(*) FROM project_members WHERE project_id = $1 AND user_id = $2 AND role = 'maintainer'`, p.ID, adminID); n != 1 {
@@ -186,13 +187,15 @@ func TestProjectUpdateAndArchive(t *testing.T) {
 	}, 200, &p)
 	want := projects.DefaultRunOptions()
 	want.Video, want.Viewport = "always", projects.Viewport{Width: 1920, Height: 1080}
-	if p.Name != "Shop Web" || p.Description != "d" || p.ArtifactRetentionDays != 90 || p.DefaultRunOptions != want || p.MyRole != "maintainer" {
+	fhd, _ := devices.Preset("desktop-fhd")
+	want.Devices = []devices.Device{fhd} // a lone viewport becomes one device
+	if p.Name != "Shop Web" || p.Description != "d" || p.ArtifactRetentionDays != 90 || !p.DefaultRunOptions.Equal(want) || p.MyRole != "maintainer" {
 		t.Fatalf("updated: %+v", p)
 	}
 	// Second partial merge keeps earlier changes.
 	m.expect("PATCH", "/api/v1/projects/SHOP", map[string]any{"default_run_options": map[string]any{"retries": 2}}, 200, &p)
 	want.Retries = 2
-	if p.DefaultRunOptions != want {
+	if !p.DefaultRunOptions.Equal(want) {
 		t.Fatalf("merged options: %+v", p.DefaultRunOptions)
 	}
 
@@ -216,7 +219,7 @@ func TestProjectUpdateAndArchive(t *testing.T) {
 		}
 	}
 	m.expect("GET", "/api/v1/projects/SHOP", nil, 200, &p)
-	if p.ArtifactRetentionDays != 90 || p.DefaultRunOptions != want {
+	if p.ArtifactRetentionDays != 90 || !p.DefaultRunOptions.Equal(want) {
 		t.Fatal("rejected patches must not change the project")
 	}
 

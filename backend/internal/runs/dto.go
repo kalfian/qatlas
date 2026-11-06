@@ -10,6 +10,7 @@ import (
 	"github.com/kalfian/qatlas/backend/internal/artifacts"
 	"github.com/kalfian/qatlas/backend/internal/auth"
 	"github.com/kalfian/qatlas/backend/internal/db"
+	"github.com/kalfian/qatlas/backend/internal/devices"
 )
 
 // Run statuses (runs.status).
@@ -65,6 +66,7 @@ type Run struct {
 type RunCase struct {
 	ID               uuid.UUID            `json:"id"`
 	Position         int                  `json:"position"`
+	DeviceIndex      int                  `json:"device_index"` // index into Run.Devices() (options.devices)
 	TestCaseID       uuid.UUID            `json:"test_case_id"`
 	TestCaseKey      string               `json:"test_case_key"`
 	TestCaseRevision int                  `json:"test_case_revision"`
@@ -91,12 +93,27 @@ type RunStep struct {
 	Summary      string              `json:"summary"`
 	Description  string              `json:"description"`
 	Expected     string              `json:"expected"`
+	OnlyOn       []string            `json:"only_on"` // nil (null) = every device
 	Status       string              `json:"status"`
 	DurationMS   *int64              `json:"duration_ms"`
 	ErrorMessage *string             `json:"error_message"`
 	ActualResult *string             `json:"actual_result"`
 	Screenshot   *artifacts.Artifact `json:"screenshot"`
 	Details      json.RawMessage     `json:"details"`
+}
+
+// Devices returns the run's devices (options.devices; one device from the
+// viewport for runs created before docs/14). Never empty.
+func (r Run) Devices() []devices.Device { return devices.FromOptions(r.Options) }
+
+// DeviceOf returns the device of a run case (falls back to the first device
+// for an out-of-range index).
+func (r Run) DeviceOf(c RunCase) devices.Device {
+	devs := r.Devices()
+	if c.DeviceIndex >= 0 && c.DeviceIndex < len(devs) {
+		return devs[c.DeviceIndex]
+	}
+	return devs[0]
 }
 
 // IsFinal reports a terminal run status.
@@ -159,6 +176,7 @@ func loadRun(ctx context.Context, q db.Querier, runID uuid.UUID) (Run, error) {
 	if err != nil {
 		return Run{}, err
 	}
+	run.Options, _ = NormalizeOptions(run.Options) // legacy runs: devices synthesized from the viewport
 
 	// Artifacts of the run, indexed by id and grouped as attachments per case.
 	arts := map[uuid.UUID]artifacts.Artifact{}
@@ -193,7 +211,7 @@ func loadRun(ctx context.Context, q db.Querier, runID uuid.UUID) (Run, error) {
 	}
 
 	rows, err = q.Query(ctx, `
-		SELECT c.id, c.position, c.test_case_id, c.test_case_key, c.test_case_revision, c.title, c.execution,
+		SELECT c.id, c.position, c.device_index, c.test_case_id, c.test_case_key, c.test_case_revision, c.title, c.execution,
 			c.status, c.executed_by, u.name, u.email, c.started_at, c.finished_at, c.duration_ms,
 			c.video_artifact_id, c.continue_on_failure
 		FROM run_cases c LEFT JOIN users u ON u.id = c.executed_by
@@ -211,7 +229,7 @@ func loadRun(ctx context.Context, q db.Querier, runID uuid.UUID) (Run, error) {
 			videoID         *uuid.UUID
 			duration        *int32
 		)
-		if err := rows.Scan(&c.ID, &c.Position, &c.TestCaseID, &c.TestCaseKey, &c.TestCaseRevision, &c.Title, &c.Execution,
+		if err := rows.Scan(&c.ID, &c.Position, &c.DeviceIndex, &c.TestCaseID, &c.TestCaseKey, &c.TestCaseRevision, &c.Title, &c.Execution,
 			&c.Status, &exID, &exName, &exEmail, &started, &fin, &duration, &videoID, &c.continueOnFailure); err != nil {
 			rows.Close()
 			return Run{}, err
@@ -237,7 +255,7 @@ func loadRun(ctx context.Context, q db.Querier, runID uuid.UUID) (Run, error) {
 	}
 
 	rows, err = q.Query(ctx, `
-		SELECT s.run_case_id, s.id, s.position, s.step_id, s.action, s.summary, s.description, s.expected,
+		SELECT s.run_case_id, s.id, s.position, s.step_id, s.action, s.summary, s.description, s.expected, s.only_on,
 			s.status, s.duration_ms, s.error_message, s.actual_result, s.screenshot_artifact_id, s.details
 		FROM run_steps s JOIN run_cases c ON c.id = s.run_case_id
 		WHERE c.run_id = $1 ORDER BY c.position, s.position`, runID)
@@ -253,7 +271,7 @@ func loadRun(ctx context.Context, q db.Querier, runID uuid.UUID) (Run, error) {
 			shotID   *uuid.UUID
 			details  []byte
 		)
-		if err := rows.Scan(&caseID, &s.ID, &s.Position, &s.StepID, &s.Action, &s.Summary, &s.Description, &s.Expected,
+		if err := rows.Scan(&caseID, &s.ID, &s.Position, &s.StepID, &s.Action, &s.Summary, &s.Description, &s.Expected, &s.OnlyOn,
 			&s.Status, &duration, &s.ErrorMessage, &s.ActualResult, &shotID, &details); err != nil {
 			return Run{}, err
 		}

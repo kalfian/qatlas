@@ -84,7 +84,9 @@ const LOCALES = {
       { id: 'p_6', code: 'CVT', slug: 'canvas-tote', name: 'Canvas Tote', price: 120000, stock: 0, category: 'accessories' },
     ],
     t: {
-      htmlLang: 'en', nav: 'Main', home: 'Home', categories: 'Categories', cart: 'Cart', searchPlaceholder: 'Search products',
+      htmlLang: 'en', nav: 'Main', menu: 'Menu', sizeChart: 'Size chart', chest: 'Chest (cm)', length: 'Length (cm)',
+      shoulder: 'Shoulder (cm)', sleeve: 'Sleeve (cm)', fit: 'Fit', fits: { S: 'Slim', M: 'Regular', L: 'Regular', XL: 'Relaxed' },
+      home: 'Home', categories: 'Categories', cart: 'Cart', searchPlaceholder: 'Search products',
       searchLabel: 'Keyword', myAccount: 'My account', accountMenu: 'Account menu', loginToAccount: 'Log in to your account',
       logout: 'Log out', footer: 'Tokoku demo — a fake shop for testing QAtlas.', notFoundProducts: 'No products found.',
       homeTitle: 'Tokoku — Everyday savings', welcome: 'Welcome to Tokoku', tagline: 'T-shirts, shirts and accessories at friendly prices.',
@@ -145,7 +147,9 @@ const LOCALES = {
       { id: 'p_6', code: 'TSK', slug: 'tas-kanvas', name: 'Tas Kanvas', price: 120000, stock: 0, category: 'aksesoris' },
     ],
     t: {
-      htmlLang: 'id', nav: 'Utama', home: 'Beranda', categories: 'Kategori', cart: 'Keranjang', searchPlaceholder: 'Cari produk',
+      htmlLang: 'id', nav: 'Utama', menu: 'Menu', sizeChart: 'Tabel ukuran', chest: 'Lebar dada (cm)', length: 'Panjang (cm)',
+      shoulder: 'Bahu (cm)', sleeve: 'Lengan (cm)', fit: 'Potongan', fits: { S: 'Ramping', M: 'Reguler', L: 'Reguler', XL: 'Longgar' },
+      home: 'Beranda', categories: 'Kategori', cart: 'Keranjang', searchPlaceholder: 'Cari produk',
       searchLabel: 'Kata kunci', myAccount: 'Akun saya', accountMenu: 'Menu akun', loginToAccount: 'Masuk ke akun',
       logout: 'Keluar', footer: 'Tokoku demo — toko palsu untuk menguji QAtlas.', notFoundProducts: 'Produk tidak ditemukan.',
       homeTitle: 'Tokoku — Belanja hemat setiap hari', welcome: 'Selamat datang di Tokoku', tagline: 'Kaos, kemeja, dan aksesoris dengan harga bersahabat.',
@@ -560,7 +564,8 @@ function layout(session, { title, body, q = '' }) {
 <body>
   <header class="topbar">
     <a class="brand" href="/">Tokoku</a>
-    <nav aria-label="${T.nav}">
+    <button type="button" class="nav-toggle" aria-expanded="false" aria-controls="main-nav">☰ ${T.menu}</button>
+    <nav id="main-nav" aria-label="${T.nav}">
       <a href="/">${T.home}</a>
       <a href="${P.category}">${T.categories}</a>
       <a href="${P.cart}">${T.cart} <span class="badge" data-testid="cart-count">${count}</span></a>
@@ -662,8 +667,25 @@ function renderProduct(s, p, added) {
         </select>
         <button type="submit"${p.stock > 0 ? '' : ' disabled'}>${T.addToCart}</button>
       </form>
+      ${sizeChart()}
     </article>`,
   })
+}
+
+// Size chart. Known bug on purpose (responsive testing demo, docs/14): the table has a fixed
+// min-width and no scroll wrapper, so it overflows the page horizontally below ~600 px.
+const SIZE_CHART = { S: [96, 68, 42, 20], M: [102, 71, 44, 21], L: [108, 74, 46, 22], XL: [114, 77, 48, 23] }
+function sizeChart() {
+  const rows = Object.entries(SIZE_CHART)
+    .map(([z, v]) => `<tr><th scope="row">${z}</th>${v.map((n) => `<td>${n}</td>`).join('')}<td>${T.fits[z]}</td></tr>`)
+    .join('')
+  return `<section class="size-chart" data-testid="size-chart">
+        <h2>${T.sizeChart}</h2>
+        <table>
+          <thead><tr><th scope="col">${T.size}</th><th scope="col">${T.chest}</th><th scope="col">${T.length}</th><th scope="col">${T.shoulder}</th><th scope="col">${T.sleeve}</th><th scope="col">${T.fit}</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </section>`
 }
 
 function cartLines(s) {

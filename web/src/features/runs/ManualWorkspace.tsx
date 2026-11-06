@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { errorMessage } from '@/api/client'
 import { useCompleteManualCase, useManualStepResult, useMembers, useSetAssignee, useUploadAttachment } from '@/api/queries'
 import type { Run, RunCase, RunStep, StepStatus } from '@/api/types'
+import { DeviceIcon } from '@/components/devices'
 import { StatusBadge, StatusIcon, STATUS_META } from '@/components/status'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
@@ -34,10 +35,11 @@ import {
 import { Kbd } from '@/components/ui/kbd'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { deviceLabel } from '@/lib/devices'
 import { formatBytes } from '@/lib/format'
 import { cn, uid } from '@/lib/utils'
 import { FileTile, Thumb } from './media'
-import { attachmentItems, isImage, projectedManualStatus, type MediaItem } from './runUtils'
+import { attachmentItems, deviceOfCase, isImage, projectedManualStatus, type MediaItem } from './runUtils'
 
 type ManualStatus = 'pending' | 'passed' | 'failed' | 'blocked' | 'skipped'
 type Decision = Exclude<ManualStatus, 'pending'>
@@ -504,6 +506,7 @@ export function ManualWorkspace({
         {/* kolom fokus */}
         <div className="min-w-0 flex-1 px-4 py-5 md:px-6">
           <div className="grid max-w-2xl gap-6">
+            <DeviceNote run={run} c={c} />
             <div>
               <p className="text-xs font-medium tracking-wide text-muted-foreground uppercase">{t('manual.instruction')}</p>
               <h2
@@ -939,5 +942,20 @@ function FinishDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/** Which device the tester must use for this case (docs/14: manual cases repeat per device). */
+function DeviceNote({ run, c }: { run: Run; c: RunCase }) {
+  const { t } = useTranslation('runs')
+  const device = deviceOfCase(run, c)
+  return (
+    <div className="-mb-2 flex items-start gap-2 rounded-md border border-border bg-muted/50 px-3 py-2 text-sm" data-testid="manual-device">
+      <DeviceIcon category={device.category} className="mt-0.5 size-4 text-muted-foreground" />
+      <p className="min-w-0">
+        <Trans t={t} i18nKey="manual.testOn" values={{ device: deviceLabel(device) }} components={{ b: <span className="font-medium" /> }} />
+        <span className="block text-xs text-muted-foreground">{t('manual.testOnHint')}</span>
+      </p>
+    </div>
   )
 }

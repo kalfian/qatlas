@@ -11,6 +11,7 @@ import {
   type MockState,
 } from './db'
 
+import { DEFAULT_DEVICE } from '@/lib/device-catalog'
 import { DEMO_INVITE_TOKEN, DEMO_PASSWORD } from './constants'
 
 export { DEMO_INVITE_TOKEN, DEMO_PASSWORD, GOOGLE_ACCOUNTS } from './constants'
@@ -21,6 +22,7 @@ export const DEFAULT_RUN_OPTIONS: RunOptions = {
   browser: 'chromium',
   headless: true,
   viewport: { width: 1280, height: 720 },
+  devices: [DEFAULT_DEVICE],
   screenshot: 'on_failure',
   video: 'off',
   step_timeout_ms: 10000,
@@ -415,6 +417,43 @@ const SHOP_API_CASES: TcSeed[] = [
     ] },
 ]
 
+/**
+ * Responsive testing examples (docs/14-responsive-testing.md, demo-target "Responsive layout").
+ * Appended after SHOP_API_CASES (keys SHOP-T28…T30, flow SHOP-F5) so every existing key and step id
+ * stays unchanged. Run them on several devices: SHOP-T29 fails on phones on purpose (size chart
+ * overflow), everything else passes on desktop, tablet and phone.
+ */
+const SHOP_RESPONSIVE_CASES: TcSeed[] = [
+  { folder: 'Responsive', title: 'Header navigation adapts to the screen', priority: 'high', tags: ['responsive', 'smoke'],
+    description: 'Phones get a "Menu" button that reveals the links; tablets and desktops show the links directly. Steps marked "Only on" run on matching devices only.',
+    steps: [
+      S('goto', { url: '{{env.BASE_URL}}/', description: 'Open the home page' }),
+      S('expect_hidden', { selector: "role=link[name='Categories']", only_on: ['mobile'], description: 'Links are collapsed on a phone' }),
+      S('click', { selector: "role=button[name='Menu']", only_on: ['mobile'], description: 'Open the hamburger menu' }),
+      S('expect_hidden', { selector: "role=button[name='Menu']", only_on: ['tablet', 'desktop'], description: 'No hamburger on larger screens' }),
+      S('click', { selector: "role=link[name='Categories']", description: 'Go to the categories page' }),
+      S('expect_url', { value: '/categories', match: 'contains' }),
+      S('expect_no_horizontal_scroll', { description: 'The page fits the screen width', expected: 'No sideways scrolling' }),
+    ] },
+  { folder: 'Responsive', title: 'Product page fits the screen (no sideways scroll)', priority: 'medium', tags: ['responsive', 'known-bug'],
+    description: 'Known bug: the size chart table has a fixed width, so the product page scrolls sideways on phones. Passes on tablets and desktops.',
+    steps: [
+      S('goto', { url: '{{env.BASE_URL}}/products/plain-black-tee' }),
+      S('expect_visible', { selector: 'testid=size-chart', description: 'The size chart is shown' }),
+      S('expect_no_horizontal_scroll', { description: 'Nothing sticks out to the right', expected: 'Content width ≤ screen width' }),
+    ] },
+  { folder: 'Responsive', title: 'Cart fits narrow and wide screens', priority: 'low', tags: ['responsive'],
+    description: 'Resizes the viewport mid-test with set_viewport: the cart must fit a 320 px wide screen and a 1280 px one, whatever device the run uses.',
+    steps: [
+      S('goto', { url: '{{env.BASE_URL}}/cart' }),
+      S('set_viewport', { width: 320, height: 640, description: 'Smallest supported phone width' }),
+      S('expect_no_horizontal_scroll'),
+      S('expect_visible', { selector: "role=link[name='Continue to checkout']" }),
+      S('set_viewport', { width: 1280, height: 800, description: 'Back to a desktop size' }),
+      S('expect_no_horizontal_scroll'),
+    ] },
+]
+
 /* ------------------------------------------------------------------ builder */
 
 export function buildSeed(): MockState {
@@ -505,7 +544,7 @@ export function buildSeed(): MockState {
       })
     })
   }
-  makeCases(projects[0], [...SHOP_CASES, ...SHOP_AUTH_EMAIL_CASES, ...SHOP_API_CASES], ['u_rina', 'u_dimas'])
+  makeCases(projects[0], [...SHOP_CASES, ...SHOP_AUTH_EMAIL_CASES, ...SHOP_API_CASES, ...SHOP_RESPONSIVE_CASES], ['u_rina', 'u_dimas'])
   makeCases(projects[1], PAY_CASES, ['u_dimas', 'u_sari'])
 
   const revisions = testCases.flatMap((t) =>
@@ -542,8 +581,12 @@ export function buildSeed(): MockState {
     { id: 'fl_shop_4', project_id: 'p_shop', key: 'SHOP-F4', name: 'API regression', description: 'All API test cases in a row, each in its own session (no shared cookies or variables); a failure does not stop the rest.',
       tags: ['api', 'regression'], shared_session: false, stop_on_failure: false, variables: {},
       items: ['SHOP-T23', 'SHOP-T24', 'SHOP-T25', 'SHOP-T26', 'SHOP-T27', 'SHOP-T15', 'SHOP-T16'].map((k) => flowItem(k)), revision: 1, created_at: iso(4 * DAY), updated_at: iso(4 * DAY), deleted_at: null },
+    // Appended after SHOP-F4: the responsive examples, run on several devices (docs/14).
+    { id: 'fl_shop_5', project_id: 'p_shop', key: 'SHOP-F5', name: 'Responsive smoke', description: 'Layout checks for phone, tablet and desktop. Run it on several devices (e.g. Desktop, iPad Mini, iPhone 15); the product page fails on phones on purpose.',
+      tags: ['responsive', 'smoke'], shared_session: false, stop_on_failure: false, variables: {},
+      items: ['SHOP-T28', 'SHOP-T29', 'SHOP-T30'].map((k) => flowItem(k)), revision: 1, created_at: iso(1 * DAY), updated_at: iso(1 * DAY), deleted_at: null },
   ]
-  projects[0].seq.flow = 4
+  projects[0].seq.flow = 5
   projects[1].seq.flow = 1
 
   return {
@@ -583,6 +626,10 @@ export interface HistorySpec {
   infraError?: string
   manual?: { by: string; results: ('passed' | 'failed' | 'blocked' | 'skipped')[]; notes?: string[] } | 'leave-open'
   assignee?: string
+  /** Preset device ids (api/devices.json) for a multi-device run; default = the project's devices. */
+  devices?: string[]
+  /** Forces one step of one case on one device to fail (seeded demo data, not a simulator rule). */
+  failStep?: { device: number; caseKey: string; stepIndex: number; error: string }
 }
 
 /** Spesifikasi riwayat run (dieksekusi oleh history.ts memakai simulator). */
@@ -615,5 +662,12 @@ export function historySpecs(): HistorySpec[] {
   specs.push({ projectKey: 'SHOP', kind: 'flow', target: 'SHOP-F3', daysAgo: 0.08, user: 'u_rina', manual: 'leave-open', assignee: 'u_rina' })
   specs.push({ projectKey: 'SHOP', kind: 'test_case', target: 'SHOP-T4', daysAgo: 0.2, user: 'u_rina', manual: 'leave-open', assignee: 'u_dimas' })
   specs.push({ projectKey: 'PAY', kind: 'test_case', target: 'PAY-T4', daysAgo: 1.1, user: 'u_dimas', manual: 'leave-open', assignee: 'u_rina' })
+  // Multi-device (matrix) example, docs/14. Newest spec on purpose: it sorts last, so the keys and rng seeds
+  // of every older run stay the same. On the iPhone the "Add to cart" button sits below a too-wide size
+  // chart; with stop on failure only the iPhone's remaining case is skipped, the other devices carry on.
+  specs.push({ projectKey: 'SHOP', kind: 'flow', target: 'SHOP-F1', daysAgo: 0.04, user: 'u_dimas',
+    devices: ['desktop', 'ipad-mini', 'iphone-15'], options: { screenshot: 'on_failure', video: 'on_failure' },
+    failStep: { device: 2, caseKey: 'SHOP-T8', stepIndex: 2,
+      error: "locator.click: Timeout 10000ms exceeded.\nCall log:\n  - waiting for getByRole('button', { name: 'Add to cart' })\n  - element is outside of the viewport" } })
   return specs.sort((a, b) => b.daysAgo - a.daysAgo)
 }

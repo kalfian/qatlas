@@ -28,6 +28,16 @@ document.addEventListener('keydown', (event) => {
   }
 })
 
+// Main navigation hamburger (below 768 px the nav is collapsed behind the "Menu" button).
+document.addEventListener('click', (event) => {
+  const toggle = event.target.closest('.nav-toggle')
+  if (!toggle) return
+  const nav = document.getElementById(toggle.getAttribute('aria-controls'))
+  const open = toggle.getAttribute('aria-expanded') !== 'true'
+  toggle.setAttribute('aria-expanded', String(open))
+  nav?.classList.toggle('open', open)
+})
+
 // Category filter: navigate as soon as a checkbox changes (?category=a,b / ?kategori=a,b — the
 // path and parameter name come from the form, they depend on DEMO_LANG).
 const filter = document.querySelector('[data-category-filter]')

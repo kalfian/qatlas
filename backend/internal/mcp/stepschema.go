@@ -47,6 +47,14 @@ func paramSchema(action, param string) obj {
 		return str("Option value attribute (or use label)")
 	case "wait.ms":
 		return obj{"type": "integer", "minimum": 0, "maximum": 30000, "description": "Fixed pause in ms (max 30000; prefer wait_for)"}
+	case "set_viewport.width":
+		return obj{"type": "integer", "minimum": dsl.ViewportMinWidth, "maximum": dsl.ViewportMaxWidth, "description": "New viewport width in px. Only the size changes (not the device's mobile/touch/user agent); only_on still uses the run device's category"}
+	case "set_viewport.height":
+		return obj{"type": "integer", "minimum": dsl.ViewportMinHeight, "maximum": dsl.ViewportMaxHeight, "description": "New viewport height in px"}
+	case "expect_no_horizontal_scroll.selector":
+		return str("Scroll container to check (default: the whole page). " + selectorDesc)
+	case "expect_no_horizontal_scroll.tolerance_px":
+		return obj{"type": "integer", "minimum": 0, "maximum": dsl.TolerancePxMax, "description": "Allowed overflow in px (default 0). Fails when scrollWidth > clientWidth + tolerance_px and lists the widest offending elements"}
 	}
 	switch param {
 	case "selector":
@@ -116,6 +124,9 @@ var commonStepProps = obj{
 	"continue_on_failure": obj{"type": "boolean", "description": "Continue with the next steps if this one fails (default false: remaining steps are skipped)"},
 	"enabled":             obj{"type": "boolean", "description": "false = skip this step (default true)"},
 	"screenshot":          obj{"type": "boolean", "description": "Always take a screenshot after this step (UI steps only)"},
+	"only_on": obj{"type": "array", "minItems": 1, "uniqueItems": true,
+		"items":       obj{"type": "string", "enum": dsl.DeviceCategories},
+		"description": "Run this step only on devices of these categories (mobile, tablet, desktop); elsewhere it is skipped. Omit = every device. E.g. open the hamburger menu only_on [\"mobile\"]"},
 }
 
 // StepJSONSchema is the JSON Schema (draft 2020-12) of one step.
@@ -211,6 +222,7 @@ var dslRules = []string{
 	"HTTP assertions (expect_status, expect_json, expect_header, expect_response_time) apply to the most recent http_request step, which must come before them.",
 	"wait is limited to 30000 ms and discouraged; a failing step skips the rest unless continue_on_failure is true.",
 	"A test case may mix UI and HTTP steps (e.g. create data via API, verify in the UI); the browser starts only if there is a UI step.",
+	"Responsive: a run can execute every case on several devices (run options devices). Steps that only make sense on some screens get only_on (e.g. [\"mobile\"] for a hamburger menu); expect_no_horizontal_scroll catches layouts wider than the screen; set_viewport resizes mid-test.",
 	"Emails: query a mail catcher with http_request + poll_timeout_ms (Mailpit: GET {{env.MAILPIT_URL}}/api/v1/search with query {\"query\": \"to:{{vars.email}}\"}, save $.messages[0].ID; then GET /api/v1/message/{{vars.id}} → $.Subject, $.Text, $.HTML) and extract codes/links with save_regex (+ regex_decode auto for raw/HTML bodies).",
 }
 
@@ -285,7 +297,7 @@ func stepDSLMarkdown() string {
 	for _, a := range actionIndex() {
 		b.WriteString("| " + a.Action + " | " + a.Group + " | " + strings.Join(a.Required, ", ") + " | " + strings.Join(a.Optional, ", ") + " |\n")
 	}
-	b.WriteString("\nCommon step fields: id (required, unique), action (required), description, expected, timeout_ms, continue_on_failure, enabled, screenshot.\n")
+	b.WriteString("\nCommon step fields: id (required, unique), action (required), description, expected, timeout_ms, continue_on_failure, enabled, screenshot, only_on (mobile/tablet/desktop).\n")
 	section := func(title string, lines []string) {
 		b.WriteString("\n## " + title + "\n\n")
 		for _, l := range lines {
