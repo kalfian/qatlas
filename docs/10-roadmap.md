@@ -42,7 +42,7 @@ Urutan sengaja **frontend dulu**: Phase 1 membangun seluruh user journey di FE d
 - [x] Demo: alur daftar + verifikasi email (Mailpit v1.33.0) dan login TOTP di toko demo; SHOP-T20–T22 lolos dengan runner asli
 - [x] Frontend: code-splitting (login 524 → 215 KB gzip, dashboard 253 KB) + gzip aset statis di server Go
 - [x] Pengaturan storage dari UI (DB terenkripsi, ganti tanpa restart, migrasi dari UI)
-- [x] Responsive testing ([14](14-responsive-testing.md)): katalog device dengan emulasi Playwright (touch, DPR, isMobile, UA), run multi-device dengan laporan matrix, step `set_viewport` / `expect_no_horizontal_scroll` / `only_on`, demo SHOP-F5 di toko demo (bug overflow disengaja di HP)
+- [x] Responsive testing ([14](14-responsive-testing.md)): katalog device dengan emulasi Playwright (touch, DPR, isMobile, UA), run multi-device dengan laporan matrix, step `set_viewport` / `expect_no_horizontal_scroll` / `only_on`, toko demo punya bug overflow disengaja di HP (tanpa data contoh di seed)
 
 ```mermaid
 flowchart LR

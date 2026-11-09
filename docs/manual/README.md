@@ -593,9 +593,10 @@ case, one column per device. Select a cell to open that case on that device in t
 
 ![Failed overflow check with the offending elements](img/run-overflow-offenders.png)
 
-**Demo:** the flow **SHOP-F5 Responsive smoke** (SHOP-T28…T30) runs on Desktop, iPad Mini and
-iPhone 15. The product page fails on the phone on purpose: the demo shop's size chart is too wide
-for a 393 px screen.
+**Try it on the demo shop:** the demo data has no responsive test cases, so add an
+`expect_no_horizontal_scroll` step (Only on: tablet + mobile) to **SHOP-T8** and run it on Desktop,
+iPad Mini and iPhone 15. The product page fails on the phone on purpose: the demo shop's size chart
+is too wide for a 393 px screen.
 
 MCP and the API take the same devices: `options.devices` with preset ids (`desktop`, `ipad-mini`,
 `iphone-15`, …) or `{ "id": "custom", "width": 390, "height": 844 }` (MCP:

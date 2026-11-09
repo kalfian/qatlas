@@ -88,4 +88,4 @@ Ukuran/DPR diambil dari descriptor Playwright 1.64.1. **User agent tidak disimpa
 
 ## Demo
 
-`demo-target` (Tokoku) mendapat layout responsif (menu hamburger di < 768 px) dan satu halaman dengan bug overflow yang disengaja di layar sempit; seed menambah test case responsive + flow `Responsive smoke` (desktop, iPad Mini, iPhone 15) dan satu contoh run matrix.
+`demo-target` (Tokoku) mendapat layout responsif (menu hamburger di < 768 px) dan satu halaman dengan bug overflow yang disengaja di layar sempit (tabel ukuran di halaman produk). Seed demo **tidak** berisi test case, flow, atau run contoh responsive (dihapus 2026-11-09 atas permintaan Kalfian); e2e J15 dan skrip screenshot manual membuat contohnya sendiri dengan menambah step `expect_no_horizontal_scroll` (only_on tablet + mobile) ke SHOP-T8.

@@ -735,17 +735,14 @@ func (s *seeder) seedFlows(ctx context.Context, fp fixtureProject, caseIDs map[s
 
 // demoRuns are enqueued by --runs (only for projects created in this call):
 // a passing smoke flow, the voucher case that fails on demo-target's
-// intentional bug, the mixed flow that stops at its manual case (assigned to
-// the seeding admin), and the responsive flow on three devices (the product
-// page fails on the phone on purpose, docs/14-responsive-testing.md).
+// intentional bug, and the mixed flow that stops at its manual case
+// (assigned to the seeding admin).
 var demoRuns = []struct {
 	project, testCase, flow string
-	options                 string // RunCreate.options JSON; empty = project defaults
 }{
 	{project: "SHOP", flow: "SHOP-F2"},
 	{project: "SHOP", testCase: "SHOP-T12"},
 	{project: "SHOP", flow: "SHOP-F3"},
-	{project: "SHOP", flow: "SHOP-F5", options: `{"devices":[{"id":"desktop"},{"id":"ipad-mini"},{"id":"iphone-15"}]}`},
 }
 
 func (s *seeder) enqueueRuns(ctx context.Context) error {
@@ -753,11 +750,7 @@ func (s *seeder) enqueueRuns(ctx context.Context) error {
 		if !slices.Contains(s.created, r.project) {
 			continue
 		}
-		in := runs.CreateInput{TestCase: r.testCase, Flow: r.flow}
-		if r.options != "" {
-			in.Options = json.RawMessage(r.options)
-		}
-		run, err := s.runs.Create(ctx, s.actor, r.project, in)
+		run, err := s.runs.Create(ctx, s.actor, r.project, runs.CreateInput{TestCase: r.testCase, Flow: r.flow})
 		if err != nil {
 			return fmt.Errorf("enqueue run of %s%s: %w", r.testCase, r.flow, describe(err))
 		}

@@ -131,26 +131,16 @@ describe('seed', () => {
     }
   })
 
-  it('has one matrix run of SHOP-F1 on desktop, iPad Mini and iPhone 15 where the iPhone fails', () => {
-    const multi = db().runs.filter((r) => r.options.devices.length > 1).map(toRun)
-    expect(multi).toHaveLength(1)
-    const run = multi[0]
-    expect(run.target.key).toBe('SHOP-F1')
-    expect(run.options.devices.map((d) => d.id)).toEqual(['desktop', 'ipad-mini', 'iphone-15'])
-    expect(run.status).toBe('failed')
-    expect(run.cases.map((c) => `${c.device_index}:${c.test_case_key}:${c.status}`)).toEqual([
-      '0:SHOP-T1:passed', '0:SHOP-T8:passed', '0:SHOP-T11:passed',
-      '1:SHOP-T1:passed', '1:SHOP-T8:passed', '1:SHOP-T11:passed',
-      '2:SHOP-T1:passed', '2:SHOP-T8:failed', '2:SHOP-T11:skipped',
-    ])
-    // newest run → highest key, so the keys of all older seeded runs stay the same
-    const shopRuns = db().runs.filter((r) => r.project_id === 'p_shop').map((r) => Number(r.key.split('-R')[1]))
-    expect(Number(run.key.split('-R')[1])).toBe(Math.max(...shopRuns))
+  it('has no multi-device sample runs (responsive sample data removed)', () => {
+    expect(db().runs.filter((r) => r.options.devices.length > 1)).toEqual([])
+    expect(db().flows.map((f) => f.key)).not.toContain('SHOP-F5')
+    expect(db().folders.map((f) => f.name)).not.toContain('Responsive')
   })
 
   it('JUnit of a multi-device run names test cases "{title} [{device}]"', () => {
-    const run = toRun(db().runs.find((r) => r.options.devices.length > 1)!)
-    const xml = runToJUnit(run)
+    const run = runOf('flow', 'SHOP-F1', devices('desktop', 'ipad-mini', 'iphone-15'))
+    fastForward(run, Date.now())
+    const xml = runToJUnit(toRun(run))
     expect(xml).toContain('name="SHOP-T8 Add a product to the cart [iPhone 15]"')
     expect(xml).toContain('name="SHOP-T8 Add a product to the cart [Desktop]"')
     expect(xml).not.toContain('[#')

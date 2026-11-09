@@ -72,10 +72,18 @@ async function fixtures() {
   failedRun ??= await ensureRun({ test_case: 'SHOP-T12' }, 'failed')
 }
 
-// Responsive smoke flow on three devices (docs/14): the product page fails on the iPhone on purpose.
+// SHOP-T8 (product page → cart) on three devices (docs/14). The demo seed has no responsive test cases, so
+// this adds an "expect_no_horizontal_scroll" step limited to tablet + mobile to SHOP-T8 first (as e2e J15
+// does); the demo shop's size chart is too wide for the iPhone on purpose.
 let responsiveRun
 async function responsiveFixture() {
-  responsiveRun ??= await ensureRun({ flow: 'SHOP-F5' }, 'failed', {
+  if (responsiveRun) return
+  const tc = await api(page, 'GET', '/test-cases/SHOP-T8')
+  if (!tc.steps.some((s) => s.action === 'expect_no_horizontal_scroll')) {
+    const step = { id: 'shots-no-hscroll', action: 'expect_no_horizontal_scroll', only_on: ['tablet', 'mobile'], description: 'The product page fits the screen' }
+    await api(page, 'PATCH', '/test-cases/SHOP-T8', { revision: tc.revision, title: tc.title, steps: [...tc.steps, step] })
+  }
+  responsiveRun = await ensureRun({ test_case: 'SHOP-T8' }, 'failed', {
     options: { devices: [{ id: 'desktop' }, { id: 'ipad-mini' }, { id: 'iphone-15' }] },
     pred: (r) => r.options?.devices?.length === 3,
   })
@@ -182,9 +190,9 @@ const shots = {
   },
 
   async 'run-devices-picker'() {
-    await page.goto('/p/SHOP/flows')
+    await page.goto('/p/SHOP/tests/SHOP-T8')
     await settle(page)
-    await page.getByRole('button', { name: 'Run SHOP-F5 Responsive smoke' }).click()
+    await page.getByRole('button', { name: /^Run$/ }).click()
     await page.getByRole('dialog').getByRole('button', { name: /^Devices / }).click()
     for (const name of ['iPad Mini 768×1024', 'iPhone 15 393×659']) {
       const box = page.getByRole('checkbox', { name })
@@ -209,7 +217,7 @@ const shots = {
     await settle(page, 900)
     await page
       .getByRole('table', { name: 'Results per test case and device' })
-      .getByRole('button', { name: /SHOP-T29 .* on iPhone 15 · 393×659: Failed/ })
+      .getByRole('button', { name: /SHOP-T8 .* on iPhone 15 · 393×659: Failed/ })
       .click()
     const offenders = page.getByRole('region', { name: /^Cases on iPhone 15/ }).getByText('Elements past the right edge')
     await offenders.scrollIntoViewIfNeeded()

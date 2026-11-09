@@ -103,7 +103,7 @@ func TestDemoSeed(t *testing.T) {
 	if got := strings.Join(queryStrings(t, pool, `
 		SELECT f.name || '<' || COALESCE(pf.name, '') FROM folders f JOIN projects p ON p.id = f.project_id
 		LEFT JOIN folders pf ON pf.id = f.parent_id WHERE p.key = 'SHOP' ORDER BY f.name`), ","); got !=
-		"API<,Auth<,Cart<,Catalog<,Checkout<,Email<,Payment<Checkout,Responsive<" {
+		"API<,Auth<,Cart<,Catalog<,Checkout<,Email<,Payment<Checkout" {
 		t.Fatalf("folders: %s", got)
 	}
 
@@ -174,7 +174,7 @@ func TestDemoSeed(t *testing.T) {
 	if err := Demo(ctx, pool, cfg, nil, Options{Reset: true, Out: &out}); err != nil {
 		t.Fatalf("reset: %v\n%s", err, out.String())
 	}
-	if got := countAll(); got != "4/2/34/0" {
+	if got := countAll(); got != "4/2/31/0" {
 		t.Fatalf("after reset: %s", got)
 	}
 	if !strings.Contains(out.String(), "project SHOP deleted (--reset)") || !strings.Contains(out.String(), "project SHOP created") {

@@ -78,8 +78,7 @@
         "Checkout",
         "API",
         "Checkout/Payment",
-        "Email",
-        "Responsive"
+        "Email"
       ],
       "test_cases": [
         {
@@ -1632,157 +1631,6 @@
               "value": "accessories"
             }
           ]
-        },
-        {
-          "key": "SHOP-T28",
-          "folder": "Responsive",
-          "title": "Header navigation adapts to the screen",
-          "description": "Phones get a \"Menu\" button that reveals the links; tablets and desktops show the links directly. Steps marked \"Only on\" run on matching devices only.",
-          "preconditions": "",
-          "priority": "high",
-          "status": "ready",
-          "execution": "automated",
-          "tags": [
-            "responsive",
-            "smoke"
-          ],
-          "variables": {},
-          "steps": [
-            {
-              "id": "s4y",
-              "action": "goto",
-              "url": "{{env.BASE_URL}}/",
-              "description": "Open the home page"
-            },
-            {
-              "id": "s4z",
-              "action": "expect_hidden",
-              "selector": "role=link[name='Categories']",
-              "only_on": [
-                "mobile"
-              ],
-              "description": "Links are collapsed on a phone"
-            },
-            {
-              "id": "s50",
-              "action": "click",
-              "selector": "role=button[name='Menu']",
-              "only_on": [
-                "mobile"
-              ],
-              "description": "Open the hamburger menu"
-            },
-            {
-              "id": "s51",
-              "action": "expect_hidden",
-              "selector": "role=button[name='Menu']",
-              "only_on": [
-                "tablet",
-                "desktop"
-              ],
-              "description": "No hamburger on larger screens"
-            },
-            {
-              "id": "s52",
-              "action": "click",
-              "selector": "role=link[name='Categories']",
-              "description": "Go to the categories page"
-            },
-            {
-              "id": "s53",
-              "action": "expect_url",
-              "value": "/categories",
-              "match": "contains"
-            },
-            {
-              "id": "s54",
-              "action": "expect_no_horizontal_scroll",
-              "description": "The page fits the screen width",
-              "expected": "No sideways scrolling"
-            }
-          ]
-        },
-        {
-          "key": "SHOP-T29",
-          "folder": "Responsive",
-          "title": "Product page fits the screen (no sideways scroll)",
-          "description": "Known bug: the size chart table has a fixed width, so the product page scrolls sideways on phones. Passes on tablets and desktops.",
-          "preconditions": "",
-          "priority": "medium",
-          "status": "ready",
-          "execution": "automated",
-          "tags": [
-            "responsive",
-            "known-bug"
-          ],
-          "variables": {},
-          "steps": [
-            {
-              "id": "s55",
-              "action": "goto",
-              "url": "{{env.BASE_URL}}/products/plain-black-tee"
-            },
-            {
-              "id": "s56",
-              "action": "expect_visible",
-              "selector": "testid=size-chart",
-              "description": "The size chart is shown"
-            },
-            {
-              "id": "s57",
-              "action": "expect_no_horizontal_scroll",
-              "description": "Nothing sticks out to the right",
-              "expected": "Content width ≤ screen width"
-            }
-          ]
-        },
-        {
-          "key": "SHOP-T30",
-          "folder": "Responsive",
-          "title": "Cart fits narrow and wide screens",
-          "description": "Resizes the viewport mid-test with set_viewport: the cart must fit a 320 px wide screen and a 1280 px one, whatever device the run uses.",
-          "preconditions": "",
-          "priority": "low",
-          "status": "ready",
-          "execution": "automated",
-          "tags": [
-            "responsive"
-          ],
-          "variables": {},
-          "steps": [
-            {
-              "id": "s58",
-              "action": "goto",
-              "url": "{{env.BASE_URL}}/cart"
-            },
-            {
-              "id": "s59",
-              "action": "set_viewport",
-              "width": 320,
-              "height": 640,
-              "description": "Smallest supported phone width"
-            },
-            {
-              "id": "s5a",
-              "action": "expect_no_horizontal_scroll"
-            },
-            {
-              "id": "s5b",
-              "action": "expect_visible",
-              "selector": "role=link[name='Continue to checkout']"
-            },
-            {
-              "id": "s5c",
-              "action": "set_viewport",
-              "width": 1280,
-              "height": 800,
-              "description": "Back to a desktop size"
-            },
-            {
-              "id": "s5d",
-              "action": "expect_no_horizontal_scroll"
-            }
-          ]
         }
       ],
       "flows": [
@@ -1923,32 +1771,6 @@
             },
             {
               "test_case": "SHOP-T16",
-              "continue_on_failure": false
-            }
-          ]
-        },
-        {
-          "key": "SHOP-F5",
-          "name": "Responsive smoke",
-          "description": "Layout checks for phone, tablet and desktop. Run it on several devices (e.g. Desktop, iPad Mini, iPhone 15); the product page fails on phones on purpose.",
-          "tags": [
-            "responsive",
-            "smoke"
-          ],
-          "shared_session": false,
-          "stop_on_failure": false,
-          "variables": {},
-          "items": [
-            {
-              "test_case": "SHOP-T28",
-              "continue_on_failure": false
-            },
-            {
-              "test_case": "SHOP-T29",
-              "continue_on_failure": false
-            },
-            {
-              "test_case": "SHOP-T30",
               "continue_on_failure": false
             }
           ]

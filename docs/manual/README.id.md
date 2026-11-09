@@ -600,9 +600,10 @@ satu kolom per device. Klik sel untuk membuka case itu di device tersebut pada t
 
 ![Cek overflow yang gagal beserta elemen penyebabnya](img/run-overflow-offenders.png)
 
-**Demo:** flow **SHOP-F5 Responsive smoke** (SHOP-T28…T30) dijalankan di Desktop, iPad Mini, dan
-iPhone 15. Halaman produk sengaja gagal di HP: tabel ukuran di toko demo terlalu lebar untuk layar
-393 px.
+**Coba di toko demo:** data demo tidak berisi test case responsive, jadi tambahkan step
+`expect_no_horizontal_scroll` (Only on: tablet + mobile) ke **SHOP-T8** lalu jalankan di Desktop,
+iPad Mini, dan iPhone 15. Halaman produk sengaja gagal di HP: tabel ukuran di toko demo terlalu lebar
+untuk layar 393 px.
 
 MCP dan API menerima device yang sama: `options.devices` berisi id preset (`desktop`, `ipad-mini`,
 `iphone-15`, …) atau `{ "id": "custom", "width": 390, "height": 844 }` (MCP: `"custom:390x844"`).

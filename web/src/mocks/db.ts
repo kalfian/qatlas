@@ -288,8 +288,8 @@ export interface MockState {
   googleAuth?: DbGoogleAuth
 }
 
-/** Naikkan saat bentuk/isi seed berubah → data lama di localStorage di-seed ulang. v4: seed demo berbahasa Inggris. v6: contoh API testing (SHOP-T23…T27, SHOP-F4, PAY baru). v7: devices / device_index / only_on (docs/14). */
-export const STATE_VERSION = 8
+/** Naikkan saat bentuk/isi seed berubah → data lama di localStorage di-seed ulang. v4: seed demo berbahasa Inggris. v6: contoh API testing (SHOP-T23…T27, SHOP-F4, PAY baru). v7: devices / device_index / only_on (docs/14). v9: contoh responsive (SHOP-T28…T30, SHOP-F5, run matrix) dihapus. */
+export const STATE_VERSION = 9
 const STORAGE_KEY = 'qatlas.mock.db'
 
 /* ------------------------------------------------------------------ persistence */
